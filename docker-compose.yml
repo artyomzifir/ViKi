@@ -5,6 +5,8 @@ x-common: &common
   network_mode: host
   privileged: true
   volumes:
+    - ./tools:/app/tools
+    - ./data:/app/data
     - /dev:/dev
     - /run/udev:/run/udev:ro
     - /tmp/.X11-unix:/tmp/.X11-unix

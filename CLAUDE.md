@@ -52,12 +52,12 @@ viki/
 
 **Adding a new camera backend:** subclass `CameraBackend` (implement `start`, `stop`, `get_frame`, `device_id`, `is_running`), then add detection in `CameraManager.list_devices()` and routing in `CameraManager._make_backend()`.
 
-**Frame format:** `Frame.color` is HxWx3 uint8 BGR (OpenCV convention). `Frame.depth` is HxW uint16 in millimetres.
+**Frame format:** `Frame.color` is HxWx3 uint8 BGR when materialised; preview-optimised backends may set `Frame.color_jpeg` plus `Frame.color_shape` instead. `Frame.depth` is HxW uint16 in millimetres.
 
 ## Key implementation details
 
 - **Kinect backend uses ctypes directly over `libk4a.so`** — no `pyk4a`. All function signatures are declared in `kinect.py`. This was chosen to avoid compilation inside Docker.
-- **`KinectBackend.align_depth_to_color`** is present but marked as bugged — do not enable it.
+- **`KinectBackend.align_depth_to_color`** defaults to disabled for realtime preview; aligned depth is computed on demand for snapshots/debug, or continuously only when explicitly enabled.
 - **`WFOV_UNBINNED` depth mode** is capped at 15 fps by hardware; the backend raises `ValueError` at 30 fps.
 - **USB release delay:** `KinectBackend.stop()` sleeps 2 seconds after closing to let USB fully release before the next open.
 - **Kinect sync startup order:** always start subordinate (`kinect_1`) before master (`kinect_0`). Currently both run in standalone `wired_sync_mode=0`; hardware sync mode is planned.

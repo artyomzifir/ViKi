@@ -7,15 +7,22 @@ available for non-blocking reads by the MJPEG streamer.
 """
 from __future__ import annotations
 
+import json
+import shutil
 import threading
 import time
 from collections import deque
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
-from .base import CameraBackend, Frame
+import cv2
+import numpy as np
+
+from .base import CameraBackend, CameraIntrinsics, Frame
 
 # Frames kept per camera for timestamp-based sync queries.
-_FRAME_BUFFER_SIZE = 12
+_FRAME_BUFFER_SIZE = 2
 
 
 class _CameraWorker:
@@ -139,6 +146,7 @@ class CameraManager:
         color_height: int = 720,
         depth_mode: str = "NFOV_UNBINNED",
         subordinate_delay_us: int = 0,
+        align_depth_to_color: bool = False,
     ) -> None:
         """
         Start Azure Kinects in hardware-sync mode with correct startup order.
@@ -169,6 +177,7 @@ class CameraManager:
                 wired_sync_mode=K4A_WIRED_SYNC_MODE_SUBORDINATE,
                 subordinate_delay_us=subordinate_delay_us,
                 synchronized_images_only=True,
+                align_depth_to_color=align_depth_to_color,
             )
 
         self.start(
@@ -179,6 +188,7 @@ class CameraManager:
             depth_mode=depth_mode,
             wired_sync_mode=K4A_WIRED_SYNC_MODE_MASTER,
             synchronized_images_only=True,
+            align_depth_to_color=align_depth_to_color,
         )
 
     def stop(self, device_id: str) -> None:
@@ -214,18 +224,238 @@ class CameraManager:
             "running": True,
             "has_frame": frame is not None,
         }
+        serial = getattr(worker.backend, "serial_number", None)
+        if serial:
+            info["serial_number"] = serial
+        align_depth = getattr(worker.backend, "align_depth_to_color", None)
+        if align_depth is not None:
+            info["align_depth_to_color"] = bool(align_depth)
+        color_format = getattr(worker.backend, "color_format", None)
+        if color_format:
+            info["color_format"] = color_format
+        depth_mode = getattr(worker.backend, "depth_mode", None)
+        if depth_mode:
+            info["depth_mode"] = depth_mode
+            info["requested_depth_mode"] = depth_mode
+        sdk_depth_mode = getattr(worker.backend, "sdk_depth_mode", None)
+        if sdk_depth_mode is not None:
+            info["actual_depth_mode"] = sdk_depth_mode
+            info["sdk_depth_mode"] = sdk_depth_mode
+        expected_raw_depth_resolution = getattr(
+            worker.backend,
+            "expected_raw_depth_resolution",
+            None,
+        )
+        if expected_raw_depth_resolution:
+            ew, eh = expected_raw_depth_resolution
+            info["expected_raw_depth_shape"] = [eh, ew]
+        color_intrinsics = self._serialize_intrinsics(
+            getattr(worker.backend, "color_intrinsics", None)
+        )
+        if color_intrinsics:
+            info["color_intrinsics"] = color_intrinsics
         if frame:
-            info["color_shape"] = list(frame.color.shape)
+            color_shape = frame.color_shape or frame.color.shape
+            info["color_shape"] = list(color_shape)
             info["depth_shape"] = list(frame.depth.shape)
+            info["depth_is_aligned"] = bool(frame.depth_is_aligned)
+            info["color_jpeg"] = frame.color_jpeg is not None
             info["timestamp_us"] = frame.timestamp_us
-            if frame.color_intrinsics:
-                ci = frame.color_intrinsics
-                info["color_intrinsics"] = {
-                    "fx": ci.fx, "fy": ci.fy,
-                    "cx": ci.cx, "cy": ci.cy,
-                    "width": ci.width, "height": ci.height,
-                }
+            color_intrinsics = self._serialize_intrinsics(frame.color_intrinsics)
+            if color_intrinsics:
+                info["color_intrinsics"] = color_intrinsics
         return info
+
+    # ── Snapshot capture ─────────────────────────────────────────────────────
+
+    def snapshot(
+        self,
+        device_id: str,
+        aligned_depth: bool = True,
+        save: bool = True,
+        snapshot_id: Optional[str] = None,
+        root_dir: str | Path = "data/snapshots",
+    ) -> dict:
+        worker = self._workers.get(device_id)
+        if not worker:
+            raise RuntimeError(f"Camera {device_id} is not running")
+        frame = worker.latest()
+        if frame is None:
+            raise RuntimeError(f"Camera {device_id} has no frame yet")
+
+        timestamp = snapshot_id or self._snapshot_timestamp()
+        target_dir = Path(root_dir) / timestamp / device_id
+        return self._save_snapshot(
+            device_id=device_id,
+            worker=worker,
+            frame=frame,
+            target_dir=target_dir,
+            aligned_depth=aligned_depth,
+            save=save,
+        )
+
+    def pair_snapshot(
+        self,
+        device_ids: list[str],
+        aligned_depth: bool = True,
+        save: bool = True,
+        root_dir: str | Path = "data/snapshots",
+    ) -> dict:
+        timestamp = self._snapshot_timestamp(prefix="pair")
+        root_path = Path(root_dir) / timestamp
+        snapshots = []
+        try:
+            for device_id in device_ids:
+                snapshots.append(
+                    self.snapshot(
+                        device_id,
+                        aligned_depth=aligned_depth,
+                        save=save,
+                        snapshot_id=timestamp,
+                        root_dir=root_dir,
+                    )
+                )
+        except Exception:
+            if save and root_path.exists():
+                shutil.rmtree(root_path, ignore_errors=True)
+            raise
+        return {
+            "snapshot_id": timestamp,
+            "root": str(root_path),
+            "device_ids": device_ids,
+            "snapshots": snapshots,
+        }
+
+    @staticmethod
+    def _snapshot_timestamp(prefix: str = "snapshot") -> str:
+        return f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+
+    def _save_snapshot(
+        self,
+        device_id: str,
+        worker: _CameraWorker,
+        frame: Frame,
+        target_dir: Path,
+        aligned_depth: bool,
+        save: bool,
+    ) -> dict:
+        raw_depth = self._raw_depth_from_frame(frame)
+        aligned = None
+        if aligned_depth:
+            if frame.depth_is_aligned:
+                aligned = frame.depth
+            elif hasattr(worker.backend, "align_depth_snapshot"):
+                aligned = worker.backend.align_depth_snapshot(raw_depth)
+            else:
+                raise RuntimeError(f"Backend for {device_id} cannot align depth snapshots")
+
+        color_shape = frame.color_shape or frame.color.shape
+        metadata = {
+            "device_id": device_id,
+            "serial_number": getattr(worker.backend, "serial_number", frame.device_id),
+            "timestamp_us": frame.timestamp_us,
+            "host_timestamp_us": frame.host_timestamp_us,
+            "color_shape": list(color_shape),
+            "raw_depth_shape": list(raw_depth.shape),
+            "aligned_depth_shape": list(aligned.shape) if aligned is not None else None,
+            "depth_shape": list(frame.depth.shape),
+            "depth_is_aligned": bool(frame.depth_is_aligned),
+            "depth_mode": getattr(worker.backend, "depth_mode", None),
+            "sdk_depth_mode": getattr(worker.backend, "sdk_depth_mode", None),
+            "color_resolution": list(getattr(worker.backend, "color_resolution", (color_shape[1], color_shape[0]))),
+            "color_format": getattr(worker.backend, "color_format", None),
+            "align_depth_requested": bool(aligned_depth),
+        }
+        color_intrinsics = self._serialize_intrinsics(
+            frame.color_intrinsics or getattr(worker.backend, "color_intrinsics", None)
+        )
+        if color_intrinsics:
+            metadata["color_intrinsics"] = color_intrinsics
+        if hasattr(worker.backend, "snapshot_calibration_summary"):
+            metadata["calibration"] = worker.backend.snapshot_calibration_summary()
+
+        files: dict[str, str] = {}
+        if save:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            files.update(self._save_color(frame, target_dir))
+            raw_npy = target_dir / "raw_depth.npy"
+            np.save(raw_npy, raw_depth)
+            files["raw_depth_npy"] = str(raw_npy)
+            raw_png = target_dir / "raw_depth.png"
+            if cv2.imwrite(str(raw_png), raw_depth):
+                files["raw_depth_png"] = str(raw_png)
+
+            if aligned is not None:
+                aligned_npy = target_dir / "aligned_depth.npy"
+                np.save(aligned_npy, aligned)
+                files["aligned_depth_npy"] = str(aligned_npy)
+                aligned_png = target_dir / "aligned_depth.png"
+                if cv2.imwrite(str(aligned_png), aligned):
+                    files["aligned_depth_png"] = str(aligned_png)
+
+            metadata_path = target_dir / "metadata.json"
+            metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            files["metadata"] = str(metadata_path)
+
+        return {
+            "status": "saved" if save else "captured",
+            "device_id": device_id,
+            "path": str(target_dir) if save else None,
+            "files": files,
+            "metadata": metadata,
+        }
+
+    @staticmethod
+    def _raw_depth_from_frame(frame: Frame) -> np.ndarray:
+        if frame.raw_depth is not None:
+            return frame.raw_depth
+        if not frame.depth_is_aligned:
+            return frame.depth
+        raise RuntimeError("Frame has aligned depth but no raw_depth copy")
+
+    @staticmethod
+    def _save_color(frame: Frame, target_dir: Path) -> dict[str, str]:
+        if frame.color_jpeg is not None:
+            path = target_dir / "color.jpg"
+            path.write_bytes(frame.color_jpeg)
+            return {"color": str(path)}
+
+        path = target_dir / "color.jpg"
+        if not cv2.imwrite(str(path), frame.color):
+            raise RuntimeError(f"Failed to write {path}")
+        return {"color": str(path)}
+
+    @staticmethod
+    def _serialize_intrinsics(intrinsics: Optional[CameraIntrinsics]) -> Optional[dict]:
+        if intrinsics is None:
+            return None
+
+        dist = intrinsics.dist_coeffs
+        if dist is None:
+            dist_coeffs = []
+        elif hasattr(dist, "tolist"):
+            dist_coeffs = dist.tolist()
+        else:
+            dist_coeffs = list(dist)
+
+        fx = float(intrinsics.fx)
+        fy = float(intrinsics.fy)
+        cx = float(intrinsics.cx)
+        cy = float(intrinsics.cy)
+        return {
+            "fx": fx,
+            "fy": fy,
+            "cx": cx,
+            "cy": cy,
+            "width": int(intrinsics.width),
+            "height": int(intrinsics.height),
+            "dist_coeffs": [float(v) for v in dist_coeffs],
+            "camera_matrix": [
+                [fx, 0.0, cx],
+                [0.0, fy, cy],
+                [0.0, 0.0, 1.0],
+            ],
+        }
 
     # ── Backend factory ───────────────────────────────────────────────────────
 

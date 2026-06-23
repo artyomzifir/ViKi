@@ -49,6 +49,7 @@
     background: var(--surface); color: var(--text);
     font-family: inherit; font-size: 12px;
   }
+  input[type=checkbox] { accent-color: var(--accent); }
   label { color: var(--muted); font-size: 11px; }
 
   .grid {
@@ -83,15 +84,21 @@
   .card-controls .sep {
     width: 1px; height: 18px; background: var(--border); margin: 0 4px;
   }
+  .check-label {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: var(--muted); font-size: 11px;
+  }
 
   .streams {
     display: grid; grid-template-columns: 1fr 1fr;
   }
   .stream-panel { position: relative; background: #000; aspect-ratio: 4/3; overflow: hidden; }
   .stream-panel img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .stream-panel.depth-panel img { object-fit: contain; }
   .stream-label {
     position: absolute; top: 6px; left: 8px;
     font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.6);
+    line-height: 1.35;
     background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 3px;
   }
   .stream-divider { width: 1px; background: var(--border); }
@@ -126,6 +133,7 @@
 <div class="toolbar">
   <button class="primary" onclick="scanDevices()">⟳ Scan devices</button>
   <button onclick="startAll()">▶ Start all</button>
+  <button onclick="savePairSnapshot()">Save pair snapshot</button>
   <button class="danger" onclick="stopAll()">■ Stop all</button>
 </div>
 
@@ -153,8 +161,12 @@ const CAMERA_CONFIG = {
     defaultRes:  '1280x720',
     fps:         [5, 15, 30],
     defaultFps:  30,
+    colorFormat: 'MJPG',
+    previewFps: 10,
+    previewWidth: 640,
     depthModes:  ['NFOV_UNBINNED', 'NFOV_2X2BINNED', 'WFOV_UNBINNED', 'WFOV_2X2BINNED'],
     defaultDepth: 'NFOV_UNBINNED',
+    alignDepthToColor: false,
     // WFOV_UNBINNED hardware limitation: max 15 fps
     depthModeMaxFps: { 'WFOV_UNBINNED': 15 },
   },
@@ -236,10 +248,16 @@ function buildControls(id, type) {
     depthPart = `<div class="sep"></div><label>depth</label><select id="depthmode-${id}" onchange="updateFpsForDepthMode('${id}')">${dOpts}</select>`;
   }
 
+  let alignPart = '';
+  if (cfg.alignDepthToColor !== undefined) {
+    alignPart = `<label class="check-label"><input type="checkbox" id="align-depth-${id}" ${cfg.alignDepthToColor ? 'checked' : ''}>align debug</label>`;
+  }
+
   return `
     <label>res</label><select id="res-${id}">${resOpts}</select>
     <label>fps</label><select id="fps-${id}">${fpsOpts}</select>
     ${depthPart}
+    ${alignPart}
   `;
 }
 
@@ -257,18 +275,19 @@ function buildCard(id, type, running) {
     <div class="card-controls">
       <button id="btn-start-${id}" ${running ? 'disabled' : ''} onclick="startCamera('${id}')">▶ Start</button>
       <button id="btn-stop-${id}"  ${running ? '' : 'disabled'} class="danger" onclick="stopCamera('${id}')">■ Stop</button>
+      <button id="btn-snapshot-${id}" ${running ? '' : 'disabled'} onclick="saveSnapshot('${id}')">Save snapshot</button>
       <div class="sep"></div>
       ${buildControls(id, type)}
     </div>
     <div class="streams">
-      <div class="stream-panel">
+      <div class="stream-panel color-panel">
         <img id="color-${id}" src="" alt="color">
         <span class="stream-label">COLOR</span>
       </div>
       <div class="stream-divider"></div>
-      <div class="stream-panel">
+      <div class="stream-panel depth-panel">
         <img id="depth-${id}" src="" alt="depth">
-        <span class="stream-label">DEPTH</span>
+        <span class="stream-label" id="depth-label-${id}">DEPTH RAW<br>depth camera view</span>
       </div>
     </div>
     <div class="card-footer" id="footer-${id}"><span>—</span></div>
@@ -296,16 +315,27 @@ function getCardConfig(id) {
   const [w, h]  = resVal.split('x').map(Number);
   const fps     = parseInt(document.getElementById(`fps-${id}`)?.value || '30');
   const depth   = document.getElementById(`depthmode-${id}`)?.value || 'NFOV_UNBINNED';
-  return { color_width: w, color_height: h, fps, depth_mode: depth };
+  const cfg     = CAMERA_CONFIG[state[id]?.type] || CAMERA_CONFIG.realsense;
+  const config  = { color_width: w, color_height: h, fps, depth_mode: depth };
+  if (cfg.colorFormat) config.color_format = cfg.colorFormat;
+  if (cfg.previewFps) config.preview_fps = cfg.previewFps;
+  if (cfg.previewWidth) config.preview_width = cfg.previewWidth;
+  config.enable_depth_preview = true;
+  const alignEl = document.getElementById(`align-depth-${id}`);
+  if (alignEl) config.align_depth_to_color = alignEl.checked;
+  return config;
 }
 
 function attachStreams(id) {
   const colorImg = document.getElementById('color-' + id);
   const depthImg = document.getElementById('depth-' + id);
+  const cfg = CAMERA_CONFIG[state[id]?.type] || CAMERA_CONFIG.realsense;
+  const previewFps = cfg.previewFps || 10;
+  const previewWidth = cfg.previewWidth || 640;
   // Small delay to let the camera worker produce first frame before streaming
   setTimeout(() => {
-    if (colorImg) colorImg.src = `/api/cameras/${id}/stream?t=${Date.now()}`;
-    if (depthImg) depthImg.src = `/api/cameras/${id}/depth?t=${Date.now()}`;
+    if (colorImg) colorImg.src = `/api/cameras/${id}/stream?preview_fps=${previewFps}&t=${Date.now()}`;
+    if (depthImg) depthImg.src = `/api/cameras/${id}/depth?preview_fps=${previewFps}&preview_width=${previewWidth}&t=${Date.now()}`;
   }, 1500);
   if (state[id]?.infoInterval) clearInterval(state[id].infoInterval);
   state[id].infoInterval = setInterval(() => updateInfo(id), 2000);
@@ -328,19 +358,26 @@ async function updateInfo(id) {
     // Update color panel aspect ratio
     if (info.color_shape) {
       const [ch, cw] = info.color_shape;
-      const colorPanel = document.querySelector(`#card-${id} .stream-panel:first-child`);
+      const colorPanel = document.querySelector(`#card-${id} .color-panel`);
       if (colorPanel) colorPanel.style.aspectRatio = `${cw}/${ch}`;
     }
 
-    // Update depth panel aspect ratio
+    // Update depth panel aspect ratio independently from RGB.
     if (info.depth_shape) {
       const [dh, dw] = info.depth_shape;
-      const depthPanel = document.querySelector(`#card-${id} .stream-panel:last-child`);
+      const depthPanel = document.querySelector(`#card-${id} .depth-panel`);
       if (depthPanel) depthPanel.style.aspectRatio = `${dw}/${dh}`;
     }
 
-    const shape = info.color_shape ? `${info.color_shape[1]}×${info.color_shape[0]}` : '—';
-    const dshape = info.depth_shape ? `depth: ${info.depth_shape[1]}×${info.depth_shape[0]}` : '';
+    const shape = info.color_shape ? `${info.color_shape[1]}x${info.color_shape[0]}` : '—';
+    const depthMode = info.depth_is_aligned ? 'aligned' : 'raw';
+    const depthLabel = document.getElementById('depth-label-' + id);
+    if (depthLabel) {
+      depthLabel.innerHTML = info.depth_is_aligned
+        ? 'DEPTH ALIGNED<br>color camera view'
+        : 'DEPTH RAW<br>depth camera view';
+    }
+    const dshape = info.depth_shape ? `depth: ${info.depth_shape[1]}x${info.depth_shape[0]} ${depthMode}` : '';
     const ci    = info.color_intrinsics;
     const intr  = ci ? `fx=${ci.fx.toFixed(1)} fy=${ci.fy.toFixed(1)}` : '';
     footer.innerHTML = `<span>color: ${shape}</span><span>${dshape}</span><span>${intr}</span>`;
@@ -349,7 +386,8 @@ async function updateInfo(id) {
 
 async function startCamera(id) {
   const cfg = getCardConfig(id);
-  log(`Starting ${id} @ ${cfg.color_width}×${cfg.color_height} ${cfg.fps}fps...`);
+  const align = cfg.align_depth_to_color !== undefined ? ` align=${cfg.align_depth_to_color}` : '';
+  log(`Starting ${id} @ ${cfg.color_width}×${cfg.color_height} ${cfg.fps}fps${align}...`);
   try {
     const res = await api('POST', `/api/cameras/${id}/start`, cfg);
     if (res.detail) { log(`${id} error: ${res.detail}`, 'error'); return; }
@@ -379,14 +417,50 @@ function setRunning(id, running) {
   const liveTag = document.getElementById('live-tag-' + id);
   const btnStart = document.getElementById('btn-start-' + id);
   const btnStop  = document.getElementById('btn-stop-' + id);
+  const btnSnapshot = document.getElementById('btn-snapshot-' + id);
   if (!card) return;
   card.className = 'camera-card' + (running ? ' running' : '');
   if (dot)     dot.className     = 'dot' + (running ? ' alive' : '');
   if (liveTag) liveTag.style.display = running ? '' : 'none';
   if (btnStart) btnStart.disabled = running;
   if (btnStop)  btnStop.disabled  = !running;
+  if (btnSnapshot) btnSnapshot.disabled = !running;
   if (running) attachStreams(id);
   else         detachStreams(id);
+}
+
+async function saveSnapshot(id) {
+  log(`Saving snapshot for ${id}...`);
+  try {
+    const res = await api('POST', `/api/cameras/${id}/snapshot`, {
+      aligned_depth: true,
+      save: true,
+    });
+    if (res.detail) { log(`${id} snapshot error: ${res.detail}`, 'error'); return; }
+    log(`${id} snapshot saved: ${res.path}`, 'ok');
+  } catch (e) {
+    log(`Snapshot failed for ${id}: ${e}`, 'error');
+  }
+}
+
+async function savePairSnapshot() {
+  const deviceIds = Object.keys(state).filter(id => state[id].running && state[id].type === 'kinect');
+  if (deviceIds.length < 2) {
+    log('Need at least two active Kinect cameras for pair snapshot', 'error');
+    return;
+  }
+  log(`Saving pair snapshot: ${deviceIds.join(', ')}...`);
+  try {
+    const res = await api('POST', '/api/capture/pair_snapshot', {
+      device_ids: deviceIds,
+      aligned_depth: true,
+      save: true,
+    });
+    if (res.detail) { log(`Pair snapshot error: ${res.detail}`, 'error'); return; }
+    log(`Pair snapshot saved: ${res.root}`, 'ok');
+  } catch (e) {
+    log(`Pair snapshot failed: ${e}`, 'error');
+  }
 }
 
 async function startAll() {

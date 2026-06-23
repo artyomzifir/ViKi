@@ -37,7 +37,11 @@ class Frame:
     Fields
     ------
     color             : np.ndarray  HxWx3, uint8, BGR (OpenCV convention)
+    color_jpeg        : bytes | None pre-encoded JPEG for preview streams
+    color_shape       : tuple | None HxWx3 shape when color is not materialised
     depth             : np.ndarray  HxW,   uint16, millimetres
+    raw_depth         : np.ndarray | None unaligned depth when depth is aligned
+    depth_is_aligned  : bool        True if depth is in color-camera geometry
     timestamp_us      : int         capture time, microseconds (device monotonic clock)
     device_id         : str         unique device identifier (serial number or alias)
     host_timestamp_us : int         host-clock time (time.time_ns()//1000) when the frame
@@ -53,6 +57,10 @@ class Frame:
     host_timestamp_us: int = 0
     color_intrinsics: Optional[CameraIntrinsics] = None
     depth_intrinsics: Optional[CameraIntrinsics] = None
+    color_jpeg: Optional[bytes] = None
+    color_shape: Optional[tuple[int, int, int]] = None
+    raw_depth: Optional[np.ndarray] = None
+    depth_is_aligned: bool = False
 
     def has_depth(self) -> bool:
         return self.depth is not None and self.depth.size > 0
