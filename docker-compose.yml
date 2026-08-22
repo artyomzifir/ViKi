@@ -2,17 +2,22 @@ x-common: &common
   build:
     context: .
     dockerfile: docker/Dockerfile
+    target: backend
   network_mode: host
   privileged: true
   volumes:
     - /dev:/dev
     - /run/udev:/run/udev:ro
     - /tmp/.X11-unix:/tmp/.X11-unix
+    - ./tests:/app/tests
+    - ./data:/app/data
     - ./viki:/app/viki
-    - ./pyproject.toml:/app/pyproject.toml:ro
+    - ./scripts:/app/scripts
+    - ./models:/app/models
   environment:
     - PYTHONUNBUFFERED=1
     - PYTHONPATH=/app
+    - GIT_PYTHON_REFRESH=quiet
     - DISPLAY=${DISPLAY}
     - LIBGL_ALWAYS_SOFTWARE=1
     - GALLIUM_DRIVER=llvmpipe
@@ -25,10 +30,11 @@ services:
     container_name: viki
     restart: unless-stopped
     entrypoint: ["/app/docker/entrypoint.sh"]
-    command: ["uvicorn", "viki.server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "viki.server.app:app", "--host", "0.0.0.0", "--port", "8000"]  #, "--reload"]
 
   terminal:
     <<: *common
+    network_mode: "host"
     container_name: viki-terminal
     stdin_open: true
     tty: true

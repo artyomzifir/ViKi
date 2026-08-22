@@ -5,12 +5,31 @@ description = "Vision-based Kinematic Imitation — robot dataset generation fro
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26",
+    "requests>=2.31",
     "opencv-python-headless>=4.9",
+    "pin-pink>=4.0",
     "pyrealsense2>=2.58",
+    "qpsolvers>=4.4",
+    "quadprog>=0.1",
+    "robot_descriptions>=2.0",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.29",
+    "mediapipe>=0.10.35",
+    "matplotlib>=3.8",
+    "h5py>=3.10",
+    "scipy>=1.11",
+    "typing_extensions>=4.12",
+    "xacrodoc",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["viki"]

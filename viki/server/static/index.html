@@ -1,407 +1,394 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ViKi — Capture</title>
-<style>
-  :root {
-    --bg: #0d0d0f;
-    --surface: #16161a;
-    --border: #2a2a30;
-    --accent: #5b7fff;
-    --text: #e8e8f0;
-    --muted: #6b6b80;
-    --green: #4ade80;
-    --red: #f87171;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; min-height: 100vh; }
-
-  header {
-    display: flex; align-items: center; gap: 12px;
-    padding: 16px 24px; border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.08em; color: var(--accent); }
-  header .subtitle { color: var(--muted); font-size: 11px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-  .dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); }
-
-  .toolbar {
-    display: flex; align-items: center; gap: 12px;
-    padding: 10px 24px; border-bottom: 1px solid var(--border);
-  }
-  button {
-    padding: 6px 14px; border: 1px solid var(--border); border-radius: 4px;
-    background: var(--surface); color: var(--text); cursor: pointer;
-    font-family: inherit; font-size: 12px; transition: all 0.15s;
-  }
-  button:hover { border-color: var(--accent); color: var(--accent); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button.primary:hover { opacity: 0.85; }
-  button.danger { border-color: var(--red); color: var(--red); }
-  button.danger:hover { background: var(--red); color: #fff; }
-  button:disabled { opacity: 0.35; cursor: not-allowed; }
-
-  select, input[type=number] {
-    padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px;
-    background: var(--surface); color: var(--text);
-    font-family: inherit; font-size: 12px;
-  }
-  label { color: var(--muted); font-size: 11px; }
-
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(660px, 1fr));
-    gap: 16px; padding: 16px 24px;
-  }
-
-  .camera-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-    overflow: hidden; transition: border-color 0.2s;
-  }
-  .camera-card.running { border-color: var(--accent); }
-
-  .card-header {
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 14px; border-bottom: 1px solid var(--border);
-  }
-  .card-header .name { font-weight: 600; font-size: 12px; flex: 1; }
-  .tag {
-    padding: 2px 7px; border-radius: 3px; font-size: 10px; font-weight: 600;
-    background: var(--border); color: var(--muted);
-  }
-  .tag.realsense { background: #1a2a4a; color: #5b9fff; }
-  .tag.kinect    { background: #1a3a2a; color: #4ade80; }
-  .tag.running   { background: #1a3a1a; color: var(--green); }
-
-  .card-controls {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    padding: 8px 14px; border-bottom: 1px solid var(--border);
-  }
-  .card-controls .sep {
-    width: 1px; height: 18px; background: var(--border); margin: 0 4px;
-  }
-
-  .streams {
-    display: grid; grid-template-columns: 1fr 1fr;
-  }
-  .stream-panel { position: relative; background: #000; aspect-ratio: 4/3; overflow: hidden; }
-  .stream-panel img { width: 100%; height: 100%; object-fit: contain; display: block; }
-  .stream-label {
-    position: absolute; top: 6px; left: 8px;
-    font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.6);
-    background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 3px;
-  }
-  .stream-divider { width: 1px; background: var(--border); }
-
-  .card-footer {
-    display: flex; gap: 16px; padding: 8px 14px;
-    font-size: 11px; color: var(--muted);
-  }
-
-  #log {
-    margin: 0 24px 24px;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
-    padding: 10px 14px; font-size: 11px; color: var(--muted);
-    max-height: 120px; overflow-y: auto;
-  }
-  #log .entry { padding: 1px 0; }
-  #log .entry.error { color: var(--red); }
-  #log .entry.ok    { color: var(--green); }
-
-  .empty-state { text-align: center; padding: 60px 24px; color: var(--muted); }
-  .empty-state h2 { font-size: 14px; margin-bottom: 8px; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ViKi — Capture</title>
+  <link rel="stylesheet" href="/static/css/style.css">
 </head>
+
 <body>
 
-<header>
-  <div class="dot" id="server-dot"></div>
-  <h1>ViKi</h1>
-  <span class="subtitle">capture server</span>
-</header>
+  <header>
+    <div class="dot" id="server-dot"></div>
+    <h1>ViKi</h1>
+    <span class="subtitle">capture server</span>
+  </header>
 
-<div class="toolbar">
-  <button class="primary" onclick="scanDevices()">⟳ Scan devices</button>
-  <button onclick="startAll()">▶ Start all</button>
-  <button class="danger" onclick="stopAll()">■ Stop all</button>
-</div>
-
-<div class="grid" id="grid">
-  <div class="empty-state">
-    <h2>No cameras detected</h2>
-    <p>Click "Scan devices" to discover connected cameras</p>
+  <div class="toolbar">
+    <button class="primary" data-action="scanDevices">⟳ Scan devices</button>
+    <button data-action="startAll">▶ Start all</button>
+    <button class="danger" data-action="stopAll">■ Stop all</button>
+    <div class="sep"></div>
+    <button id="btn-calib-toggle" data-action="toggleCalibration">⚙ Calibration</button>
+    <button id="btn-skeleton-toggle" data-action="toggleSkeleton">🦴 Skeleton</button>
+    <button id="btn-process-toggle" data-action="toggleProcess">📊 Process</button>
+    <div class="sep"></div>
+    <button id="btn-record-rgbd" class="primary" data-action="startRGBDRecording">Record</button>
+    <button style="margin-left: auto" data-action="toggleConfig">⚙ Config</button>
   </div>
-</div>
 
-<div id="log"></div>
-
-<script>
-// Per-camera config definitions
-const CAMERA_CONFIG = {
-  realsense: {
-    resolutions: ['640x480', '1280x720', '1920x1080'],
-    defaultRes:  '640x480',
-    fps:         [15, 30],
-    defaultFps:  30,
-    depthModes:  null,
-  },
-  kinect: {
-    resolutions: ['1280x720', '1920x1080', '2048x1536'],
-    defaultRes:  '1280x720',
-    fps:         [5, 15, 30],
-    defaultFps:  30,
-    depthModes:  ['NFOV_UNBINNED', 'NFOV_2X2BINNED', 'WFOV_UNBINNED', 'WFOV_2X2BINNED'],
-    defaultDepth: 'NFOV_UNBINNED',
-    // WFOV_UNBINNED hardware limitation: max 15 fps
-    depthModeMaxFps: { 'WFOV_UNBINNED': 15 },
-  },
-};
-
-const state = {};  // device_id -> { running, type, infoInterval }
-
-function log(msg, cls = '') {
-  const el = document.getElementById('log');
-  const e  = document.createElement('div');
-  e.className  = 'entry ' + cls;
-  e.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  el.prepend(e);
-  while (el.children.length > 40) el.removeChild(el.lastChild);
-}
-
-async function api(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
-  if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(path, opts);
-  return r.json();
-}
-
-async function checkServer() {
-  try {
-    await fetch('/api/devices');
-    document.getElementById('server-dot').classList.add('alive');
-  } catch {
-    document.getElementById('server-dot').classList.remove('alive');
-  }
-}
-
-async function scanDevices() {
-  log('Scanning for devices...');
-  try {
-    const data = await api('GET', '/api/devices');
-    log(`Found: ${data.realsense.length} RealSense, ${data.kinect.length} Kinect`, 'ok');
-    const all = [
-      ...data.realsense.map(id => ({ id, type: 'realsense' })),
-      ...data.kinect.map(id  => ({ id, type: 'kinect' })),
-    ];
-    renderCards(all, data.active || []);
-  } catch (e) {
-    log('Scan failed: ' + e, 'error');
-  }
-}
-
-function renderCards(devices, active) {
-  const grid = document.getElementById('grid');
-  grid.innerHTML = '';
-  if (!devices.length) {
-    grid.innerHTML = `<div class="empty-state"><h2>No cameras detected</h2><p>Make sure cameras are connected and container has USB access.</p></div>`;
-    return;
-  }
-  devices.forEach(d => {
-    const isActive = active.includes(d.id);
-    state[d.id] = { running: isActive, type: d.type, ...(state[d.id] || {}) };
-    grid.appendChild(buildCard(d.id, d.type, isActive));
-    if (isActive) attachStreams(d.id);
-  });
-}
-
-function buildControls(id, type) {
-  const cfg = CAMERA_CONFIG[type] || CAMERA_CONFIG.realsense;
-
-  const resOpts = cfg.resolutions.map(r =>
-    `<option value="${r}" ${r === cfg.defaultRes ? 'selected' : ''}>${r.replace('x', ' × ')}</option>`
-  ).join('');
-
-  const fpsOpts = cfg.fps.map(f =>
-    `<option value="${f}" ${f === cfg.defaultFps ? 'selected' : ''}>${f} fps</option>`
-  ).join('');
-
-  let depthPart = '';
-  if (cfg.depthModes) {
-    const dOpts = cfg.depthModes.map(m =>
-      `<option value="${m}" ${m === cfg.defaultDepth ? 'selected' : ''}>${m}</option>`
-    ).join('');
-    depthPart = `<div class="sep"></div><label>depth</label><select id="depthmode-${id}" onchange="updateFpsForDepthMode('${id}')">${dOpts}</select>`;
-  }
-
-  return `
-    <label>res</label><select id="res-${id}">${resOpts}</select>
-    <label>fps</label><select id="fps-${id}">${fpsOpts}</select>
-    ${depthPart}
-  `;
-}
-
-function buildCard(id, type, running) {
-  const card = document.createElement('div');
-  card.className = 'camera-card' + (running ? ' running' : '');
-  card.id = 'card-' + id;
-  card.innerHTML = `
-    <div class="card-header">
-      <div class="dot ${running ? 'alive' : ''}" id="dot-${id}"></div>
-      <span class="name">${id}</span>
-      <span class="tag ${type}">${type}</span>
-      ${running ? `<span class="tag running" id="live-tag-${id}">LIVE</span>` : `<span class="tag running" id="live-tag-${id}" style="display:none">LIVE</span>`}
+  <div class="config-panel" id="config-panel">
+    <div class="config-header">
+      <span class="title">Server Configuration</span>
+      <button class="danger" data-action="toggleConfig">✕ Close</button>
     </div>
-    <div class="card-controls">
-      <button id="btn-start-${id}" ${running ? 'disabled' : ''} onclick="startCamera('${id}')">▶ Start</button>
-      <button id="btn-stop-${id}"  ${running ? '' : 'disabled'} class="danger" onclick="stopCamera('${id}')">■ Stop</button>
-      <div class="sep"></div>
-      ${buildControls(id, type)}
-    </div>
-    <div class="streams">
-      <div class="stream-panel">
-        <img id="color-${id}" src="" alt="color">
-        <span class="stream-label">COLOR</span>
+    <div class="config-body">
+      <textarea id="config-editor" spellcheck="false"></textarea>
+      <div class="config-help" id="config-help">
+        <div><b>INTRINSICS_FILENAME</b>: Path to intrinsics calibration</div>
+        <div><b>EXTRINSICS_FILENAME</b>: Path to extrinsics calibration</div>
+        <div><b>DEFAULT_FPS</b>: Default frames per second for camera start</div>
+        <div><b>DEFAULT_COLOR_WIDTH</b>: Default color image width</div>
+        <div><b>DEFAULT_COLOR_HEIGHT</b>: Default color image height</div>
+        <div><b>DEFAULT_DEPTH_MODE</b>: Default depth mode (NFOV_UNBINNED recommended)</div>
+        <div><b>JPEG_QUALITY</b>: Quality of JPEG encoding (0-100)</div>
+        <div><b>STREAM_IDLE_SLEEP</b>: Sleep duration for MJPEG stream generators (default value works well)</div>
+        <div><b>PLACEHOLDER_SIZE</b>: Dimensions of the placeholder image when camera not started</div>
+        <div><b>DEFAULT_SYNCHRONIZED_IMAGES_ONLY</b>: Only use synchronized frames (not tested with true)</div>
+        <div><b>FRAME_BUFFER_SIZE</b>: Number of frames kept in ring buffer per camera</div>
+        <div><b>RECORD_DEPTH</b>: Save depth frames as .npy files alongside the rgb-d videos (heavy on the disk)</div>
+        <div><b>DEPTH_PROJECTION_DEBUG</b>: Enable debug plotting for depth projection (slows down live skeleton
+          estimation)</div>
+        <div><b>SKELETON_DEPTH_SAMP_RADIUS</b>: Radius for depth sampling during fusion (default worked well in testing)
+        </div>
+        <div><b>SKELETON_DEPTH_BASE_DIR</b>: Directory for background depth frames</div>
+        <div><b>SKELETON_ENABLE_DEPTH_VALIDATION</b>: Toggle depth-based outlier rejection (disabling WILL lead to great
+          instability)</div>
+        <div><b>SKELETON_DEPTH_SUBTRACT_THRESHOLD</b>: Min depth diff for object detection (untested outside default
+          value)</div>
+        <div><b>HAND_TO_DETECT</b>: Hand side to estimate ('left' or 'right')</div>
+        <div><b>CALIB_MODE</b>: Calibration mode ('manual' or 'auto') (auto is deprecated)</div>
+        <div><b>CALIB_BOARD_TYPE</b>: Board type ('chess' or 'aruco')</div>
+        <div><b>BONE_LENGTHS</b>: Manual bone length overrides {(Parent, Child): length_m} (default uses a moving mean,
+          use this if you're sure you know what you're doing)</div>
+        <div><b>BONE_TOLERANCE</b>: Tolerance for kinematic constraints (0.0-1.0) (default works well with mean for
+          lenghts)</div>
+        <div><b>CALIB_CHESS_BOARD_SIZE</b>: Default chessboard dimensions [cols, rows]</div>
+        <div><b>CALIB_CHESS_SQUARE_SIZE</b>: Default chessboard square size in meters</div>
+        <div><b>CALIB_ARUCO_BOARD_SIZE</b>: Default aruco board dimensions [cols, rows]</div>
+        <div><b>CALIB_ARUCO_SQUARE_SIZE</b>: Default aruco square size in meters</div>
+        <div><b>CALIB_ARUCO_MARKER_SIZE</b>: Default aruco marker size in meters</div>
+        <div><b>CALIB_ARUCO_DICT</b>: OpenCV Aruco dictionary ID (our main board has 40 markers total, each 5x5, so
+          DICT_5X5_50 is good)<br>=============================================<br></div>
+        <div>Load: pulls the user configuration from backend</div>
+        <div>Reset to Defaults: loads the default parameters for the system</div>
+        <div>Save: save the current configuratiuon to the server</div>
+        <div>Restart Server: restarts docker to apply all the configuration changes</div>
+
       </div>
-      <div class="stream-divider"></div>
-      <div class="stream-panel">
-        <img id="depth-${id}" src="" alt="depth">
-        <span class="stream-label">DEPTH</span>
+      <div class="config-footer">
+        <span class="hint">Restart is required for changes to take effect</span>
+        <button data-action="toggleConfigHelp">❔ Help</button>
+        <button data-action="loadConfig">Load</button>
+        <button data-action="resetConfig">Reset to Defaults</button>
+        <button class="primary" data-action="saveConfig">Save</button>
+        <button class="danger" data-action="restartServer">Restart Server</button>
       </div>
     </div>
-    <div class="card-footer" id="footer-${id}"><span>—</span></div>
-  `;
-  return card;
-}
 
-function updateFpsForDepthMode(id) {
-  const cfg = CAMERA_CONFIG[state[id]?.type] || CAMERA_CONFIG.realsense;
-  if (!cfg.depthModeMaxFps) return;
-  const depthMode = document.getElementById(`depthmode-${id}`)?.value;
-  const maxFps = cfg.depthModeMaxFps[depthMode] || 30;
-  const fpsSelect = document.getElementById(`fps-${id}`);
-  if (!fpsSelect) return;
-  for (const opt of fpsSelect.options) {
-    opt.disabled = parseInt(opt.value) > maxFps;
-    if (parseInt(opt.value) > maxFps && fpsSelect.value === opt.value) {
-      fpsSelect.value = maxFps;
-    }
-  }
-}
+  </div>
+  </div>
 
-function getCardConfig(id) {
-  const resVal = document.getElementById(`res-${id}`)?.value || '640x480';
-  const [w, h]  = resVal.split('x').map(Number);
-  const fps     = parseInt(document.getElementById(`fps-${id}`)?.value || '30');
-  const depth   = document.getElementById(`depthmode-${id}`)?.value || 'NFOV_UNBINNED';
-  return { color_width: w, color_height: h, fps, depth_mode: depth };
-}
+  <div class="calib-panel" id="calib-panel">
 
-function attachStreams(id) {
-  const colorImg = document.getElementById('color-' + id);
-  const depthImg = document.getElementById('depth-' + id);
-  // Small delay to let the camera worker produce first frame before streaming
-  setTimeout(() => {
-    if (colorImg) colorImg.src = `/api/cameras/${id}/stream?t=${Date.now()}`;
-    if (depthImg) depthImg.src = `/api/cameras/${id}/depth?t=${Date.now()}`;
-  }, 1500);
-  if (state[id]?.infoInterval) clearInterval(state[id].infoInterval);
-  state[id].infoInterval = setInterval(() => updateInfo(id), 2000);
-}
+    <div class="calib-header">
+      <span class="title">Camera Calibration</span>
+      <button class="danger" data-action="toggleCalibration">✕ Close</button>
+    </div>
+    <div class="calib-body">
+      <div id="calib-streams" class="calib-streams">
+        <!-- streams -->
+      </div>
+      <div class="calib-controls">
+        <div class="board-params">
+          <!-- Board type selector -->
+          <div class="field-row">
+            <label for="board-type">Board type</label>
+            <select id="board-type" data-change="toggleBoardFields">
+              <option value="chess">Chessboard</option>
+              <option value="aruco">ChArUco</option>
+            </select>
+          </div>
 
-function detachStreams(id) {
-  const colorImg = document.getElementById('color-' + id);
-  const depthImg = document.getElementById('depth-' + id);
-  if (colorImg) colorImg.src = '';
-  if (depthImg) depthImg.src = '';
-  if (state[id]?.infoInterval) clearInterval(state[id].infoInterval);
-}
+          <!-- Common fields (always visible) -->
+          <div class="field-row">
+            <label>Board width</label>
+            <input type="number" id="board-width" value="8" min="1" data-change="syncBoardParameters" />
+          </div>
+          <div class="field-row">
+            <label>Board height</label>
+            <input type="number" id="board-height" value="6" min="1" data-change="syncBoardParameters" />
+          </div>
+          <div class="field-row">
+            <label>Square size (m)</label>
+            <input type="number" id="square-size" value="0.05" step="0.001" min="0.01"
+              data-change="syncBoardParameters" />
+          </div>
 
-async function updateInfo(id) {
-  try {
-    const info   = await api('GET', `/api/cameras/${id}/info`);
-    const footer = document.getElementById('footer-' + id);
-    if (!footer) return;
+          <!-- Aruco‑specific fields (hidden by default) -->
+          <div id="aruco-fields" style="display: none;">
+            <div class="field-row">
+              <label>Marker size (m)</label>
+              <input type="number" id="marker-size" value="0.035" step="0.001" min="0.01"
+                data-change="syncBoardParameters" />
+            </div>
+            <div class="field-row">
+              <label>Dictionary</label>
+              <select id="aruco-dict" data-change="syncBoardParameters"></select>
+            </div>
+          </div>
+        </div>
+        <button id="btn-capture-sample" class="primary" data-action="captureSample">Capture Sample</button>
+        <div style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+        <button class="primary" data-action="extrinsicsCalibration">Calibrate Extrinsics</button>
+        <div style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+        <button class="danger" data-action="clearCalibration">Clear Samples</button>
+        <div
+          style="font-size: 11px; color: var(--muted); margin-top: 12px; white-space: pre-line; text-align: center; line-height: 1.4;">
+          Extrinsic calibration requires 1 sample per camera</div>
 
-    // Update color panel aspect ratio
-    if (info.color_shape) {
-      const [ch, cw] = info.color_shape;
-      const colorPanel = document.querySelector(`#card-${id} .stream-panel:first-child`);
-      if (colorPanel) colorPanel.style.aspectRatio = `${cw}/${ch}`;
-    }
+      </div>
+    </div>
+  </div>
 
-    // Update depth panel aspect ratio
-    if (info.depth_shape) {
-      const [dh, dw] = info.depth_shape;
-      const depthPanel = document.querySelector(`#card-${id} .stream-panel:last-child`);
-      if (depthPanel) depthPanel.style.aspectRatio = `${dw}/${dh}`;
-    }
+  <div class="skeleton-panel" id="skeleton-panel">
+    <div class="skeleton-header">
+      <span class="title">3D Skeleton Estimation</span>
+      <button class="danger" data-action="toggleSkeleton">✕ Close</button>
+    </div>
+    <div class="skeleton-body">
+      <div class="skeleton-viz" id="skeleton-viz" style="display:flex; align-items:center; justify-content:center;">
+        <canvas id="skel-canvas-3d"></canvas>
+      </div>
+      <div class="skeleton-controls">
+        <div class="skeleton-stats" id="skeleton-status">Status: Idle</div>
+        <div id="skeleton-detections" style="font-size: 11px; color: var(--muted); margin-bottom: 10px;"></div>
+        <div style="margin-bottom: 10px; display: flex; gap: 8px;">
+          <button id="btn-skel-view" data-action="toggleSkelView"
+            style="font-size: 11px; padding: 4px 8px; cursor: pointer;">View: Projections</button>
+        </div>
+        <div class="field-row" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
+          <label for="skel-follow-ee">Follow</label>
+          <select id="skel-follow-ee" data-change="toggleFollowEE">
+            <option value="off" selected>Static (origin)</option>
+            <option value="ee">End effector</option>
+          </select>
+        </div>
+        <div class="field-row" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
+          <label for="skel-viz-cam">Visualize Camera</label>
+          <select id="skel-viz-cam" data-change="updateSkelVizCam"></select>
+        </div>
+        <button id="btn-skel-start" class="primary" data-action="toggleEstimation" data-enable="true">▶ Start
+          Estimation</button>
+        <button id="btn-skel-stop" class="danger" data-action="toggleEstimation" data-enable="false" disabled>■ Stop
+          Estimation</button>
+        <div class="sep"></div>
+        <div class="sep"></div>
+        <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="btn-skel-calib-overlay" checked data-action="toggleCalibOverlay">
+          Show calib (board + cameras)
+        </label>
+        <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="btn-skel-depth-debug" data-action="toggleDepthDebug">
+          Depth debug (red dots)
+        </label>
+        <div class="sep"></div>
+        <button id="btn-skel-rec-start" data-action="toggleRecording" data-enable="true">🔴 Record</button>
+        <button id="btn-skel-rec-stop" class="danger" data-action="toggleRecording" data-enable="false" disabled>⏹ Stop
+          Recording</button>
 
-    const shape = info.color_shape ? `${info.color_shape[1]}×${info.color_shape[0]}` : '—';
-    const dshape = info.depth_shape ? `depth: ${info.depth_shape[1]}×${info.depth_shape[0]}` : '';
-    const ci    = info.color_intrinsics;
-    const intr  = ci ? `fx=${ci.fx.toFixed(1)} fy=${ci.fy.toFixed(1)}` : '';
-    footer.innerHTML = `<span>color: ${shape}</span><span>${dshape}</span><span>${intr}</span>`;
-  } catch { /* camera stopped */ }
-}
+        <div class="skeleton-table-container">
+          <table id="skel-table">
+            <thead>
+              <tr>
+                <th>Joint</th>
+                <th>X</th>
+                <th>Y</th>
+                <th>Z</th>
+              </tr>
+            </thead>
+            <tbody id="skel-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
-async function startCamera(id) {
-  const cfg = getCardConfig(id);
-  log(`Starting ${id} @ ${cfg.color_width}×${cfg.color_height} ${cfg.fps}fps...`);
-  try {
-    const res = await api('POST', `/api/cameras/${id}/start`, cfg);
-    if (res.detail) { log(`${id} error: ${res.detail}`, 'error'); return; }
-    log(`${id} started`, 'ok');
-    setRunning(id, true);
-  } catch (e) {
-    log(`Failed to start ${id}: ${e}`, 'error');
-  }
-}
+  </div>
 
-async function stopCamera(id) {
-  log(`Stopping ${id}...`);
-  try {
-    await api('POST', `/api/cameras/${id}/stop`);
-  } catch (e) {
-    log(`Stop request failed: ${e}`, 'error');
-  }
-  // Always update UI regardless of request outcome.
-  setRunning(id, false);
-}
+  <div class="skeleton-panel" id="process-panel">
+    <div class="skeleton-header">
+      <span class="title">Process Recordings</span>
+      <button class="danger" data-action="toggleProcess">✕ Close</button>
+    </div>
+    <div class="process-body" id="process-body">
 
-function setRunning(id, running) {
-  if (!state[id]) state[id] = {};
-  state[id].running = running;
-  const card    = document.getElementById('card-' + id);
-  const dot     = document.getElementById('dot-' + id);
-  const liveTag = document.getElementById('live-tag-' + id);
-  const btnStart = document.getElementById('btn-start-' + id);
-  const btnStop  = document.getElementById('btn-stop-' + id);
-  if (!card) return;
-  card.className = 'camera-card' + (running ? ' running' : '');
-  if (dot)     dot.className     = 'dot' + (running ? ' alive' : '');
-  if (liveTag) liveTag.style.display = running ? '' : 'none';
-  if (btnStart) btnStart.disabled = running;
-  if (btnStop)  btnStop.disabled  = !running;
-  if (running) attachStreams(id);
-  else         detachStreams(id);
-}
+      <!-- LEFT COLUMN -->
+      <div class="process-controls-left" id="process-controls-left">
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-process-mode-smooth" class="primary" data-action="setProcessMode"
+            data-mode="smooth">Smoothing</button>
+          <button id="btn-process-mode-dataset" data-action="setProcessMode" data-mode="dataset">Robot Dataset</button>
+        </div>
 
-async function startAll() {
-  for (const id of Object.keys(state))
-    if (!state[id].running) await startCamera(id);
-}
+        <!-- SMOOTHING controls -->
+        <div id="process-smooth-controls">
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button data-action="loadProcessRecordings" style="font-size: 11px;">⟳ Refresh</button>
+            <span id="process-page-info" style="font-size: 11px; color: var(--muted);"></span>
+            <button id="btn-process-prev" data-action="processPrevPage" style="font-size: 11px;" disabled>◀ Prev</button>
+            <button id="btn-process-next" data-action="processNextPage" style="font-size: 11px;">Next ▶</button>
+          </div>
+          <div id="process-rec-list"
+            style="font-size: 12px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px;">
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <label for="process-win-len" style="font-size: 11px;">Window:</label>
+            <input type="number" id="process-win-len" value="7" min="3" max="31" step="2"
+              style="width: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 12px;">
+            <label for="process-poly" style="font-size: 11px;">Poly:</label>
+            <input type="number" id="process-poly" value="2" min="1" max="5"
+              style="width: 70px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 12px;">
+          </div>
+          <button id="btn-process-smooth" class="primary" data-action="processSmoothSelected" disabled style="width:100%;">Smooth Selected</button>
+          <div id="process-status" style="font-size: 11px; color: var(--muted);"></div>
+          <div id="process-conversion-status"
+            style="font-size: 11px; max-height: 120px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px; display: none;">
+          </div>
+        </div>
 
-async function stopAll() {
-  for (const id of Object.keys(state))
-    if (state[id].running) await stopCamera(id);
-}
+        <!-- DATASET controls -->
+        <div id="process-dataset-controls" style="display:none;flex-direction:column;gap:8px;">
+          <div style="display:flex;gap:4px;align-items:center;">
+            <button data-action="loadPreparedRecordings" style="font-size:11px;">⟳ Refresh</button>
+            <span id="process-ds-page-info" style="font-size:11px;color:var(--muted);"></span>
+          </div>
+          <div id="process-ds-cln-list"
+            style="font-size:12px;max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <label for="process-ds-robot" style="font-size:11px;">Robot:</label>
+            <select id="process-ds-robot"
+              style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:12px;">
+              <option value="ur10">UR10</option>
+              <option value="iiwa14">KUKA iiwa14</option>
+            </select>
+          </div>
+          <div style="font-size:11px;">
+            <label>Base offset</label>
+            <div style="display:flex;gap:4px;align-items:center;">
+              X: <input type="number" id="process-ds-base-x" value="0" step="0.1"
+                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
+              Y: <input type="number" id="process-ds-base-y" value="0" step="0.1"
+                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
+              Z: <input type="number" id="process-ds-base-z" value="0" step="0.1"
+                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
+            </div>
+          </div>
+          <div style="font-size:11px;">
+            <label>Target offset</label>
+            <div style="display:flex;gap:4px;align-items:center;">
+              X: <input type="number" id="process-ds-target-x" value="0" step="0.1"
+                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
+              Y: <input type="number" id="process-ds-target-y" value="0" step="0.1"
+                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
+              Z: <input type="number" id="process-ds-target-z" value="0" step="0.1"
+                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <label for="process-ds-scale" style="font-size:11px;">Scale:</label>
+            <input type="number" id="process-ds-scale" value="1.0" min="0.1" max="10" step="0.1"
+              style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
+          </div>
+          <button id="btn-process-ds-convert" class="primary" disabled style="width:100%;" data-action="convertDataset">Convert to Dataset</button>
+          <div id="process-ds-status" style="font-size: 11px; color: var(--muted);"></div>
+        </div>
+      </div>
 
-checkServer();
-setInterval(checkServer, 5000);
-scanDevices();
-</script>
+      <!-- MIDDLE COLUMN -->
+      <div class="process-stream" id="process-stream">
+        <div style="color:var(--muted);padding:20px;text-align:center;">Select a recording to view</div>
+      </div>
+
+      <!-- RIGHT COLUMN -->
+      <div class="process-controls-right" id="process-controls-right">
+
+        <!-- SMOOTHING viz controls -->
+        <div id="process-smooth-viz-controls">
+          <div style="display:flex;gap:4px;align-items:center;">
+            <button data-action="loadPreparedRecordings" style="font-size:11px;">⟳ Refresh</button>
+            <span id="process-cln-info" style="font-size:11px;color:var(--muted);"></span>
+          </div>
+          <div id="process-cln-list"
+            style="font-size:12px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
+          </div>
+          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
+            <label style="font-size:11px;"><input type="checkbox" id="smooth-toggle-raw" checked data-change="applySmoothConfig"> Show Original</label>
+            <label style="font-size:11px;"><input type="checkbox" id="smooth-toggle-smooth" checked data-change="applySmoothConfig"> Show Smooth</label>
+            <label style="font-size:11px;">Axes length:
+              <input type="number" id="smooth-axes-length" value="1.0" min="0.1" max="10" step="0.1"
+                     data-change="applySmoothConfig" style="width:60px;">
+            </label>
+            <label style="font-size:11px;">Center on:</label>
+            <div style="display:flex;gap:10px;font-size:11px;">
+              <label><input type="radio" name="smooth-center" value="world" checked data-change="applySmoothConfig"> World</label>
+              <label><input type="radio" name="smooth-center" value="robot" data-change="applySmoothConfig"> Robot</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- DATASET viz controls -->
+        <div id="process-dataset-viz-controls" style="display:none;flex-direction:column;gap:6px;">
+          <div style="display:flex;gap:4px;align-items:center;">
+            <button data-action="loadVizOutputs" style="font-size:11px;">⟳ Refresh</button>
+            <span id="process-viz-info" style="font-size:11px;color:var(--muted);"></span>
+          </div>
+          <div id="process-viz-output-list"
+            style="font-size:12px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
+          </div>
+          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
+            <label style="font-size:11px;">Center on:</label>
+            <div style="display:flex;gap:10px;font-size:11px;">
+              <label><input type="radio" name="viz-center" value="world" checked data-change="applyVizConfig"> World</label>
+              <label><input type="radio" name="viz-center" value="robot" data-change="applyVizConfig"> Robot</label>
+            </div>
+            <label style="font-size:11px;">Axes:
+              <input type="number" id="viz-axes-length" value="2.0" min="0.5" max="10" step="0.1"
+                     data-change="applyVizConfig" style="width:60px;">
+            </label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px;">
+              <label><input type="checkbox" id="viz-toggle-board" checked data-change="applyVizConfig"> Board</label>
+              <label><input type="checkbox" id="viz-toggle-cameras" checked data-change="applyVizConfig"> Cameras</label>
+              <label><input type="checkbox" id="viz-toggle-neutral" checked data-change="applyVizConfig"> Neutral EE</label>
+              <label><input type="checkbox" id="viz-toggle-human-trail" checked data-change="applyVizConfig"> Human Trail</label>
+              <label><input type="checkbox" id="viz-toggle-robot-trail" checked data-change="applyVizConfig"> Robot Trail</label>
+              <label><input type="checkbox" id="viz-toggle-base-to-ee" checked data-change="applyVizConfig"> Base→EE</label>
+              <label><input type="checkbox" id="viz-toggle-debug" checked data-change="applyVizConfig"> Debug</label>
+              <label><input type="checkbox" id="viz-toggle-reach" checked data-change="applyVizConfig"> Reach Sphere</label>
+              <label><input type="checkbox" id="viz-toggle-fk" checked data-change="applyVizConfig"> FK Arm</label>
+              <label><input type="checkbox" id="viz-toggle-ee-target" checked data-change="applyVizConfig"> EE Targets</label>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+
+
+  <div class="grid" id="grid">
+    <div class="empty-state">
+      <h2>No cameras detected</h2>
+      <p>Click "Scan devices" to discover connected cameras</p>
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <script type="module" src="/static/js/main.js"></script>
 </body>
+
 </html>

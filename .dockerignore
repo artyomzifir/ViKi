@@ -1,0 +1,19 @@
+# Ignore version control
+.git
+.gitignore
+
+# Ignore dependencies and package managers
+node_modules/
+venv/
+.venv/
+ENV/
+
+# Ignore IDE settings and OS junk
+.idea/
+.vscode/
+.DS_Store
+
+# Ignore build outputs/logs
+dist/
+build/
+*.log

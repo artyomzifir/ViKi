@@ -18,7 +18,6 @@ import numpy as np
 
 @dataclass
 class CameraIntrinsics:
-    """Pinhole camera intrinsic parameters."""
     fx: float
     fy: float
     cx: float
@@ -40,16 +39,19 @@ class Frame:
     depth             : np.ndarray  HxW,   uint16, millimetres
     timestamp_us      : int         capture time, microseconds (device monotonic clock)
     device_id         : str         unique device identifier (serial number or alias)
+    aligned_depth     : np.ndarray | None  HxW, uint16, SDK-aligned depth
     host_timestamp_us : int         host-clock time (time.time_ns()//1000) when the frame
-                                    arrived in the worker thread; set by CameraManager,
-                                    not by the backend. Used for cross-camera sync.
+                                     arrived in the worker thread; set by CameraManager,
+                                     not by the backend. Used for cross-camera sync.
     color_intrinsics : CameraIntrinsics | None
     depth_intrinsics : CameraIntrinsics | None
     """
+
     color: np.ndarray
     depth: np.ndarray
     timestamp_us: int
     device_id: str
+    aligned_depth: Optional[np.ndarray] = None
     host_timestamp_us: int = 0
     color_intrinsics: Optional[CameraIntrinsics] = None
     depth_intrinsics: Optional[CameraIntrinsics] = None
@@ -66,6 +68,7 @@ class SyncedFrameGroup:
     offsets_us[device_id] = frame.host_timestamp_us - sync_timestamp_us
     Negative means the frame arrived before the tick (early); positive means after (late).
     """
+
     frames: dict
     sync_timestamp_us: int
     offsets_us: dict
@@ -126,6 +129,17 @@ class CameraBackend(ABC):
     @abstractmethod
     def is_running(self) -> bool:
         """True if the stream is active."""
+
+    @abstractmethod
+    def project_color_to_depth(
+        self, u: float, v: float, z: float
+    ) -> tuple[float, float] | None:
+        return None
+
+    def deproject_2d_to_3d(
+        self, u: float, v: float, z: float
+    ) -> tuple[float, float, float] | None:
+        return None
 
     # ------------------------------------------------------------------
     # Context manager — implemented here, no need to override

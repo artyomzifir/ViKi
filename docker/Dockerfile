@@ -1,5 +1,5 @@
 # docker/Dockerfile
-FROM ubuntu:22.04
+FROM ubuntu:22.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -8,9 +8,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # ── System deps ───────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 apt-transport-https \
+    git \
     libusb-1.0-0 libgl1 libglib2.0-0 \
     libgl1-mesa-dri mesa-vulkan-drivers \
+    libgles2-mesa \
+    libegl1-mesa \
+    libglvnd0 \
     python3 python3-pip \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Intel RealSense SDK ───────────────────────────────────────────────────────
@@ -44,14 +49,28 @@ RUN echo 'libk4a1.4 libk4a1.4/accepted-eula-hash string 0f5d5c5de396e4fee4c0753a
 # ── Python deps ───────────────────────────────────────────────────────────────
 # No pyk4a — we use our own ctypes wrapper over libk4a.so
 WORKDIR /app
+
 COPY pyproject.toml .
-RUN pip3 install --no-cache-dir \
-    fastapi "uvicorn[standard]" \
-    pyrealsense2 \
-    opencv-python-headless numpy
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install pip-tools typing_extensions && \
+    pip-compile pyproject.toml -o requirements.txt && \
+    pip install -r requirements.txt
+
+RUN mkdir -p viki && touch viki/__init__.py
+RUN pip install --no-deps -e .
+
+# Copy real source (will be overwritten by bind mount at runtime anyway)
+COPY ./viki/ ./viki/
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 RUN chmod +x /app/docker/entrypoint.sh
 
+# Production target
+FROM base AS backend
+CMD ["/bin/bash"]
+
+# Test target
+FROM base AS test
+RUN --mount=type=cache,target=/root/.cache/pip pip install ".[dev]"
 CMD ["/bin/bash"]

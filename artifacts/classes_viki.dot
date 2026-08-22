@@ -1,0 +1,34 @@
+digraph "viki_mini" {
+  rankdir=BT;
+  charset="utf-8";
+  node [shape="box", style="rounded", fontname="Helvetica", fontsize=11];
+  edge [fontname="Helvetica", fontsize=9, color="#555555"];
+
+  CameraManager    [label="CameraManager"];
+  CameraBackend    [label="CameraBackend\n(+RealSense/Kinect)"];
+  CalibrationManager [label="CalibrationManager\nextrinsics/intrinsics"];
+  SkeletonPipeline [label="SkeletonPipeline\nprocess() -> 3D"];
+  SkeletonRecorder [label="SkeletonRecorder\n-> rec-*.npz", shape="box"];
+  PreparationPipeline [label="PreparationPipeline\nraw -> prepared"];
+  retarget         [label="retarget()\nIK / PINK", shape="ellipse"];
+  App              [label="App (FastAPI)"];
+  recNpz           [label="rec-*.npz\n(raw)", shape="folder"];
+  clnNpz           [label="cln-*.npz\n(prepared)", shape="folder"];
+  h5               [label="robot .h5\ndataset", shape="folder"];
+
+  CameraManager -> CameraBackend [label="backends + workers", arrowtail="diamond", dir="both"];
+  SkeletonPipeline -> CameraManager [label="reads frames", style="dashed", arrowhead="open"];
+  SkeletonPipeline -> CalibrationManager [label="uses extrinsics", style="dashed", arrowhead="open"];
+  SkeletonPipeline -> SkeletonRecorder [label="feeds results", style="dashed", arrowhead="open"];
+  SkeletonRecorder -> recNpz [label="writes", style="dashed", arrowhead="open"];
+  PreparationPipeline -> recNpz [label="reads raw", style="dashed", arrowhead="open"];
+  PreparationPipeline -> clnNpz [label="prepared", style="dashed", arrowhead="open"];
+  retarget -> clnNpz [label="consumes", style="dashed", arrowhead="open"];
+  retarget -> h5 [label="dataset", style="dashed", arrowhead="open"];
+  App -> SkeletonPipeline [label="runs", style="solid", arrowhead="vee"];
+  App -> retarget [label="calls", style="solid", arrowhead="vee"];
+  App -> CameraManager [style="dashed", arrowhead="open"];
+  App -> CalibrationManager [style="dashed", arrowhead="open"];
+  App -> SkeletonRecorder [style="dashed", arrowhead="open"];
+  App -> PreparationPipeline [style="dashed", arrowhead="open"];
+}

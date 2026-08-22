@@ -1,3 +1,15 @@
+rec_*.json
+*.npy
+extrinsics.json
+timestamps.json
+intrinsics.json
+*.zip
+depth/
+data/
+debug/
+.slim/
+tools/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -98,7 +110,7 @@ ipython_config.py
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
-# uv.lock
+uv.lock
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -195,11 +207,11 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#   and can be added to the global gitignore or merged into this file. However, if you prefer,
 #   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+.vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
@@ -216,3 +228,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Macos
+.DS_Store
+
+# Skeleton help folders
+skeleton_models/
+# skeleton_tests/
+models/
+
+
+AGENTS.md
+
+assets/
+node_modules/
+
+
+robot_out/
+data/robot_out/
+skeleton_smoothed/
+data/skeleton_smoothed/
+skeleton_recs/
+data/skeleton_recs/

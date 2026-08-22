@@ -1,180 +1,102 @@
 """
 viki.server.app
+---------------
+Application assembly only: lifespan resources, static files, router wiring.
+All request logic lives in ``viki.server.routes`` and ``viki.server.streams``.
 """
+
 from __future__ import annotations
 
-import time
+import logging
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import cv2
-import numpy as np
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, APIRouter
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
+from viki.calibration.manager import CalibrationManager
 from viki.capture.manager import CameraManager
+from viki.capture.sync import MultiCameraSync
+from viki.skeleton.pipeline import SkeletonPipeline
+from viki.skeleton.recorder import SkeletonRecorder
+from viki.server.skeleton_worker import SkeletonWorker
+from importlib import import_module
+
+from viki.server.routes import (
+    calibration,
+    cameras,
+    skeleton,
+    recording,
+    system,
+    optimization,
+    dataset,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan context manager.
+
+    Initialises and starts:
+        - CameraManager (all cameras)
+        - CalibrationManager (for intrinsics/extrinsics)
+        - MultiCameraSync (for software synchronisation)
+        - SkeletonPipeline, SkeletonRecorder, and SkeletonWorker (background thread)
+
+    On shutdown, stops the skeleton worker and all cameras.
+    """
     app.state.manager = CameraManager()
+    app.state.calibrator = CalibrationManager(app.state.manager)
+    app.state.calibrator.load_all_extrinsics()
+    app.state.sync = MultiCameraSync(app.state.manager)
+    app.state.skeleton_pipeline = SkeletonPipeline(
+        app.state.calibrator, app.state.manager
+    )
+    from viki.skeleton.models import LM
+
+    app.state.skeleton_recorder = SkeletonRecorder(
+        filter_indices=[LM.WRIST, LM.MIDDLE_MCP, LM.THUMB_CMC]
+    )
+
+    app.state.skeleton_worker = SkeletonWorker(
+        app.state.manager,
+        app.state.sync,
+        app.state.skeleton_pipeline,
+        app.state.skeleton_recorder,
+    )
+    app.state.skeleton_worker.start()
+    from viki.optimization.preparation.processor import PreparationPipeline
+
+    app.state.skeleton_processor = PreparationPipeline()
+
     yield
+    app.state.skeleton_worker.stop()
     app.state.manager.stop_all()
 
 
 app = FastAPI(title="ViKi Capture Server", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-
-class StartRequest(BaseModel):
-    fps: int = 30
-    color_width: int = 640
-    color_height: int = 480
-    depth_mode: str = "NFOV_UNBINNED"
-    # Kinect-only: hardware sync wiring (ignored for RealSense)
-    # 0 = standalone, 1 = master, 2 = subordinate
-    wired_sync_mode: int = 0
-    # Subordinate capture delay relative to master trigger, microseconds.
-    # A small positive value (e.g. 160) staggers the depth IR projectors.
-    subordinate_delay_us: int = 0
-    # Require color and depth to arrive in the same capture (recommended for sync recording).
-    synchronized_images_only: bool = False
+router = APIRouter(prefix="/api", tags=["api"])
+router.include_router(cameras.router)
+router.include_router(calibration.router)
+router.include_router(skeleton.router)
+router.include_router(system.router)
+router.include_router(recording.router)
+router.include_router(optimization.router)
+router.include_router(dataset.router)
+app.include_router(router)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    """Serve the main frontend HTML page."""
     return (STATIC_DIR / "index.html").read_text()
-
-
-@app.get("/api/devices")
-def list_devices():
-    return app.state.manager.list_devices()
-
-
-@app.post("/api/cameras/{device_id}/start")
-def start_camera(device_id: str, req: StartRequest):
-    try:
-        app.state.manager.start(
-            device_id,
-            fps=req.fps,
-            color_width=req.color_width,
-            color_height=req.color_height,
-            depth_mode=req.depth_mode,
-            wired_sync_mode=req.wired_sync_mode,
-            subordinate_delay_us=req.subordinate_delay_us,
-            synchronized_images_only=req.synchronized_images_only,
-        )
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-    return {"status": "started", "device_id": device_id}
-
-
-@app.post("/api/cameras/{device_id}/stop")
-async def stop_camera(device_id: str):
-    app.state.manager.stop(device_id)
-    return {"status": "stopped", "device_id": device_id}
-
-
-@app.get("/api/cameras/{device_id}/info")
-async def camera_info(device_id: str):
-    info = app.state.manager.get_info(device_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Camera not found or not started")
-    return info
-
-
-@app.get("/api/cameras/{device_id}/stream")
-def colour_stream(device_id: str):
-    return StreamingResponse(
-        _mjpeg_gen(app.state.manager, device_id, "color"),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-    )
-
-@app.get("/api/cameras/{device_id}/depth")
-def depth_stream(device_id: str):
-    return StreamingResponse(
-        _mjpeg_gen(app.state.manager, device_id, "depth"),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-    )
-
-_DEPTH_EMA_ALPHA = 0.05  # range settles over ~20 frames (~0.67 s at 30 fps)
-# Minimum fraction of pixels that must be valid for a depth frame to be displayed.
-# Frames below this threshold (blank / missing depth) are dropped and the last
-# good image is held instead.
-_DEPTH_MIN_VALID_FRACTION = 0.05
-
-
-def _mjpeg_gen(mgr: CameraManager, device_id: str, kind: str):
-    last_ts = -1
-    # Depth-stream state — only used when kind == "depth"
-    d_min: float = 0.0
-    d_max: float = 1.0
-    ema_initialised = False
-    last_good_depth_img: np.ndarray | None = None
-
-    while True:
-        frame = mgr.latest_frame(device_id)
-
-        if frame is None:
-            if device_id not in mgr.active_device_ids():
-                return
-            img = _placeholder(640, 480, f"{device_id}: not started")
-            last_ts = -1
-        elif frame.host_timestamp_us == last_ts:
-            time.sleep(0.005)
-            continue
-        else:
-            last_ts = frame.host_timestamp_us
-            if kind == "color":
-                img = frame.color
-            else:
-                depth = frame.depth
-                valid = depth[depth > 0]
-                valid_fraction = valid.size / max(depth.size, 1)
-
-                if valid_fraction < _DEPTH_MIN_VALID_FRACTION:
-                    # Blank or mostly-zero frame (missing depth capture from SDK).
-                    # Hold the last good image so the stream doesn't flash black.
-                    if last_good_depth_img is None:
-                        time.sleep(0.005)
-                        continue
-                    img = last_good_depth_img
-                else:
-                    # Update EMA range using 2nd/98th percentile to ignore outliers.
-                    p2  = float(np.percentile(valid, 2))
-                    p98 = float(np.percentile(valid, 98))
-                    if not ema_initialised:
-                        d_min, d_max = p2, p98
-                        ema_initialised = True
-                    else:
-                        d_min = _DEPTH_EMA_ALPHA * p2  + (1 - _DEPTH_EMA_ALPHA) * d_min
-                        d_max = _DEPTH_EMA_ALPHA * p98 + (1 - _DEPTH_EMA_ALPHA) * d_max
-
-                    norm = np.clip(
-                        (depth.astype(np.float32) - d_min) / (d_max - d_min + 1e-6), 0, 1
-                    )
-                    img = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_TURBO)
-                    last_good_depth_img = img
-
-        _, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        data = jpeg.tobytes()
-        yield (
-            b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
-            + str(len(data)).encode()
-            + b"\r\n\r\n" + data + b"\r\n"
-        )
-
-
-def _placeholder(w: int, h: int, text: str) -> np.ndarray:
-    img = np.zeros((h, w, 3), dtype=np.uint8)
-    cv2.putText(img, text, (20, h // 2), cv2.FONT_HERSHEY_SIMPLEX,
-                0.7, (80, 80, 80), 2, cv2.LINE_AA)
-    return img

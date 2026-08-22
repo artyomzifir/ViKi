@@ -80,13 +80,15 @@ class RealSenseBackend(CameraBackend):
 
         config.enable_stream(
             rs.stream.color,
-            self._color_res[0], self._color_res[1],
+            self._color_res[0],
+            self._color_res[1],
             rs.format.bgr8,
             self._fps,
         )
         config.enable_stream(
             rs.stream.depth,
-            self._depth_res[0], self._depth_res[1],
+            self._depth_res[0],
+            self._depth_res[1],
             rs.format.z16,
             self._fps,
         )
@@ -123,8 +125,8 @@ class RealSenseBackend(CameraBackend):
         if not color_frame or not depth_frame:
             raise RuntimeError("Failed to retrieve frames from RealSense.")
 
-        color = np.asanyarray(color_frame.get_data())   # HxWx3 BGR uint8
-        depth = np.asanyarray(depth_frame.get_data())   # HxW uint16 mm
+        color = np.asanyarray(color_frame.get_data())  # HxWx3 BGR uint8
+        depth = np.asanyarray(depth_frame.get_data())  # HxW uint16 mm
 
         timestamp_us = int(color_frame.get_timestamp() * 1000)  # ms -> us
 
@@ -169,7 +171,4 @@ class RealSenseBackend(CameraBackend):
     def list_devices() -> list[str]:
         """Return serial numbers of all connected RealSense devices."""
         ctx = rs.context()
-        return [
-            d.get_info(rs.camera_info.serial_number)
-            for d in ctx.query_devices()
-        ]
+        return [d.get_info(rs.camera_info.serial_number) for d in ctx.query_devices()]

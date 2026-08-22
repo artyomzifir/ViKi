@@ -35,10 +35,10 @@ fails.  CameraManager.start_kinect_sync() enforces this order automatically.
 from __future__ import annotations
 
 import time
+import random
 from typing import Callable, Optional
 
 from .base import SyncedFrameGroup
-from .kinect import K4A_WIRED_SYNC_MODE_MASTER, K4A_WIRED_SYNC_MODE_SUBORDINATE
 from .manager import CameraManager
 
 
@@ -66,7 +66,7 @@ class MultiCameraSync:
         self,
         manager: CameraManager,
         sync_fps: int = 15,
-        max_offset_us: int = 16_667,
+        max_offset_us: int = 150000,
         required_devices: Optional[list] = None,
     ) -> None:
         self._manager = manager
@@ -77,11 +77,13 @@ class MultiCameraSync:
     def get_synced_frame(self) -> Optional[SyncedFrameGroup]:
         """
         Attempt to build one synchronised frame group at the current host time.
-
+        
         Returns None if any required camera has no frame within the tolerance
         window (camera not yet started, stalled, or running at lower FPS than
         sync_fps).
         """
+        import logging
+        logger = logging.getLogger(__name__)
         tick_us = time.time_ns() // 1000
         device_ids = (
             self._required_devices
@@ -95,9 +97,13 @@ class MultiCameraSync:
         for dev_id in device_ids:
             frame = self._manager.nearest_frame(dev_id, tick_us)
             if frame is None:
+                if random.random() < 0.01:
+                    logger.warning(f"Sync: {dev_id} has no buffered frames")
                 return None
             offset = frame.host_timestamp_us - tick_us
             if abs(offset) > self._max_offset_us:
+                if random.random() < 0.01:
+                    logger.warning(f"Sync: {dev_id} frame offset {offset}us exceeds tolerance {self._max_offset_us}us")
                 return None
             frames[dev_id] = frame
             offsets[dev_id] = offset

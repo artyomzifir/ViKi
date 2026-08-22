@@ -1,0 +1,31 @@
+x-common: &common
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    target: test
+  network_mode: host
+  privileged: true
+  volumes:
+    - /dev:/dev
+    - /run/udev:/run/udev:ro
+    - /tmp/.X11-unix:/tmp/.X11-unix
+    - ./data:/app/data
+    - ./viki:/app/viki
+    - ./models:/app/models
+    - ./tests:/app/tests
+  environment:
+    - PYTHONUNBUFFERED=1
+    - PYTHONPATH=/app
+    - DISPLAY=${DISPLAY}
+    - LIBGL_ALWAYS_SOFTWARE=1
+    - GALLIUM_DRIVER=llvmpipe
+  devices:
+    - /dev/dri:/dev/dri
+
+services:
+  tests:
+    <<: *common
+    container_name: viki-tests
+    entrypoint: ["/app/docker/entrypoint.sh"]
+    command: ["pytest", "tests/unit_tests"]
+    restart: "no"

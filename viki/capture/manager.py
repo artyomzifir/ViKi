@@ -5,17 +5,30 @@ CameraManager: detects, starts, and owns camera backends.
 Each camera runs in a background thread; the latest frame is always
 available for non-blocking reads by the MJPEG streamer.
 """
+
 from __future__ import annotations
 
+import logging
 import threading
 import time
+import numpy as np
 from collections import deque
 from typing import Optional
 
-from .base import CameraBackend, Frame
+logger = logging.getLogger(__name__)
+from concurrent.futures import ThreadPoolExecutor
+
+from viki.capture.base import Frame, CameraBackend
+from viki.config import (
+    FRAME_BUFFER_SIZE,
+    DEFAULT_FPS,
+    DEFAULT_COLOR_WIDTH,
+    DEFAULT_COLOR_HEIGHT,
+    DEFAULT_DEPTH_MODE,
+)
 
 # Frames kept per camera for timestamp-based sync queries.
-_FRAME_BUFFER_SIZE = 12
+_FRAME_BUFFER_SIZE = FRAME_BUFFER_SIZE
 
 
 class _CameraWorker:
@@ -51,7 +64,9 @@ class _CameraWorker:
         with self._lock:
             if not self._buffer:
                 return None
-            return min(self._buffer, key=lambda f: abs(f.host_timestamp_us - host_timestamp_us))
+            return min(
+                self._buffer, key=lambda f: abs(f.host_timestamp_us - host_timestamp_us)
+            )
 
     def _loop(self) -> None:
         try:
@@ -62,7 +77,10 @@ class _CameraWorker:
                     with self._lock:
                         self._buffer.append(frame)
                 except TimeoutError:
-                    pass  # short timeout, check stop_event and retry
+                    logger.warning(
+                        "[%s] get_frame timed out — frame dropped",
+                        self.backend.device_id,
+                    )
                 except Exception as exc:
                     print(f"[worker:{self.backend.device_id}] error: {exc}")
                     time.sleep(0.1)
@@ -81,6 +99,7 @@ class CameraManager:
 
     def __init__(self) -> None:
         self._workers: dict[str, _CameraWorker] = {}
+        self.calibration: dict[str, dict] = {}
 
     # ── Device discovery ──────────────────────────────────────────────────────
 
@@ -98,12 +117,14 @@ class CameraManager:
 
         try:
             from .realsense import RealSenseBackend
+
             devices["realsense"] = RealSenseBackend.list_devices()
         except Exception as e:
             devices["realsense_error"] = str(e)
 
         try:
             from .kinect import KinectBackend
+
             count = KinectBackend.device_count()
             devices["kinect"] = [f"kinect_{i}" for i in range(count)]
         except Exception as e:
@@ -116,16 +137,18 @@ class CameraManager:
     def start(
         self,
         device_id: str,
-        fps: int = 30,
-        color_width: int = 640,
-        color_height: int = 480,
-        depth_mode: str = "NFOV_UNBINNED",
+        fps: int = DEFAULT_FPS,
+        color_width: int = DEFAULT_COLOR_WIDTH,
+        color_height: int = DEFAULT_COLOR_HEIGHT,
+        depth_mode: str = DEFAULT_DEPTH_MODE,
         **kwargs,
     ) -> None:
         if device_id in self._workers:
             return  # already running
 
-        backend = self._make_backend(device_id, fps, color_width, color_height, depth_mode, **kwargs)
+        backend = self._make_backend(
+            device_id, fps, color_width, color_height, depth_mode, **kwargs
+        )
         worker = _CameraWorker(backend)
         worker.start()
         self._workers[device_id] = worker
@@ -134,10 +157,10 @@ class CameraManager:
         self,
         master_id: str,
         subordinate_ids: list,
-        fps: int = 30,
-        color_width: int = 1280,
-        color_height: int = 720,
-        depth_mode: str = "NFOV_UNBINNED",
+        fps: int = DEFAULT_FPS,
+        color_width: int = DEFAULT_COLOR_WIDTH,
+        color_height: int = DEFAULT_COLOR_HEIGHT,
+        depth_mode: str = DEFAULT_DEPTH_MODE,
         subordinate_delay_us: int = 0,
     ) -> None:
         """
@@ -185,13 +208,11 @@ class CameraManager:
         worker = self._workers.pop(device_id, None)
         if worker:
             worker.stop()
+            worker.join()
 
     def stop_all(self) -> None:
-        workers = [self._workers.pop(did) for did in list(self._workers)]
-        for w in workers:
-            w.stop()   # signal all first (non-blocking)
-        for w in workers:
-            w.join()   # then wait for all backend cleanup to finish
+        with ThreadPoolExecutor() as executor:
+            executor.map(self.stop, list(self._workers))
 
     # ── Frame access ──────────────────────────────────────────────────────────
 
@@ -203,6 +224,11 @@ class CameraManager:
     def latest_frame(self, device_id: str) -> Optional[Frame]:
         worker = self._workers.get(device_id)
         return worker.latest() if worker else None
+
+    def get_backend(self, device_id: str) -> Optional[CameraBackend]:
+        """Return the backend instance for the given device_id."""
+        worker = self._workers.get(device_id)
+        return worker.backend if worker else None
 
     def get_info(self, device_id: str) -> Optional[dict]:
         worker = self._workers.get(device_id)
@@ -221,9 +247,12 @@ class CameraManager:
             if frame.color_intrinsics:
                 ci = frame.color_intrinsics
                 info["color_intrinsics"] = {
-                    "fx": ci.fx, "fy": ci.fy,
-                    "cx": ci.cx, "cy": ci.cy,
-                    "width": ci.width, "height": ci.height,
+                    "fx": ci.fx,
+                    "fy": ci.fy,
+                    "cx": ci.cx,
+                    "cy": ci.cy,
+                    "width": ci.width,
+                    "height": ci.height,
                 }
         return info
 
@@ -240,6 +269,7 @@ class CameraManager:
     ) -> CameraBackend:
         if device_id.startswith("kinect_"):
             from .kinect import KinectBackend
+
             idx = int(device_id.split("_")[1])
             return KinectBackend(
                 device_index=idx,
@@ -250,6 +280,7 @@ class CameraManager:
             )
         else:
             from .realsense import RealSenseBackend
+
             return RealSenseBackend(
                 serial=device_id,
                 color_resolution=(color_width, color_height),
