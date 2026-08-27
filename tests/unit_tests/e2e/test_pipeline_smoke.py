@@ -53,21 +53,18 @@ def test_pipeline_smoke(tmp_path):
         n_frames = len(d["positions"])
     assert n_frames > 0
 
-    # retarget is exercised separately (slow IK + model download); here we hand a
-    # synthetic plan.h5 to the replay leg so the artifact chain stays covered.
+    # retarget: the real PINK solve needs a network git-clone of the robot
+    # description on first run, so it is covered by tests/unit_tests/retarget/
+    # test_retarget_episode.py (skips cleanly offline) rather than here. Hand the
+    # replay leg a synthetic plan.h5 so the artifact chain stays exercised.
+    from viki.episode import mark_stage
     from viki.replay import replay_episode
     from viki.retarget.archive import write_hdf5_archive
 
     write_hdf5_archive(
         ep.plan_h5,
-        {
-            "q_scene_smooth": np.zeros((n_frames, 6), dtype=np.float64),
-            "dt": 1 / 30.0,
-            "robot": "",  # empty -> screen skips the model-load joint check (fast)
-        },
+        {"q_scene_smooth": np.zeros((n_frames, 6)), "dt": 1 / 30.0, "robot": ""},
     )
-    from viki.episode import mark_stage
-
     mark_stage(ep, "retarget", robot="")
 
     # replay: plan.h5 -> replay.h5 (dry-run)
