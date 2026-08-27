@@ -335,3 +335,32 @@ def estimate_fps(timestamps_us: np.ndarray) -> float:
     if len(dt) == 0:
         return 30.0
     return float(1.0 / np.median(dt))
+
+
+def prepare_episode(ep, window_length: int = 7, polyorder: int = 2) -> str:
+    """
+    Episode-aware wrapper around :meth:`PreparationPipeline.smooth_recording`:
+    ``ep.rec_npz`` -> ``ep.cln_npz``. Returns the cln.npz path.
+    """
+    import shutil
+    import tempfile
+
+    from viki.episode import mark_stage
+
+    if not ep.rec_npz.exists():
+        raise FileNotFoundError(f"no rec.npz for episode {ep.id}; run extract first")
+
+    with tempfile.TemporaryDirectory() as stage:
+        stage_p = Path(stage)
+        shutil.copy(ep.rec_npz, stage_p / "rec-ep.npz")
+        pp = PreparationPipeline()
+        pp.recs_dir = stage_p
+        pp.smoothed_dir = stage_p
+        _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
+        shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
+
+    with np.load(ep.cln_npz) as d:
+        n = len(d["positions"])
+        obj_rel = "T_obj_hand" in d
+    mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel))
+    return str(ep.cln_npz)

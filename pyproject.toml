@@ -30,6 +30,9 @@ export = [
     "lerobot",
 ]
 
+[project.scripts]
+viki = "viki.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

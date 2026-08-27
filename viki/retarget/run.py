@@ -789,3 +789,52 @@ def evaluate_saved_traj(sample_path: Path, traj_path: Path, robot: RobotConfig, 
         out=str(out_prefix),
     )
     return evaluate(args)
+
+
+def retarget_episode(ep, robot: str | None = None) -> str:
+    """
+    Episode-aware entry point: ``ep.cln_npz`` -> ``ep.plan_h5``. Config-driven
+    (RETARGET_* keys). Returns the plan.h5 path.
+    """
+    from viki import config as _cfg
+    from viki.episode import mark_stage
+    from viki.prepare.run import estimate_fps
+
+    if not ep.cln_npz.exists():
+        raise FileNotFoundError(f"no cln.npz for episode {ep.id}; run prepare first")
+
+    with np.load(ep.cln_npz) as d:
+        positions = np.asarray(d["positions"])
+        rotations = np.asarray(d["rotations"])
+        validity = np.asarray(d["valid"])
+        fps = estimate_fps(np.asarray(d["timestamps"]))
+
+    rc = normalize_robot(robot or getattr(_cfg, "RETARGET_DEFAULT_ROBOT", "ur10"))
+    cfg = RunConfig(
+        robot=rc,
+        working_hand=getattr(_cfg, "HAND_TO_DETECT", "right"),
+        landmark_sg_window=getattr(_cfg, "RETARGET_LANDMARK_SG_WINDOW", 7),
+        landmark_sg_polyorder=getattr(_cfg, "RETARGET_LANDMARK_SG_POLYORDER", 2),
+        ik_position_cost=float(getattr(_cfg, "RETARGET_IK_POSITION_COST", 1.0)),
+        ik_orientation_cost=float(getattr(_cfg, "RETARGET_IK_ORIENTATION_COST", 0.0)),
+        ik_posture_cost=float(getattr(_cfg, "RETARGET_IK_POSTURE_COST", 1e-3)),
+        target_mode=getattr(_cfg, "RETARGET_TARGET_MODE", "wrist_position"),
+        ik_substeps=getattr(_cfg, "RETARGET_IK_SUBSTEPS", 20),
+        ik_solver=getattr(_cfg, "RETARGET_IK_SOLVER", "quadprog"),
+        approach_sec=getattr(_cfg, "RETARGET_APPROACH_SEC", 5.0),
+        joint_sg_window=getattr(_cfg, "RETARGET_JOINT_SG_WINDOW", 0),
+        joint_sg_polyorder=getattr(_cfg, "RETARGET_JOINT_SG_POLYORDER", 3),
+        limit_frames=None,
+        recenter_to_neutral=getattr(_cfg, "RETARGET_RECENTER_TO_NEUTRAL", False),
+        trajectory_scale=float(getattr(_cfg, "RETARGET_TRAJECTORY_SCALE", 1.0)),
+        trajectory_scale_origin="initial_wrist",
+        align_initial_orientation=False,
+        base_offset=tuple(getattr(_cfg, "ROBOT_BASE_OFFSET", (0.0, 0.0, 0.0))),
+        target_offset=tuple(getattr(_cfg, "TARGET_OFFSET", (0.0, 0.0, 0.0))),
+    )
+    summary = retarget_from_poses(positions, rotations, validity, fps, ep.plan_h5, cfg)
+    mark_stage(
+        ep, "retarget", robot=rc.description,
+        mean_pos_err_mm=summary.get("mean_not_aligned_pos_error_mm"),
+    )
+    return str(ep.plan_h5)
