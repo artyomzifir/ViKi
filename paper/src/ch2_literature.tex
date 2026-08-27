@@ -1,0 +1,390 @@
+\chapter{Literature Review}
+\label{ch:lit}
+
+\section{Preamble}
+\label{sec:lit-preamble}
+
+This chapter surveys the state of knowledge relevant to converting passively
+recorded human manipulation demonstrations into robot-executable datasets. It
+is organised not chronologically but by the architectural elements of the
+proposed system, so that for every design decision taken in
+Chapter~\ref{ch:method} the alternatives considered and the reason for the
+choice are visible.
+
+Section~\ref{sec:lit-hand} examines how the human hand is represented, from
+full parametric meshes to the minimal wrist-pose-plus-gripper abstraction.
+Section~\ref{sec:lit-retarget} contrasts sequential and single-cost-functional
+retargeting formulations and reviews the solvers used to realise them.
+Section~\ref{sec:lit-repr} compares object-centric and world-frame task
+representations. Section~\ref{sec:lit-calib} covers multi-camera RGB-D
+calibration, depth fusion and cross-device synchronisation, with emphasis on
+reported quantitative accuracy. Section~\ref{sec:lit-dataset} reviews dataset
+formats, downstream policies and demonstration curation.
+Section~\ref{sec:positioning} positions \viki\ against the nearest published
+systems, and Section~\ref{sec:lit-conclusion} states the resulting
+methodological choices.
+
+Sources were drawn from arXiv (\texttt{cs.RO}, \texttt{cs.CV}, \texttt{cs.LG}),
+the proceedings of CoRL, RSS, ICRA, IROS, CVPR and NeurIPS, peer-reviewed
+sensor and calibration literature, and vendor documentation for the depth
+cameras and solvers employed. Where a source is a recent preprint whose
+peer-review status could not be confirmed, this is stated explicitly.
+
+\section{Representing the Human Hand}
+\label{sec:lit-hand}
+
+\subsection{Full parametric reconstruction}
+
+A large body of work recovers the complete kinematics of the demonstrator.
+OKAMI \cite{okami} combines SMPL-H for the body with MANO for the hand and
+retargets the two separately. DexCanvas \cite{dexcanvas} builds a human--robot
+correspondence dataset by fitting MANO to data from twenty-two infrared motion
+capture cameras and two RGB-D sensors. DexMV \cite{dexmv} likewise recovers a
+full MANO hand together with object pose from video before translating the
+demonstration into simulation.
+
+Full reconstruction yields a rich representation---the pose of every finger
+joint---and is necessary when the target embodiment is a multi-fingered
+dexterous hand. It also introduces a heavy perception stack and an additional,
+poorly characterised error source: the mesh fit itself. For a parallel-jaw
+gripper, most of that representational richness is discarded downstream.
+
+\subsection{Minimal representation: wrist pose and gripper state}
+
+The alternative, adopted in this work, represents the hand as a wrist pose in
+$\SE$ together with a scalar or binary gripper state. This is not a concession
+made for tractability; it is the representation used by the mainstream of
+current teleoperation systems. Open-TeleVision \cite{opentv} maps the operator's
+wrist pose to the arm end-effector through closed-loop inverse kinematics and
+encodes a parallel gripper by the single thumb--index vector. Bunny-VisionPro
+\cite{bunny} and ACE \cite{ace} adopt the same decomposition, ACE additionally
+demonstrating that it transfers across dexterous hands, parallel grippers and
+quadrupeds.
+
+Methodological support for down-weighting the wrist comes from the ablation
+study of Xin et al.\ \cite{keyobj}, who assemble a comprehensive retargeting
+objective---global hand pose, overall hand shape, relative fingertip positions
+and fingertip orientations---and remove terms one at a time. They find that
+precise tracking of the global wrist pose is frequently unnecessary and can
+degrade fingertip accuracy, and consequently replace the wrist-position
+objective with a thumb-tip objective while regularising wrist orientation only
+weakly. The implication for a wrist-plus-gripper representation is that the
+wrist target should enter the optimisation as a weighted soft task rather than
+a hard constraint.
+
+\subsection{Egocentric and monocular capture}
+
+Several systems reduce capture-hardware requirements further. EgoMimic
+\cite{egomimic} records bare-handed demonstrations through Project Aria glasses
+and co-trains on human and robot data. DexWild \cite{dexwild} collects
+in-the-wild bare-hand data through a low-cost portable device and likewise
+co-trains. A recent egocentric RGB-D system \cite{shadowing} generates
+trajectories offline using analytic damped-least-squares inverse kinematics and
+replays them on a low-cost arm. These works confirm a trend toward lighter
+capture rigs, but each accepts monocular or single-view geometry, and none
+combines it with the metric multi-view accuracy that the present work requires.
+
+\section{Retargeting Formulations}
+\label{sec:lit-retarget}
+
+\subsection{The single cost functional}
+
+The prevailing modern formulation poses retargeting as a constrained nonlinear
+least-squares or quadratic program over the robot configuration $\bq_t$ at each
+timestep, minimising a weighted sum of a data-fidelity term and a temporal
+smoothness term subject to joint limits. AnyTeleop \cite{anyteleop} gives the
+canonical instance: the objective sums, over keypoints, the squared residual
+between a scaled human keypoint vector and the corresponding robot
+forward-kinematics vector, plus a first-order penalty on configuration change
+between consecutive frames. The accompanying \texttt{dex-retargeting} library
+exposes a vector optimiser for real-time teleoperation, a position optimiser
+explicitly recommended for offline dataset processing, and a contact-aware
+DexPilot optimiser; it is built on Pinocchio and solved with sequential
+quadratic programming.
+
+Two refinements are directly relevant here. First, per-term confidence
+weighting: in the formulation reported by Open-TeleVision \cite{opentv}, each
+keypoint residual is scaled by a distance-dependent switching weight that
+increases when a pinch is detected. The mechanism is precisely analogous to
+weighting by a per-frame perception confidence, and it establishes that
+weighting individual data terms by a scalar signal is accepted practice.
+Second, second-order smoothness: DexFlow \cite{dexflow} augments the standard
+objective with a dynamic smoothing weight and Hessian regularisation to enforce
+$C^2$ continuity, penalising curvature and not merely velocity. Robustification
+by a Huber loss on the data term, reported in recent dexterous teleoperation
+work \cite{dexteleop0}, provides a mechanism for rejecting perception outliers
+inside the optimiser rather than smoothing them away beforehand.
+
+\subsection{The sequential pattern and its critique}
+
+Against this, the sequential pattern---filter the observed task-space
+trajectory, solve inverse kinematics per frame, filter the joint output---
+remains common in offline video-to-robot pipelines. Its deficiency is
+structural rather than empirical. Filtering is applied in task space, whereas
+the smoothness requirement is on the joint trajectory; because inverse
+kinematics is nonlinear, a smooth Cartesian input does not imply a smooth joint
+output, particularly near singularities. Pre-filtering also attenuates genuine
+fast motion indiscriminately with noise. In the single-functional formulation
+the smoothness penalty acts directly on $\bq_t$, so joint-space smoothness is
+obtained by construction.
+
+\subsection{Offline pipelines and their retargeting operators}
+
+ORION \cite{orion} does not perform per-frame hand retargeting: it constructs an
+object-centric plan over sparse keyframes from an open-world object graph.
+OKAMI \cite{okami} warps a reference trajectory to a new object position and
+then solves inverse kinematics---the sequential pattern. HOWTransfer
+\cite{howtransfer}, the closest published pipeline in workflow terms, performs
+passive markerless capture and transfers trajectories using flow-matching
+$\SE$ grasp sampling with Laplacian trajectory editing, not a single weighted
+cost functional; its representation is hand-centric rather than object-centric.
+No offline pipeline located in this review adopts the AnyTeleop-style single
+functional.
+
+\subsection{Solvers}
+
+Pinocchio underlies the retargeting stack of AnyTeleop, Open-TeleVision and
+ACE. Pink \cite{pink} exposes weighted inverse kinematics directly as a
+quadratic program: each task contributes a quadratic residual with a weight
+matrix normalising task coordinates to common units, while joint limits,
+velocity limits and self-collision barriers enter as inequality constraints,
+optionally with control-barrier formulations. This structure admits the entire
+proposed cost functional natively---a frame task for the wrist target, posture
+and velocity regularisation tasks for smoothness, and limits as constraints---
+solved as one program per frame. The solver choice made in
+Chapter~\ref{ch:method} therefore lies on the mainstream path rather than
+diverging from it.
+
+\section{Task Representation}
+\label{sec:lit-repr}
+
+Object-centric representations dominate recent work on cross-environment and
+cross-embodiment generalisation. ORION \cite{orion} represents a task as the
+three-dimensional object trajectory relative to initial and final object
+positions, arguing that this generalises across visual backgrounds, camera
+shifts, spatial layouts and novel object instances, and that full-body
+reconstruction of the demonstrator is unnecessary. SPOT \cite{spot} encodes each
+task as the $\SE$ object-pose trajectory relative to the target explicitly in
+order to decouple embodiment-specific actions from sensory input, enabling
+learning from action-free human demonstrations, and conditions a diffusion
+policy on the object trajectory. Flow-based formulations \cite{novaflow} make an
+equivalent argument while relaxing the rigid-object assumption that
+pose-trajectory methods require.
+
+OKAMI \cite{okami} occupies an intermediate position: the representation is
+demonstrator-centric, but object-aware warping adapts trajectories to new object
+positions---an implicit acknowledgement that pure world-frame replay fails when
+the object moves. Vi-RoIL \cite{viroil} is object-centric by construction,
+expressing wrist trajectories and keyframe hand poses in the object frame, but
+recovers metric scale from a monocular view of a marker cube and evaluates only
+in simulation.
+
+The trade-off is that object-centric representations require robust object pose
+or segmentation, and pose-trajectory variants assume rigidity, whereas
+world-frame trajectories are simpler but tied to the recording layout. Storing
+both, as proposed in Section~\ref{sec:objcentric}, defers the choice to the
+downstream consumer at negligible storage cost.
+
+\section{Multi-Camera RGB-D Calibration, Fusion and Synchronisation}
+\label{sec:lit-calib}
+
+\subsection{Fiducial choice}
+
+ChArUco boards combine the sub-pixel corner accuracy of a checkerboard with the
+robust identification and occlusion tolerance of ArUco markers. A $6\times8$
+board provides up to thirty-five corners per view against four for a single
+AprilTag, and remains detectable under partial occlusion and at the image
+boundary where a plain checkerboard fails. Reported reprojection errors for
+ChArUco and ArUco calibration are typically below half a pixel. AprilTags are
+easier to detect at long range and oblique incidence and suffice for
+extrinsic-only estimation, but are ill-suited to intrinsic calibration owing to
+the small number of corners. Current practice is therefore to use ChArUco for
+intrinsics and either fiducial for extrinsics, preferring AprilTags for oblique
+overhead views.
+
+\subsection{Reported accuracy of multi-Azure-Kinect rigs}
+
+Romeo et al.\ \cite{romeo} provide the cleanest direct comparison of calibration
+procedures for multi-Kinect rigs, reporting that three-dimensional procedures
+outperform two-dimensional chessboard approaches, with mean distances between
+corresponding point-cloud points of $21.4$~mm at colour resolution and
+$9.9$~mm at infrared resolution for a static scene, and $20.9$~mm and $7.4$~mm
+respectively for a dynamic scene; body-joint alignment error was $35.4$~mm.
+Darwish et al.\ \cite{darwish} calibrate five Azure Kinects against a
+ChArUco-coded cube, combining reprojection error with point-to-plane and
+patch-to-plane terms to compensate depth noise. Kim et al.\ \cite{kimcal}
+perform coarse registration from body tracking followed by feature-match
+refinement, retaining above ninety-five per cent inliers. Bu and Lee
+\cite{bulee} use markerless coarse calibration with coloured ICP refinement and
+report---importantly for rig geometry---that ICP fails for near-opposing camera
+placements owing to insufficient point-cloud overlap.
+
+Single-sensor specifications bound the achievable accuracy from below. The
+Azure Kinect DK is specified at a random error standard deviation of at most
+$17$~mm and a typical systematic error below $11$~mm plus $0.1$ per cent of
+distance \cite{mskinect}; independent evaluation confirms these figures
+\cite{tolgyessy}, and comparative work finds improved spatial and temporal
+accuracy relative to Kinect~v2 beyond $2.5$~m \cite{kurillo}. The Intel
+RealSense D435i is specified at depth accuracy below one per cent of distance
+\cite{intel}. The practical consequence is that centimetre-level, not
+millimetre-level, agreement should be expected between calibrated views.
+
+\subsection{Depth fusion}
+
+Naive averaging of overlapping depth observations is inferior to
+confidence-weighted fusion. Weighting by distance and by the angle between the
+surface normal and the viewing direction---so that surfaces observed near
+perpendicular contribute more than obliquely observed ones---is established
+practice \cite{fusionpatent}. Learned confidence maps estimated from the depth
+signal itself are used to re-weight depth features before fusion
+\cite{zeng}, and surfel-based reconstruction attaches an explicit confidence
+value to each element and performs curvature-weighted registration
+\cite{hrbf}. Both sensor families used in this work expose per-pixel
+invalidation or confidence signals that can drive such weights directly.
+
+\subsection{Cross-device synchronisation}
+
+Azure Kinect devices support hardware synchronisation through daisy-chained or
+star-wired trigger cabling, with subordinate devices required to start before
+the master and depth exposures staggered to prevent laser interference; the
+vendor documentation states explicitly that equal timestamps between depth and
+colour streams, or between cameras, are not guaranteed \cite{mskinect}.
+RealSense devices provide an analogous inter-camera synchronisation mode, with
+the counter-intuitive property that timestamps appear aligned when hardware
+synchronisation is disabled and exhibit bounded drift when it is enabled, the
+drift itself serving as verification \cite{intel, ridgerun}.
+
+The pitfall for a heterogeneous rig is that hardware clocks on different device
+families are not mutually comparable, since each counts its own cycles from its
+own epoch. Documented practice for such rigs is to stamp every arriving frame
+with a single host-side monotonic clock and to align streams by nearest
+timestamp in that common domain, accepting millisecond-scale precision
+\cite{ridgerun}. Because Azure Kinect and RealSense triggers are mutually
+incompatible, this is the only available mechanism for aligning the two
+families, and it is the mechanism adopted in Section~\ref{sec:sync}.
+
+\subsection{Hand--eye calibration}
+
+The OpenCV \texttt{calibrateHandEye} routine implements the Tsai--Lenz,
+Park--Martin, Horaud--Dornaika, Andreff and Daniilidis solvers. A comparative
+noise study \cite{alihandeye} finds the Daniilidis, Chou and Park methods most
+robust to translation noise, with Daniilidis yielding the best translation
+estimates, while Tsai, Li and Lu degrade as rotation noise grows. Methods that
+decouple rotation from translation are faster but propagate rotation error into
+the translation estimate; Daniilidis solves both simultaneously through dual
+quaternions. Because the present system anchors cameras and robot to a shared
+ChArUco workspace frame, classical hand--eye estimation is largely bypassed;
+where an explicit camera-to-robot transform is required, Daniilidis is used.
+
+\section{Dataset Generation and Downstream Policies}
+\label{sec:lit-dataset}
+
+The LeRobot HDF5 conventions together with ACT and Diffusion Policy constitute
+the default imitation-learning toolchain and define the export target of this
+work. OpenVLA-OFT \cite{openvlaoft} reports that parallel decoding, action
+chunking, a continuous action representation and $L1$ regression raise average
+success across four task suites from $76.5$ to $97.1$ per cent while increasing
+action-generation throughput twenty-six-fold, and is therefore a credible
+alternative consumer of the generated data.
+
+Curation matters as much as generation. Demo-SCORE \cite{demoscore} trains a
+classifier on policy rollouts to filter low-quality demonstrations and reports
+an absolute success-rate improvement exceeding fifteen to thirty-five per cent
+over training on all demonstrations. Smoothness-based scoring of trajectories
+has been reported to yield comparable gains at a fraction of the data
+\ph{[citation to be confirmed]}. This motivates treating dataset curation as an
+explicit pipeline stage rather than an afterthought, and---in the present
+design---moving it upstream of export in the form of physical replay screening.
+
+\section{Positioning of the Proposed System}
+\label{sec:positioning}
+
+Table~\ref{tab:positioning} compares \viki\ against the nearest published
+systems along the six criteria that jointly define the proposed architecture:
+(C1) passive markerless capture without teleoperation hardware; (C2)
+multi-camera metrically calibrated RGB-D sensing; (C3) object-centric dense
+trajectory representation; (C4) retargeting as a single confidence-weighted
+cost functional; (C5) export of an imitation-learning-ready dataset; and (C6)
+physical replay used to validate the dataset before export.
+
+\begin{table}[htbp]
+\caption{Comparison of the Proposed System Against the Nearest Published Work\\
+Along the Six Criteria Defined in Section~\ref{sec:positioning}}
+\label{tab:positioning}
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+System & C1 & C2 & C3 & C4 & C5 & C6 \\
+\midrule
+\viki\ (proposed)      & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+HOWTransfer \cite{howtransfer} & \checkmark & $\sim$ & --- & --- & $\sim$ & \checkmark \\
+Vi-RoIL \cite{viroil}          & $\sim$ & --- & \checkmark & --- & $\sim$ & --- \\
+ORION \cite{orion}             & \checkmark & $\sim$ & \checkmark & --- & --- & --- \\
+OKAMI \cite{okami}             & \checkmark & $\sim$ & $\sim$ & --- & $\sim$ & --- \\
+EgoMimic \cite{egomimic}       & \checkmark & --- & --- & --- & $\sim$ & --- \\
+DexWild \cite{dexwild}         & $\sim$ & --- & --- & --- & $\sim$ & --- \\
+Tool-as-Interface \cite{toolif}& \checkmark & $\sim$ & $\sim$ & --- & $\sim$ & --- \\
+RoboPaint \cite{robopaint}     & --- & \checkmark & $\sim$ & --- & \checkmark & \checkmark \\
+DexCanvas \cite{dexcanvas}     & --- & \checkmark & --- & --- & $\sim$ & --- \\
+\bottomrule
+\end{tabular}
+
+\vspace{1mm}
+{\footnotesize \checkmark~= satisfied; $\sim$~= partially satisfied;
+---~= not satisfied.}
+\end{table}
+
+No located system satisfies all six criteria simultaneously. HOWTransfer
+\cite{howtransfer} is closest in workflow, satisfying C1 and C6, but is
+hand-centric rather than object-centric, uses calibrated stereo RGB rather than
+metric RGB-D, and does not employ a single cost functional. Vi-RoIL
+\cite{viroil} is closest in representation, satisfying C3, but relies on a
+monocular view of a marker cube and is evaluated only in simulation. The
+intersection of the online joint-optimisation retargeting literature with the
+offline object-centric dataset-generation literature is therefore unoccupied,
+and it is that intersection which this work targets.
+
+Several of the systems listed are recent preprints
+\cite{howtransfer, robopaint, shadowing, dexcanvas} whose peer-review status
+could not be confirmed at the time of writing; their reported results are
+treated as provisional.
+
+\section{Conclusion of the Review}
+\label{sec:lit-conclusion}
+
+The review supports the following methodological choices, which
+Chapter~\ref{ch:method} implements.
+
+\begin{enumerate}[leftmargin=2em]
+  \item \emph{Hand representation.} A wrist pose in $\SE$ with a binary gripper
+        state is adopted, following \cite{opentv, bunny, ace}, and the wrist
+        target enters as a weighted soft task following the ablation evidence
+        of \cite{keyobj}. Parametric mesh reconstruction is rejected as
+        unnecessary for a parallel-jaw target and as an additional error source.
+  \item \emph{Retargeting.} A single weighted cost functional is adopted,
+        following \cite{anyteleop, dexflow}, with confidence weighting after
+        \cite{opentv} and Huber robustification after \cite{dexteleop0}. The
+        sequential smooth--IK--smooth pattern is rejected on the structural
+        grounds set out in Section~\ref{sec:lit-retarget}.
+  \item \emph{Solver.} Pink on Pinocchio \cite{pink} is adopted, since it
+        expresses the entire functional natively as a constrained quadratic
+        program and is the solver family used by the reference teleoperation
+        systems.
+  \item \emph{Task representation.} Object-relative trajectories are adopted
+        following \cite{orion, spot}, and stored alongside workspace-anchored
+        trajectories so that the choice is deferred downstream.
+  \item \emph{Sensing.} ChArUco workspace anchoring is adopted; centimetre-level
+        cross-camera agreement is assumed on the evidence of \cite{romeo};
+        camera placement preserves substantial view overlap on the evidence of
+        \cite{bulee}; depth is fused with distance, incidence-angle and sensor
+        confidence weights following \cite{fusionpatent, zeng}.
+  \item \emph{Synchronisation.} The two Azure Kinects are hardware
+        synchronised; the RealSense, which cannot share their trigger, is
+        aligned through a single host-side monotonic clock following
+        \cite{ridgerun}.
+  \item \emph{Curation.} Dataset curation is treated as an explicit stage and
+        moved upstream of export in the form of physical replay screening,
+        motivated by \cite{demoscore} and by the replay-based validation of
+        \cite{howtransfer}.
+\end{enumerate}

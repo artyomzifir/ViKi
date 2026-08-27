@@ -1,0 +1,432 @@
+\chapter{Design and Methodology}
+\label{ch:method}
+
+\section{System Overview}
+\label{sec:overview}
+
+\viki\ is an offline pipeline: demonstrations are recorded, processed and
+exported in distinct stages, with no requirement that any stage run at
+interactive rates. This is a deliberate design choice. Relaxing the real-time
+constraint that shapes teleoperation systems permits global optimisation over
+whole trajectories, iterative refinement, and a validation stage that executes
+on physical hardware---none of which is available to an online system.
+
+The pipeline comprises six stages, shown in Fig.~\ref{fig:pipeline}.
+
+\begin{enumerate}[leftmargin=2em]
+  \item \emph{Capture.} Synchronised RGB-D streams are recorded from a
+        calibrated multi-camera rig while a demonstrator performs the task
+        bare-handed.
+  \item \emph{Perception.} Hand landmarks are detected per view, lifted to
+        three dimensions using sensor depth, and fused across views with
+        confidence weights to yield a wrist pose in $\SE$ and a gripper state.
+  \item \emph{Representation.} The wrist trajectory is expressed both relative
+        to the manipulated object and relative to the ChArUco workspace anchor.
+  \item \emph{Retargeting.} A robot joint trajectory is obtained by minimising
+        a single weighted cost functional subject to kinematic and collision
+        constraints.
+  \item \emph{Replay validation.} The synthesised trajectory is executed on the
+        physical manipulator; proprioception is recorded and infeasible
+        episodes are rejected.
+  \item \emph{Export.} Surviving episodes are written in a LeRobot-compatible
+        format for downstream policy training.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=4mm,
+  box/.style={draw, rounded corners=1pt, align=center, font=\footnotesize,
+              minimum height=8mm, text width=22mm, inner sep=2pt},
+  arr/.style={-{Latex[length=2mm]}, thick}]
+\node[box] (cap) {Capture\\\scriptsize 2$\times$Kinect + RealSense};
+\node[box, right=of cap] (per) {Perception\\\scriptsize landmarks + fusion};
+\node[box, right=of per] (rep) {Representation\\\scriptsize object-relative $\SE$};
+\node[box, below=8mm of rep] (ret) {Retargeting\\\scriptsize single cost functional};
+\node[box, left=of ret] (val) {Replay\\\scriptsize physical validation};
+\node[box, left=of val] (exp) {Export\\\scriptsize LeRobot / HDF5};
+\draw[arr] (cap) -- (per);
+\draw[arr] (per) -- (rep);
+\draw[arr] (rep) -- (ret);
+\draw[arr] (ret) -- (val);
+\draw[arr] (val) -- (exp);
+\draw[arr] (val.north) -- ++(0,4mm) -| node[pos=0.25, above, font=\scriptsize]
+  {reject / re-solve} (ret.east);
+\end{tikzpicture}
+\caption{Stages of the \viki\ pipeline. Capture, perception and representation
+are embodiment-agnostic; retargeting, replay validation and export are
+specific to the target manipulator. The feedback edge indicates that episodes
+failing replay are either re-solved with modified weights or discarded.}
+\label{fig:pipeline}
+\end{figure}
+
+\section{Hardware and Workspace}
+\label{sec:hardware}
+
+The capture rig comprises two Azure Kinect DK cameras and one Intel RealSense
+D435i observing a tabletop workspace, with a UR3 manipulator mounted at a fixed
+position relative to that workspace. The Azure Kinect was selected for the
+primary views because its time-of-flight depth sensing provides substantially
+better range estimation than neural regression from RGB, and because its
+specified error characteristics---random error standard deviation at most
+$17$~mm and systematic error below $11$~mm plus $0.1$ per cent of distance
+\cite{mskinect}---are documented and independently verified \cite{tolgyessy}.
+The RealSense provides a supplementary close-range view at higher depth
+accuracy \cite{intel}.
+
+The two Kinects are placed to preserve substantial overlap in their fields of
+view. This is a direct consequence of the finding of Bu and Lee \cite{bulee}
+that iterative-closest-point refinement fails between near-opposing views for
+lack of point-cloud overlap; near-orthogonal placement retains both
+triangulation baseline and overlap.
+
+\section{Calibration}
+\label{sec:calib}
+
+\subsection{Intrinsics and extrinsics}
+
+Intrinsic parameters for every colour and depth stream are estimated from
+ChArUco board observations. Extrinsic calibration follows the workspace-anchor
+principle: rather than expressing cameras relative to one another, each camera
+is calibrated against a ChArUco board rigidly fixed to the workspace, defining
+a common world frame $W$. For camera $k$ this yields
+\begin{equation}
+  \bT^{W}_{C_k} \in \SE,
+  \label{eq:extrinsic}
+\end{equation}
+the transform from the camera frame $C_k$ to the workspace frame $W$. Anchoring
+to the workspace rather than to a reference camera has two consequences: adding
+or moving a camera does not invalidate the calibration of the others, and the
+robot base can be registered into the same frame without a separate
+camera-to-camera chain.
+
+\subsection{Robot registration}
+
+The manipulator base frame $R$ is registered to $W$ by observing a ChArUco
+target held in a known end-effector pose across a set of configurations, giving
+$\bT^{W}_{R}$ directly. Where an explicit camera-to-robot transform is required
+instead, the Daniilidis dual-quaternion solver is used, following the
+robustness evidence of \cite{alihandeye}, with fifteen to twenty poses spanning
+a hemisphere.
+
+\section{Synchronisation}
+\label{sec:sync}
+
+The two Azure Kinects are hardware-synchronised in master/subordinate
+configuration, with subordinate devices started before the master and depth
+exposures staggered to avoid mutual laser interference \cite{mskinect}. The
+RealSense cannot share that trigger; its synchronisation mode is incompatible
+at the electrical level.
+
+Cross-family alignment therefore uses a single host-side monotonic clock. Every
+frame, from every device, is stamped on arrival with
+\begin{equation}
+  \tau = \texttt{time.monotonic\_ns()},
+  \label{eq:hostclock}
+\end{equation}
+and streams are aligned by nearest neighbour in $\tau$. Two points deserve
+emphasis. First, per-device hardware timestamps are \emph{not} used for
+cross-device arithmetic: distinct device families count their own cycles from
+their own epochs, and the vendor documentation states explicitly that equal
+timestamps across cameras are not guaranteed \cite{mskinect}. Second, a
+monotonic clock rather than wall-clock time is required, since wall-clock time
+may be adjusted discontinuously by time synchronisation daemons, which would
+corrupt interval computations mid-recording.
+
+Residual alignment jitter is measured rather than assumed
+(Section~\ref{sec:res-calib}), and hardware synchronisation of the Kinect pair
+is verified by confirming bounded drift in the inter-camera timestamp
+difference \cite{ridgerun}.
+
+\section{Perception and Confidence-Weighted Fusion}
+\label{sec:fusion}
+
+\subsection{Landmark detection and lifting}
+
+Hand landmarks are detected in each colour stream, yielding for view $k$ at
+time $t$ a set of image-plane landmarks with associated visibility scores
+$v^{k}_{i,t} \in [0,1]$. Each landmark is lifted to three dimensions using the
+registered depth map rather than a learned depth estimate, exploiting the
+time-of-flight measurement directly, and transformed into the workspace frame
+by \eqref{eq:extrinsic}.
+
+\subsection{Fusion}
+
+Estimates from multiple views are combined by confidence-weighted averaging
+rather than by naive mean. For landmark $i$ at time $t$, the fused position is
+\begin{equation}
+  \hat{\bx}_{i,t} \;=\;
+  \frac{\sum_{k} w^{k}_{i,t}\, \bx^{k}_{i,t}}
+       {\sum_{k} w^{k}_{i,t}},
+  \label{eq:fusion}
+\end{equation}
+with weights
+\begin{equation}
+  w^{k}_{i,t} \;=\;
+  \underbrace{v^{k}_{i,t}}_{\text{detector}}
+  \cdot
+  \underbrace{c^{k}_{i,t}}_{\text{sensor}}
+  \cdot
+  \underbrace{\frac{1}{\left(d^{k}_{i,t}\right)^{2}}}_{\text{range}}
+  \cdot
+  \underbrace{\max\!\left(0, \cos\theta^{k}_{i,t}\right)}_{\text{incidence}},
+  \label{eq:weights}
+\end{equation}
+where
+
+\begin{center}
+\begin{tabular}{@{\hspace{10mm}}p{16mm}@{}p{95mm}}
+$v^{k}_{i,t}$ & detector visibility score for landmark $i$ in view $k$;\\
+$c^{k}_{i,t}$ & sensor depth confidence or validity flag at that pixel;\\
+$d^{k}_{i,t}$ & range from camera $k$ to the landmark;\\
+$\theta^{k}_{i,t}$ & angle between the local surface normal and the viewing direction.
+\end{tabular}
+\end{center}
+
+\noindent The range and incidence factors follow established practice in
+geometric depth fusion, where surfaces observed near perpendicular are weighted
+above obliquely observed ones because they are measured more accurately
+\cite{fusionpatent}; the detector and sensor factors follow confidence-map
+re-weighting \cite{zeng}. The product form is chosen so that a zero in any
+factor---an undetected landmark, an invalid depth pixel, a grazing view---
+removes that view's contribution entirely rather than merely attenuating it.
+
+\subsection{Wrist pose and gripper state}
+
+The wrist pose $\bT^{W}_{H,t} \in \SE$ is obtained by fitting an orthonormal
+frame to the fused wrist and knuckle landmarks. The gripper state is derived
+from the thumb--index distance,
+\begin{equation}
+  g_t \;=\;
+  \mathbb{1}\!\left[\,\norm{\hat{\bx}_{\text{thumb},t}
+  - \hat{\bx}_{\text{index},t}} < \tau_g \,\right],
+  \label{eq:gripper}
+\end{equation}
+with hysteresis on $\tau_g$ to suppress chatter at the threshold. This single
+scalar is the entire hand representation beyond the wrist frame, following the
+convention established for parallel-jaw targets in \cite{opentv, ace}.
+
+\section{Object-Centric Representation}
+\label{sec:objcentric}
+
+Let $\bT^{W}_{O,t}$ denote the pose of the manipulated object in the workspace
+frame. Each demonstration is stored in two forms. The workspace-anchored form
+is $\bT^{W}_{H,t}$ directly; the object-relative form is
+\begin{equation}
+  \bT^{O}_{H,t} \;=\; \left(\bT^{W}_{O,t}\right)^{-1} \bT^{W}_{H,t}.
+  \label{eq:objrel}
+\end{equation}
+
+The object-relative form is what transfers. If the same task is to be performed
+with the object at a new pose $\bT^{R}_{O'}$ expressed in the robot frame, the
+desired end-effector pose at time $t$ is
+\begin{equation}
+  \bT^{R,\mathrm{des}}_{E,t} \;=\;
+  \bT^{R}_{O'} \; \bT^{O}_{H,t} \; \bT^{H}_{E},
+  \label{eq:transfer}
+\end{equation}
+where $\bT^{H}_{E}$ is a fixed offset relating the human wrist frame to the
+robot end-effector frame, determined once per embodiment. Trajectories are
+retained densely rather than reduced to keyframes, since the continuous
+velocity profile of the demonstration carries task-relevant information---
+approach speed, contact timing---that sparse keyframes discard.
+
+Both representations are exported. Storing both costs little and defers to the
+downstream consumer a choice that the literature does not settle universally:
+object-relative trajectories generalise across object placement
+\cite{orion, spot} but depend on object pose estimation, whereas
+workspace-anchored trajectories are simpler and adequate within a fixed layout.
+
+\section{Retargeting as a Single Cost Functional}
+\label{sec:retarget}
+
+\subsection{Formulation}
+
+Let $\bq_t \in \R^{n}$ be the manipulator configuration at time $t$ and
+$f(\bq_t) \in \SE$ the forward kinematics of the end-effector. The task-space
+residual with respect to the desired pose \eqref{eq:transfer} is the
+logarithmic map of the pose error,
+\begin{equation}
+  \be_t(\bq_t) \;=\;
+  \Log\!\left(
+    \left(\bT^{R,\mathrm{des}}_{E,t}\right)^{-1} f(\bq_t)
+  \right)^{\vee} \in \R^{6}.
+  \label{eq:residual}
+\end{equation}
+
+Retargeting is then posed as the single constrained problem
+\begin{equation}
+\begin{aligned}
+  \min_{\bq_{1:T}} \;\; J(\bq_{1:T}) \;=\; \sum_{t=1}^{T} \Big[\;
+   & \underbrace{\omega_t \,\rho_\delta\!\left(
+       \norm{\be_t(\bq_t)}_{\bm{\Sigma}}\right)}_{\text{data fidelity}}
+   \;+\;
+     \underbrace{\lambda_v \norm{\bq_t - \bq_{t-1}}^{2}}_{\text{velocity}}
+   \\[1mm]
+   &+\;
+     \underbrace{\lambda_a \norm{\bq_t - 2\bq_{t-1} + \bq_{t-2}}^{2}}
+       _{\text{acceleration}}
+   \;+\;
+     \underbrace{\lambda_r \norm{\bq_t - \bq_{\mathrm{ref}}}^{2}}
+       _{\text{posture}}
+  \;\Big]
+\end{aligned}
+\label{eq:cost}
+\end{equation}
+subject to
+\begin{align}
+  \bq_{\min} \;\le\; &\bq_t \;\le\; \bq_{\max}, \label{eq:cjoint}\\
+  \norm{\bq_t - \bq_{t-1}} \;&\le\; \dot{\bq}_{\max}\,\Delta t,
+    \label{eq:cvel}\\
+  h_j(\bq_t) \;&\ge\; 0, \quad j = 1,\dots,m, \label{eq:ccoll}
+\end{align}
+where
+
+\begin{center}
+\begin{tabular}{@{\hspace{10mm}}p{28mm}@{}p{85mm}}
+$\omega_t$ & per-frame perception confidence weight, defined in \eqref{eq:conf};\\
+$\rho_\delta$ & Huber loss with transition parameter $\delta$;\\
+$\bm{\Sigma}$ & diagonal matrix normalising translational and rotational residual units;\\
+$\lambda_v, \lambda_a, \lambda_r$ & weights on velocity, acceleration and posture regularisation;\\
+$h_j$ & collision and self-collision barrier functions.
+\end{tabular}
+\end{center}
+
+\subsection{Confidence weighting}
+
+The per-frame weight aggregates the landmark confidences that produced the
+wrist estimate at time $t$,
+\begin{equation}
+  \omega_t \;=\;
+  \left(\frac{1}{|\mathcal{I}|}\sum_{i \in \mathcal{I}}
+        \max_k w^{k}_{i,t}\right)^{\alpha},
+  \label{eq:conf}
+\end{equation}
+with $\mathcal{I}$ the landmark subset defining the wrist frame and $\alpha$
+controlling how sharply low-confidence frames are discounted. The construction
+is the offline analogue of the distance-dependent switching weights used in
+online teleoperation retargeting \cite{opentv}: frames in which the hand is
+partially occluded or poorly observed exert proportionally less influence on
+the solution, and the smoothness terms carry the trajectory through them
+instead of the data term dragging it toward a spurious observation.
+
+\subsection{Robustification}
+
+The Huber loss $\rho_\delta$ bounds the influence of gross outliers---a
+mis-detected hand, a depth dropout that survives the confidence weighting---at
+the level of the data term itself, rather than allowing a filtering stage to
+smear the outlier across neighbouring frames \cite{dexteleop0}. This is the
+mechanism that replaces pre-smoothing: outliers are down-weighted where they
+enter, not attenuated after they have already propagated.
+
+\subsection{Why a single functional}
+
+Equation~\eqref{eq:cost} differs from the sequential alternative in one
+structurally important respect. The smoothness penalties act on $\bq_t$, in the
+space where smoothness is required, and they are traded against data fidelity
+by the solver rather than applied blindly beforehand. In the sequential
+pipeline, task-space filtering cannot guarantee joint-space smoothness because
+the forward kinematics is nonlinear, and it cannot distinguish task-relevant
+fast motion from noise because it operates without reference to the data term.
+Here the trade-off is explicit: on high-confidence frames $\omega_t$ is large
+and the solution tracks the observation; on low-confidence frames the
+smoothness terms dominate and the solution interpolates.
+
+Second-order smoothness, expressed by the acceleration term, follows the
+$C^2$-continuity argument of DexFlow \cite{dexflow}. A trajectory that is
+first-order smooth may still exhibit curvature discontinuities that appear as
+jerk on the physical manipulator and as label noise to a policy trained on the
+data.
+
+\subsection{Solution}
+
+The problem is solved with Pink on Pinocchio \cite{pink}. Each term of
+\eqref{eq:cost} maps onto a weighted task in the quadratic program---a frame
+task for the data term, posture and velocity regularisation tasks for the
+smoothness terms---while \eqref{eq:cjoint}--\eqref{eq:ccoll} enter as
+inequality constraints, with collision avoidance expressed through control
+barrier functions. Levenberg--Marquardt damping stabilises the solution near
+singularities.
+
+Because the setting is offline, the problem is solved over the whole trajectory
+rather than frame by frame, so the acceleration term is well defined at every
+interior timestep and the solution is not constrained by the causality
+requirement that an online solver faces. The trajectory is initialised from the
+previous solution warm-started along $t$, and boundary conditions at $t=1,2$
+are handled by replicating the initial configuration.
+
+\subsection{Interpolation}
+
+Where gaps remain after fusion---landmarks lost across all views---the
+trajectory is completed by cubic spline interpolation over $\SE$ prior to
+optimisation. Dynamic filters that impose a motion model, such as Kalman or
+extended Kalman filters, are deliberately not applied: they introduce a prior
+about the dynamics that is subsequently re-estimated by the optimiser, and the
+interaction between the two priors is difficult to characterise. The optimiser
+already imposes the required regularity through
+$\lambda_v$ and $\lambda_a$.
+
+\section{Replay Validation}
+\label{sec:replay}
+
+Synthesised trajectories are executed on the physical manipulator before the
+dataset is finalised. The stage serves three purposes.
+
+First, it filters infeasibility. A trajectory may satisfy
+\eqref{eq:cjoint}--\eqref{eq:ccoll} in the kinematic model and still fail on
+hardware through controller tracking limits, unmodelled collisions or workspace
+boundary conditions. Such episodes are rejected rather than exported.
+
+Second, it closes the embodiment gap at the source. The proprioceptive states
+recorded during replay are those the robot actually attained, not those the
+optimiser predicted. Exporting the recorded rather than the synthesised states
+means the dataset contains honest observation--action pairs from the target
+embodiment, which is precisely the property that teleoperated datasets possess
+by construction and that naive video-derived datasets lack.
+
+Third, it provides a curation signal. Episodes are ranked by tracking residual
+during replay, and the ranking is available to downstream consumers as a
+quality score, in the spirit of rollout-based demonstration curation
+\cite{demoscore} but applied before rather than after policy training.
+
+Failure of an episode triggers either rejection or re-solution of
+\eqref{eq:cost} with modified weights---typically an increased $\lambda_v$ or a
+relaxed data weight in the region of failure---as indicated by the feedback
+edge in Fig.~\ref{fig:pipeline}. The number of re-solution attempts is bounded
+to prevent overfitting the trajectory to the replay controller.
+
+\section{Dataset Export}
+\label{sec:export}
+
+Surviving episodes are written in a LeRobot-compatible HDF5 layout. Each
+episode contains the synchronised camera streams, the recorded joint states and
+gripper states from replay, the object-relative and workspace-anchored wrist
+trajectories, per-frame confidence weights, and the replay tracking residual.
+Retaining the confidence weights and residuals in the exported artefact allows
+downstream curation to be repeated with different thresholds without
+re-recording.
+
+\section{Assumptions and Simplifications}
+\label{sec:assumptions}
+
+The following assumptions delimit the scope of the work and are revisited in
+Section~\ref{sec:limitations}.
+
+\begin{enumerate}[leftmargin=2em]
+  \item \emph{Parallel-jaw target.} The hand is reduced to a wrist pose and a
+        binary gripper state. Multi-fingered dexterous targets would require
+        the finger-level representation rejected in
+        Section~\ref{sec:lit-hand}.
+  \item \emph{Rigid objects.} The object-relative representation
+        \eqref{eq:objrel} presupposes a rigid body with a well-defined pose.
+        Deformable objects would require a flow-based representation
+        \cite{novaflow}.
+  \item \emph{Single-arm, quasi-static tasks.} The task class is restricted to
+        single-arm tabletop manipulation at moderate speed, where the
+        quasi-static assumption underlying purely kinematic retargeting holds.
+  \item \emph{Fixed workspace.} The ChArUco anchor is rigidly attached to the
+        workspace and the camera rig is not moved within a recording session.
+  \item \emph{Kinematic-only transfer.} Forces and contact dynamics are not
+        estimated. Tasks whose success depends on force regulation are outside
+        the scope.
+\end{enumerate}
