@@ -5,9 +5,8 @@ import { api, log, initializeFrontendConfig } from './core.js';
 import * as config from './config.js';
 import * as cameras from './cameras.js';
 import * as calibration from './calibration.js';
-import * as skeleton from './skeleton.js';
-import * as process from './process.js';
-import * as robotviz from './robotviz.js';
+import * as episodes from './episodes.js';
+import { initViewer } from './viewer.js';
 
 // data-action -> handler (click). Handlers read any args from the element dataset.
 const CLICK_ACTIONS = {
@@ -17,7 +16,6 @@ const CLICK_ACTIONS = {
   stopAll: () => cameras.stopAll(),
   startCamera: el => cameras.startCamera(el.dataset.id),
   stopCamera: el => cameras.stopCamera(el.dataset.id),
-  startRGBDRecording: () => cameras.startRGBDRecording(),
   // config
   toggleConfig: () => config.toggleConfig(),
   toggleConfigHelp: () => config.toggleConfigHelp(),
@@ -30,30 +28,13 @@ const CLICK_ACTIONS = {
   captureSample: () => calibration.captureSample(),
   extrinsicsCalibration: () => calibration.extrinsicsCalibration(),
   clearCalibration: () => calibration.clearCalibration(),
-  // skeleton
-  toggleSkeleton: () => skeleton.toggleSkeleton(),
-  toggleSkelView: () => skeleton.toggleSkelView(),
-  toggleEstimation: el => skeleton.toggleEstimation(el.dataset.enable === 'true'),
-  toggleRecording: el => skeleton.toggleRecording(el.dataset.enable === 'true'),
-  toggleCalibOverlay: () => skeleton.toggleCalibOverlay(),
-  toggleDepthDebug: () => skeleton.toggleDepthDebug(),
-  // process
-  toggleProcess: () => process.toggleProcess(),
-  setProcessMode: el => process.setProcessMode(el.dataset.mode),
-  loadProcessRecordings: () => process.loadProcessRecordings(),
-  processPrevPage: () => process.processPrevPage(),
-  processNextPage: () => process.processNextPage(),
-  processSmoothSelected: () => process.processSmoothSelected(),
-  selectProcessRec: el => process.selectProcessRec(el.dataset.filename, el),
-  // process - dataset mode
-  loadPreparedRecordings: () => process.loadPreparedRecordings(),
-  selectPreparedRec: el => process.selectPreparedRec(el.dataset.filename, el),
-  selectDsCLNRec: el => process.selectDsCLNRec(el.dataset.filename, el),
-  convertDataset: () => process.convertDataset(),
-  loadVizOutputs: () => process.loadVizOutputs(),
-  selectVizOutput: el => process.selectVizOutput(el.dataset.filename, el),
-  // robot viz (redirect to process in dataset mode)
-  toggleRobotViz: () => robotviz.toggleRobotViz(),
+  // episodes
+  toggleEpisodes: () => episodes.togglePanel(),
+  refreshEpisodes: () => episodes.refresh(),
+  recordScene: () => episodes.recordScene(),
+  runStage: el => episodes.runStage(el),
+  runAllStages: () => episodes.runAll(),
+  saveLabels: () => episodes.saveLabels(),
 };
 
 // data-change -> handler (change on inputs/selects).
@@ -61,12 +42,6 @@ const CHANGE_ACTIONS = {
   updateFpsForDepthMode: el => cameras.updateFpsForDepthMode(el.dataset.id),
   toggleBoardFields: () => calibration.toggleBoardFields(),
   syncBoardParameters: () => calibration.syncBoardParameters(),
-  updateSkelVizCam: () => skeleton.updateSkelVizCam(),
-  toggleFollowEE: () => skeleton.toggleFollowEE(),
-  // smoothing viz config changes
-  applySmoothConfig: () => process.applySmoothConfig(),
-  // robot viz config changes (now in process panel)
-  applyVizConfig: () => process.applyVizConfig(),
 };
 
 document.addEventListener('click', e => {
@@ -125,6 +100,7 @@ async function init() {
   cameras.scanDevices();
   calibration.populateArucoDicts();
   calibration.toggleBoardFields();
+  initViewer();
 }
 
 init();

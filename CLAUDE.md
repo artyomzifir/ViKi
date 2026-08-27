@@ -97,5 +97,6 @@ add it to both JSON files, declare its type annotation in `config.py`.
 ## Frontend
 
 `viki/server/static/` — plain HTML/CSS/JS, no build step. `index.html` + one JS module per UI panel
-(`cameras.js`, `skeleton.js`, `calibration.js`, `process.js`, `robotviz.js`, ...). Served directly
+(`cameras.js`, `calibration.js`, `episodes.js`, `viewer.js` — a hand-rolled canvas 3-D
+orbit view, no WebGL/vendored deps). Served directly
 by FastAPI.

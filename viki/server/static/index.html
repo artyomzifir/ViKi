@@ -22,10 +22,7 @@
     <button class="danger" data-action="stopAll">■ Stop all</button>
     <div class="sep"></div>
     <button id="btn-calib-toggle" data-action="toggleCalibration">⚙ Calibration</button>
-    <button id="btn-skeleton-toggle" data-action="toggleSkeleton">🦴 Skeleton</button>
-    <button id="btn-process-toggle" data-action="toggleProcess">📊 Process</button>
-    <div class="sep"></div>
-    <button id="btn-record-rgbd" class="primary" data-action="startRGBDRecording">Record</button>
+    <button id="btn-episodes-toggle" data-action="toggleEpisodes">🎬 Episodes</button>
     <button style="margin-left: auto" data-action="toggleConfig">⚙ Config</button>
   </div>
 
@@ -153,231 +150,60 @@
     </div>
   </div>
 
-  <div class="skeleton-panel" id="skeleton-panel">
+  <div class="skeleton-panel" id="episodes-panel">
     <div class="skeleton-header">
-      <span class="title">3D Skeleton Estimation</span>
-      <button class="danger" data-action="toggleSkeleton">✕ Close</button>
+      <span class="title">Episodes</span>
+      <button class="danger" data-action="toggleEpisodes">✕ Close</button>
     </div>
-    <div class="skeleton-body">
-      <div class="skeleton-viz" id="skeleton-viz" style="display:flex; align-items:center; justify-content:center;">
-        <canvas id="skel-canvas-3d"></canvas>
+    <div class="episodes-body">
+      <div class="episodes-left">
+        <div class="rec-bar">
+          <input id="rec-task" placeholder="task (e.g. pick the cube)" />
+          <input id="rec-seconds" type="number" value="10" min="1" style="width:64px" />
+          <button class="primary" data-action="recordScene">● Record</button>
+          <button data-action="refreshEpisodes">⟳</button>
+        </div>
+        <div id="episode-list" class="episode-list"></div>
       </div>
-      <div class="skeleton-controls">
-        <div class="skeleton-stats" id="skeleton-status">Status: Idle</div>
-        <div id="skeleton-detections" style="font-size: 11px; color: var(--muted); margin-bottom: 10px;"></div>
-        <div style="margin-bottom: 10px; display: flex; gap: 8px;">
-          <button id="btn-skel-view" data-action="toggleSkelView"
-            style="font-size: 11px; padding: 4px 8px; cursor: pointer;">View: Projections</button>
+      <div class="episodes-right" id="episode-detail" style="display:none;">
+        <div class="ed-head">Episode <b id="ed-id"></b></div>
+        <div class="ed-stages">
+          <button data-action="runStage" data-stage="extract">Extract</button>
+          <button data-action="runStage" data-stage="prepare">Prepare</button>
+          <button data-action="runStage" data-stage="retarget">Retarget</button>
+          <button data-action="runStage" data-stage="replay">Replay</button>
+          <button class="primary" data-action="runAllStages">Run all</button>
         </div>
-        <div class="field-row" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
-          <label for="skel-follow-ee">Follow</label>
-          <select id="skel-follow-ee" data-change="toggleFollowEE">
-            <option value="off" selected>Static (origin)</option>
-            <option value="ee">End effector</option>
-          </select>
-        </div>
-        <div class="field-row" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
-          <label for="skel-viz-cam">Visualize Camera</label>
-          <select id="skel-viz-cam" data-change="updateSkelVizCam"></select>
-        </div>
-        <button id="btn-skel-start" class="primary" data-action="toggleEstimation" data-enable="true">▶ Start
-          Estimation</button>
-        <button id="btn-skel-stop" class="danger" data-action="toggleEstimation" data-enable="false" disabled>■ Stop
-          Estimation</button>
-        <div class="sep"></div>
-        <div class="sep"></div>
-        <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-          <input type="checkbox" id="btn-skel-calib-overlay" checked data-action="toggleCalibOverlay">
-          Show calib (board + cameras)
-        </label>
-        <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-          <input type="checkbox" id="btn-skel-depth-debug" data-action="toggleDepthDebug">
-          Depth debug (red dots)
-        </label>
-        <div class="sep"></div>
-        <button id="btn-skel-rec-start" data-action="toggleRecording" data-enable="true">🔴 Record</button>
-        <button id="btn-skel-rec-stop" class="danger" data-action="toggleRecording" data-enable="false" disabled>⏹ Stop
-          Recording</button>
-
-        <div class="skeleton-table-container">
-          <table id="skel-table">
-            <thead>
-              <tr>
-                <th>Joint</th>
-                <th>X</th>
-                <th>Y</th>
-                <th>Z</th>
-              </tr>
-            </thead>
-            <tbody id="skel-table-body"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-  </div>
-
-  <div class="skeleton-panel" id="process-panel">
-    <div class="skeleton-header">
-      <span class="title">Process Recordings</span>
-      <button class="danger" data-action="toggleProcess">✕ Close</button>
-    </div>
-    <div class="process-body" id="process-body">
-
-      <!-- LEFT COLUMN -->
-      <div class="process-controls-left" id="process-controls-left">
-        <div style="display: flex; gap: 8px;">
-          <button id="btn-process-mode-smooth" class="primary" data-action="setProcessMode"
-            data-mode="smooth">Smoothing</button>
-          <button id="btn-process-mode-dataset" data-action="setProcessMode" data-mode="dataset">Robot Dataset</button>
-        </div>
-
-        <!-- SMOOTHING controls -->
-        <div id="process-smooth-controls">
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <button data-action="loadProcessRecordings" style="font-size: 11px;">⟳ Refresh</button>
-            <span id="process-page-info" style="font-size: 11px; color: var(--muted);"></span>
-            <button id="btn-process-prev" data-action="processPrevPage" style="font-size: 11px;" disabled>◀ Prev</button>
-            <button id="btn-process-next" data-action="processNextPage" style="font-size: 11px;">Next ▶</button>
-          </div>
-          <div id="process-rec-list"
-            style="font-size: 12px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px;">
-          </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <label for="process-win-len" style="font-size: 11px;">Window:</label>
-            <input type="number" id="process-win-len" value="7" min="3" max="31" step="2"
-              style="width: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 12px;">
-            <label for="process-poly" style="font-size: 11px;">Poly:</label>
-            <input type="number" id="process-poly" value="2" min="1" max="5"
-              style="width: 70px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 12px;">
-          </div>
-          <button id="btn-process-smooth" class="primary" data-action="processSmoothSelected" disabled style="width:100%;">Smooth Selected</button>
-          <div id="process-status" style="font-size: 11px; color: var(--muted);"></div>
-          <div id="process-conversion-status"
-            style="font-size: 11px; max-height: 120px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px; display: none;">
-          </div>
-        </div>
-
-        <!-- DATASET controls -->
-        <div id="process-dataset-controls" style="display:none;flex-direction:column;gap:8px;">
-          <div style="display:flex;gap:4px;align-items:center;">
-            <button data-action="loadPreparedRecordings" style="font-size:11px;">⟳ Refresh</button>
-            <span id="process-ds-page-info" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="process-ds-cln-list"
-            style="font-size:12px;max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <label for="process-ds-robot" style="font-size:11px;">Robot:</label>
-            <select id="process-ds-robot"
-              style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:12px;">
-              <option value="ur10">UR10</option>
-              <option value="iiwa14">KUKA iiwa14</option>
+        <div class="ed-labels">
+          <label>Task <input id="lbl-task" /></label>
+          <label>Hand
+            <select id="lbl-hand"><option>right</option><option>left</option></select>
+          </label>
+          <label>Outcome
+            <select id="lbl-outcome">
+              <option>unrated</option><option>good</option><option>bad</option>
             </select>
-          </div>
-          <div style="font-size:11px;">
-            <label>Base offset</label>
-            <div style="display:flex;gap:4px;align-items:center;">
-              X: <input type="number" id="process-ds-base-x" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Y: <input type="number" id="process-ds-base-y" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Z: <input type="number" id="process-ds-base-z" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-            </div>
-          </div>
-          <div style="font-size:11px;">
-            <label>Target offset</label>
-            <div style="display:flex;gap:4px;align-items:center;">
-              X: <input type="number" id="process-ds-target-x" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Y: <input type="number" id="process-ds-target-y" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Z: <input type="number" id="process-ds-target-z" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-            </div>
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <label for="process-ds-scale" style="font-size:11px;">Scale:</label>
-            <input type="number" id="process-ds-scale" value="1.0" min="0.1" max="10" step="0.1"
-              style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-          </div>
-          <button id="btn-process-ds-convert" class="primary" disabled style="width:100%;" data-action="convertDataset">Convert to Dataset</button>
-          <div id="process-ds-status" style="font-size: 11px; color: var(--muted);"></div>
+          </label>
+          <button class="primary" data-action="saveLabels">Save labels</button>
         </div>
-      </div>
-
-      <!-- MIDDLE COLUMN -->
-      <div class="process-stream" id="process-stream">
-        <div style="color:var(--muted);padding:20px;text-align:center;">Select a recording to view</div>
-      </div>
-
-      <!-- RIGHT COLUMN -->
-      <div class="process-controls-right" id="process-controls-right">
-
-        <!-- SMOOTHING viz controls -->
-        <div id="process-smooth-viz-controls">
-          <div style="display:flex;gap:4px;align-items:center;">
-            <button data-action="loadPreparedRecordings" style="font-size:11px;">⟳ Refresh</button>
-            <span id="process-cln-info" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="process-cln-list"
-            style="font-size:12px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
-          </div>
-          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
-            <label style="font-size:11px;"><input type="checkbox" id="smooth-toggle-raw" checked data-change="applySmoothConfig"> Show Original</label>
-            <label style="font-size:11px;"><input type="checkbox" id="smooth-toggle-smooth" checked data-change="applySmoothConfig"> Show Smooth</label>
-            <label style="font-size:11px;">Axes length:
-              <input type="number" id="smooth-axes-length" value="1.0" min="0.1" max="10" step="0.1"
-                     data-change="applySmoothConfig" style="width:60px;">
-            </label>
-            <label style="font-size:11px;">Center on:</label>
-            <div style="display:flex;gap:10px;font-size:11px;">
-              <label><input type="radio" name="smooth-center" value="world" checked data-change="applySmoothConfig"> World</label>
-              <label><input type="radio" name="smooth-center" value="robot" data-change="applySmoothConfig"> Robot</label>
-            </div>
-          </div>
-        </div>
-
-        <!-- DATASET viz controls -->
-        <div id="process-dataset-viz-controls" style="display:none;flex-direction:column;gap:6px;">
-          <div style="display:flex;gap:4px;align-items:center;">
-            <button data-action="loadVizOutputs" style="font-size:11px;">⟳ Refresh</button>
-            <span id="process-viz-info" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="process-viz-output-list"
-            style="font-size:12px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
-          </div>
-          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
-            <label style="font-size:11px;">Center on:</label>
-            <div style="display:flex;gap:10px;font-size:11px;">
-              <label><input type="radio" name="viz-center" value="world" checked data-change="applyVizConfig"> World</label>
-              <label><input type="radio" name="viz-center" value="robot" data-change="applyVizConfig"> Robot</label>
-            </div>
-            <label style="font-size:11px;">Axes:
-              <input type="number" id="viz-axes-length" value="2.0" min="0.5" max="10" step="0.1"
-                     data-change="applyVizConfig" style="width:60px;">
-            </label>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px;">
-              <label><input type="checkbox" id="viz-toggle-board" checked data-change="applyVizConfig"> Board</label>
-              <label><input type="checkbox" id="viz-toggle-cameras" checked data-change="applyVizConfig"> Cameras</label>
-              <label><input type="checkbox" id="viz-toggle-neutral" checked data-change="applyVizConfig"> Neutral EE</label>
-              <label><input type="checkbox" id="viz-toggle-human-trail" checked data-change="applyVizConfig"> Human Trail</label>
-              <label><input type="checkbox" id="viz-toggle-robot-trail" checked data-change="applyVizConfig"> Robot Trail</label>
-              <label><input type="checkbox" id="viz-toggle-base-to-ee" checked data-change="applyVizConfig"> Base→EE</label>
-              <label><input type="checkbox" id="viz-toggle-debug" checked data-change="applyVizConfig"> Debug</label>
-              <label><input type="checkbox" id="viz-toggle-reach" checked data-change="applyVizConfig"> Reach Sphere</label>
-              <label><input type="checkbox" id="viz-toggle-fk" checked data-change="applyVizConfig"> FK Arm</label>
-              <label><input type="checkbox" id="viz-toggle-ee-target" checked data-change="applyVizConfig"> EE Targets</label>
-            </div>
-          </div>
-        </div>
-
       </div>
     </div>
   </div>
 
-
+  <div class="skeleton-panel" id="viewer-panel">
+    <div class="skeleton-header">
+      <span class="title">3-D viewer</span>
+      <span class="hint" id="viewer-frame-lbl"></span>
+    </div>
+    <div class="viewer-body">
+      <canvas id="viewer-canvas"></canvas>
+      <div class="viewer-bar">
+        <button id="viewer-play">▶</button>
+        <input type="range" id="viewer-frame" min="0" max="0" value="0" style="flex:1" />
+        <label class="hint"><input type="checkbox" id="viewer-raw" /> raw points</label>
+      </div>
+    </div>
+  </div>
 
   <div class="grid" id="grid">
     <div class="empty-state">

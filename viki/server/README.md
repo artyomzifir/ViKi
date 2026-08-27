@@ -18,7 +18,7 @@ stream. Scenes are recorded, then extracted / prepared / retargeted offline.
 | `calibration.py` | intrinsics/extrinsics capture + solve + board preview | `CalibrationManager` |
 | `skeleton.py` | `POST /skeleton/capture_base/{id}` — static background depth for offline scene subtraction | — |
 | `recording.py` | `POST /record/start` → `SceneRecorder` in a background job | `cameras.record` |
-| `pipeline.py` | `/pipeline/extract` + the legacy optimization/dataset routers | `perception.extract`, `prepare`, `retarget` |
+| `pipeline.py` | `GET /pipeline/episodes`, `GET /pipeline/episode/{id}/geometry`, `POST /pipeline/{extract,prepare,retarget}` jobs, `…/jobs/{id}` (+ legacy optimization/dataset routers) | `perception.extract`, `prepare`, `retarget`, `episode` |
 | `replay.py` | `POST /replay` job | `viki.replay` |
 | `label.py` | `GET/POST /label` | `viki.labeling` |
 | `export.py` | `POST /export` job | `viki.export` |
@@ -32,5 +32,9 @@ return a `job_id`; poll `…/jobs/{job_id}`.
 
 ## Frontend
 
-`static/` — plain HTML/JS, one module per panel. Served at `/`. (A different UI
-engine would talk to the same routes.)
+`static/` — plain ES-module HTML/JS, no build step, served at `/`. Panels:
+cameras, calibration, **episodes** (`episodes.js` — list, per-stage job buttons,
+label form, record) and **3-D viewer** (`viewer.js` — a hand-rolled canvas
+orbit view of the wrist trajectory / palm frames / camera frusta / raw points,
+fed by `/pipeline/episode/{id}/geometry`; no WebGL, no vendored deps). No live
+skeleton panel. A different UI engine would talk to the same routes.

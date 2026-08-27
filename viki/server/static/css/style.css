@@ -589,3 +589,36 @@
       flex-direction: column;
       gap: 10px;
     }
+
+/* ── Episodes + 3-D viewer ─────────────────────────────────────────── */
+.episodes-body { display: flex; gap: 16px; padding: 14px; }
+.episodes-left { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.episodes-right { width: 300px; display: flex; flex-direction: column; gap: 12px; }
+.rec-bar { display: flex; gap: 6px; align-items: center; }
+.rec-bar input { background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 12px; }
+.rec-bar input#rec-task { flex: 1; }
+.episode-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: 4px; }
+.episode-row { display: flex; gap: 10px; align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12px; }
+.episode-row:hover { background: var(--bg); }
+.episode-row.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.episode-row .ep-id { font-family: ui-monospace, monospace; color: var(--muted); }
+.episode-row .ep-task { flex: 1; }
+.episode-row .ep-badges { display: flex; gap: 3px; }
+.badge { width: 16px; height: 16px; line-height: 16px; text-align: center;
+  border-radius: 3px; font-size: 9px; background: var(--border); color: var(--muted); }
+.badge.ok { background: var(--accent); color: #fff; }
+.ed-head { font-size: 12px; color: var(--muted); }
+.ed-stages { display: flex; flex-wrap: wrap; gap: 6px; }
+.ed-labels { display: flex; flex-direction: column; gap: 8px; }
+.ed-labels label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.ed-labels input, .ed-labels select { background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 5px 7px; border-radius: 4px; font-size: 12px; }
+.viewer-body { display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+#viewer-canvas { width: 100%; height: 460px; background: #0b0d10;
+  border: 1px solid var(--border); border-radius: 4px; cursor: grab; }
+#viewer-canvas:active { cursor: grabbing; }
+.viewer-bar { display: flex; gap: 10px; align-items: center; }
+.viewer-bar .hint { font-size: 11px; color: var(--muted); }
