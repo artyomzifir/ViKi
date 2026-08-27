@@ -98,5 +98,32 @@
     0,
     0
   ],
-  "MODELS_DIR": "models/"
+  "MODELS_DIR": "models/",
+  "RETARGET_BASE_ROTATION": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "RETARGET_BASE_TRANSLATION": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "POSE_BACKEND": "mediapipe",
+  "GRIPPER": "binary",
+  "EXPORT_FPS": 15,
+  "EPISODES_DIR": "data/episodes",
+  "DATASETS_DIR": "data/datasets"
 }

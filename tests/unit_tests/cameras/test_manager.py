@@ -42,6 +42,9 @@ class MockBackend(CameraBackend):
     def is_running(self) -> bool:
         return self._is_running
 
+    def project_color_to_depth(self, u, v, z):
+        return (u, v)
+
 
 def test_manager_start_stop():
     """Verify that cameras can be started and stopped correctly."""

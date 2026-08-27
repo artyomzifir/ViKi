@@ -19,6 +19,7 @@ import logging
 import numpy as np
 
 from viki.contracts import Episode, REPLAY_KEYS
+from viki.episode import mark_stage
 from viki.replay.driver import load_driver
 from viki.replay.screen import screen
 from viki.retarget.archive import load_archive, write_hdf5_archive
@@ -66,6 +67,7 @@ def replay_episode(
     }
     assert set(archive) == set(REPLAY_KEYS)
     write_hdf5_archive(ep.replay_h5, archive)
+    mark_stage(ep, "replay", verdict=v.verdict, rejection_cause=v.cause, driver=driver)
     logger.info("replay %s: verdict=%s cause=%s", ep.id, v.verdict, v.cause or "-")
     return str(ep.replay_h5)
 
