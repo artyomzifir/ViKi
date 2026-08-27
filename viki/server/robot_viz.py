@@ -26,8 +26,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 from viki.config import SKELETON_SMOOTHED_DIR
-from viki.viz.mjpeg import mjpeg_chunk, placeholder
-from viki.viz.robot_viz_shared import (
+from viki.render.mjpeg import mjpeg_chunk, placeholder
+from viki.render.robot_viz_shared import (
     VizConfig,
     camera_gaze_dir,
     camera_world_pos,

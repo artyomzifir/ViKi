@@ -15,11 +15,11 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from fastapi.responses import Response
 from pydantic import BaseModel
 import numpy as np
-from viki.skeleton.models import LM
+from viki.perception.models import LM
 
 import viki.config as config
-from viki.capture.manager import CameraManager
-from viki.skeleton.camera_prep import prepare_frame
+from viki.cameras.manager import CameraManager
+from viki.perception.camera_prep import prepare_frame
 from viki.server.deps import get_worker, get_manager
 from viki.server.skeleton_worker import SkeletonWorker
 

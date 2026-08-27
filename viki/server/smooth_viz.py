@@ -10,8 +10,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from viki.viz.mjpeg import mjpeg_chunk, placeholder
-from viki.viz.smooth_viz_shared import SmoothVizConfig, extract_wrist
+from viki.render.mjpeg import mjpeg_chunk, placeholder
+from viki.render.smooth_viz_shared import SmoothVizConfig, extract_wrist
 
 
 def smooth_trajectory_stream(

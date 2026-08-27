@@ -13,12 +13,12 @@ import os
 from typing import Optional
 
 import numpy as np
-from viki.skeleton.models import SkeletonFrame, HandDetection
-from viki.skeleton.pipeline import SkeletonPipeline, PipelineResult
-from viki.skeleton.recorder import SkeletonRecorder
-from viki.capture.sync import MultiCameraSync
-from viki.capture.manager import CameraManager
-from viki.capture.recorder import RGBDRecorder
+from viki.perception.models import SkeletonFrame, HandDetection
+from viki.perception.pipeline import SkeletonPipeline, PipelineResult
+from viki.perception.recorder import SkeletonRecorder
+from viki.cameras.sync import MultiCameraSync
+from viki.cameras.manager import CameraManager
+from viki.cameras.recorder import RGBDRecorder
 
 
 class SkeletonWorker:

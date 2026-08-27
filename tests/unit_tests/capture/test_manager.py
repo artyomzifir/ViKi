@@ -8,8 +8,8 @@ import pytest
 # ...
 from unittest.mock import MagicMock, patch
 import numpy as np
-from viki.capture.manager import CameraManager
-from viki.capture.base import CameraBackend, Frame
+from viki.cameras.manager import CameraManager
+from viki.cameras.base import CameraBackend, Frame
 
 
 class MockBackend(CameraBackend):

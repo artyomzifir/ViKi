@@ -8,7 +8,7 @@ import pytest
 # ...
 import numpy as np
 import cv2
-from viki.viz.depth import DepthColorizer, Undistorter, DepthStabilizer
+from viki.render.depth import DepthColorizer, Undistorter, DepthStabilizer
 
 
 def test_depth_colorizer_initialization():

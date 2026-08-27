@@ -1,5 +1,5 @@
 """
-Tests for viki.skeleton.hand_angles.compute_end_effector_pose.
+Tests for viki.perception.hand_angles.compute_end_effector_pose.
 
 Pins the palm-frame construction, the ROS/URDF RPY convention
 (R = Rz(yaw) · Ry(pitch) · Rx(roll), extrinsic XYZ), the SO(3)
@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from viki.skeleton.hand_angles import compute_end_effector_pose
-from viki.skeleton.models import LM, EndEffectorPose
+from viki.perception.hand_angles import compute_end_effector_pose
+from viki.perception.models import LM, EndEffectorPose
 
 
 # ─────────────────────────────────────────────────────────────
@@ -57,8 +57,8 @@ def _neutral_points() -> dict[LM, np.ndarray]:
         LM.MIDDLE_MCP: np.array([0.0, 1.0, 0.0]),
         LM.THUMB_CMC: np.array([1.0, 0.0, 0.0]),
         # Include not-required landmarks to prove they are ignored.
-        LM.ELBOW: np.array([0.0, -1.0, 0.0]),
-        LM.SHOULDER: np.array([0.0, -2.0, 0.0]),
+        LM.THUMB_TIP: np.array([0.0, -1.0, 0.0]),
+        LM.PINKY_TIP: np.array([0.0, -2.0, 0.0]),
     }
 
 
@@ -317,7 +317,7 @@ def test_gimbal_lock_convention_sets_roll_to_zero() -> None:
 # ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("not_required", [LM.ELBOW, LM.SHOULDER])
+@pytest.mark.parametrize("not_required", [LM.THUMB_TIP, LM.PINKY_TIP])
 def test_missing_arm_landmark_does_not_invalidate_pose(not_required: LM) -> None:
     pts = _neutral_points()
     del pts[not_required]
@@ -325,7 +325,7 @@ def test_missing_arm_landmark_does_not_invalidate_pose(not_required: LM) -> None
     assert out.valid is True
 
 
-@pytest.mark.parametrize("not_required", [LM.ELBOW, LM.SHOULDER])
+@pytest.mark.parametrize("not_required", [LM.THUMB_TIP, LM.PINKY_TIP])
 def test_nan_in_non_required_landmark_does_not_invalidate_pose(
     not_required: LM,
 ) -> None:

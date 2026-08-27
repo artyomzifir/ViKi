@@ -17,10 +17,10 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 import viki.config as config
-from viki.optimization.preparation.processor import PreparationPipeline
+from viki.prepare.processor import PreparationPipeline
 from viki.server.deps import get_processor
 from viki.server.smooth_viz import smooth_trajectory_stream
-from viki.viz.smooth_viz_shared import SmoothVizConfig
+from viki.render.smooth_viz_shared import SmoothVizConfig
 
 _MJPEG_MEDIA = "multipart/x-mixed-replace; boundary=frame"
 _STREAM_HEADERS = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}

@@ -17,10 +17,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from viki.calibration.manager import CalibrationManager
-from viki.capture.manager import CameraManager
-from viki.capture.sync import MultiCameraSync
-from viki.skeleton.pipeline import SkeletonPipeline
-from viki.skeleton.recorder import SkeletonRecorder
+from viki.cameras.manager import CameraManager
+from viki.cameras.sync import MultiCameraSync
+from viki.perception.pipeline import SkeletonPipeline
+from viki.perception.recorder import SkeletonRecorder
 from viki.server.skeleton_worker import SkeletonWorker
 from importlib import import_module
 
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
     app.state.skeleton_pipeline = SkeletonPipeline(
         app.state.calibrator, app.state.manager
     )
-    from viki.skeleton.models import LM
+    from viki.perception.models import LM
 
     app.state.skeleton_recorder = SkeletonRecorder(
         filter_indices=[LM.WRIST, LM.MIDDLE_MCP, LM.THUMB_CMC]
@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
         app.state.skeleton_recorder,
     )
     app.state.skeleton_worker.start()
-    from viki.optimization.preparation.processor import PreparationPipeline
+    from viki.prepare.processor import PreparationPipeline
 
     app.state.skeleton_processor = PreparationPipeline()
 

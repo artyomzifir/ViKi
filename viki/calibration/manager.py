@@ -11,7 +11,7 @@ import cv2
 import json
 import logging
 from typing import Dict, List
-from viki.capture.manager import CameraManager
+from viki.cameras.manager import CameraManager
 from viki.calibration.models import (
     ArucoBoardParameters,
     BoardParameters,

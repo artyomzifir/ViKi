@@ -11,9 +11,9 @@ from __future__ import annotations
 from fastapi import Request
 
 from viki.calibration.manager import CalibrationManager
-from viki.capture.manager import CameraManager
+from viki.cameras.manager import CameraManager
 from viki.server.skeleton_worker import SkeletonWorker
-from viki.optimization.preparation.processor import PreparationPipeline
+from viki.prepare.processor import PreparationPipeline
 
 
 def get_manager(request: Request) -> CameraManager:

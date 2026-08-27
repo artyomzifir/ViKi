@@ -7,7 +7,7 @@ import pytest
 
 # ...
 import numpy as np
-from viki.viz.mjpeg import encode_jpeg, mjpeg_chunk, placeholder
+from viki.render.mjpeg import encode_jpeg, mjpeg_chunk, placeholder
 
 
 def test_encode_jpeg():

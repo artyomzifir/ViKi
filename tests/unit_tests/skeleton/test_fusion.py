@@ -7,8 +7,8 @@ import pytest
 
 # ...
 import numpy as np
-from viki.skeleton.fusion import fuse
-from viki.skeleton.models import Landmarks3D, LM, SkeletonFrame
+from viki.perception.fusion import fuse
+from viki.perception.models import Landmarks3D, LM, SkeletonFrame
 from viki.calibration.models import CalibrationExtrinsics
 
 

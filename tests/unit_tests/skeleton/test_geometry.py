@@ -4,8 +4,8 @@ Verifies lift_to_3d with MediaPipe z_rel + depth median.
 """
 
 import numpy as np
-from viki.skeleton.geometry import lift_to_3d
-from viki.skeleton.models import HandDetection, PreparedFrame, LM
+from viki.perception.geometry import lift_to_3d
+from viki.perception.models import HandDetection, PreparedFrame, LM
 
 
 class _MockBackend:

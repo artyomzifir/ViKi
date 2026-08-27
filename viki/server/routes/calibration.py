@@ -18,7 +18,7 @@ from viki.calibration.models import ArucoBoardParameters
 logger = logging.getLogger(__name__)
 
 from viki.calibration.manager import CalibrationManager
-from viki.capture.manager import CameraManager
+from viki.cameras.manager import CameraManager
 from viki.server.deps import get_calibrator, get_manager
 from viki.server.streams import marked_camera_stream
 from viki.server.routes.models import (

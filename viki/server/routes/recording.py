@@ -6,7 +6,7 @@ Endpoints for starting/stopping RGB-D recording in the background worker.
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from viki.capture.manager import CameraManager
+from viki.cameras.manager import CameraManager
 from viki.server.deps import get_manager, get_worker
 from viki.server.skeleton_worker import SkeletonWorker
 

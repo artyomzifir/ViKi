@@ -1,5 +1,5 @@
 """
-Tests for viki.skeleton.hand_angles.compute_hand_angles.
+Tests for viki.perception.hand_angles.compute_hand_angles.
 
 Uses synthetic 3-D points and simple rotation matrices to pin the sign
 and magnitude of each returned angle.
@@ -10,8 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from viki.skeleton.hand_angles import HandAngles, compute_hand_angles
-from viki.skeleton.models import LM
+from viki.perception.hand_angles import HandAngles, compute_hand_angles
+from viki.perception.models import LM
 
 
 # ─────────────────────────────────────────────────────────────

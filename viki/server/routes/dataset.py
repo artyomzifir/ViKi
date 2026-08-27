@@ -18,8 +18,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from viki.optimization.preparation.processor import estimate_fps
-from viki.optimization.retarget.retarget_rgb_only import (
+from viki.prepare.processor import estimate_fps
+from viki.retarget.retarget_rgb_only import (
     normalize_robot,
     retarget_from_poses,
     RunConfig,
@@ -43,7 +43,7 @@ from viki.config import (
     SKELETON_SMOOTHED_DIR,
 )
 from viki.server.robot_viz import robot_trajectory_stream
-from viki.viz.robot_viz_shared import VizConfig
+from viki.render.robot_viz_shared import VizConfig
 
 router = APIRouter(prefix="/dataset", tags=["dataset"])
 logger = logging.getLogger(__name__)
@@ -194,7 +194,7 @@ async def list_outputs():
 @router.get("/debug-viz")
 async def retarget_debug_viz():
     """Return the latest retargeting debug overlay as a PNG."""
-    from viki.optimization.retarget.debug import render_debug_viz_png
+    from viki.retarget.debug import render_debug_viz_png
 
     png = render_debug_viz_png()
     if png is None:
