@@ -67,43 +67,52 @@ export async function saveLabels() {
   } catch (e) { log('save labels: ' + e, 'error'); }
 }
 
+const STAGE_PATH = {
+  extract: '/api/pipeline/extract', prepare: '/api/pipeline/prepare',
+  retarget: '/api/pipeline/retarget', replay: '/api/replay',
+};
+const JOB_BASE = { replay: '/api/replay/jobs', record: '/api/record/jobs' };
+
 export async function runStage(el) {
   if (!selected) return;
-  const stage = el.dataset.stage;
-  const path = { extract: '/api/pipeline/extract', prepare: '/api/pipeline/prepare',
-                 retarget: '/api/pipeline/retarget', replay: '/api/replay' }[stage];
+  await runOne(el.dataset.stage);
+}
+
+async function runOne(stage) {
   const body = stage === 'replay'
     ? { episode: selected.path, driver: 'dryrun' }
     : { episode: selected.path };
+  let job_id;
   try {
-    const { job_id } = await api('POST', path, body);
+    ({ job_id } = await api('POST', STAGE_PATH[stage], body));
     log(`${stage} started (${job_id})`);
-    pollJob(stage, job_id);
-  } catch (e) { log(`${stage}: ` + e, 'error'); }
+  } catch (e) { log(`${stage}: ` + e, 'error'); throw e; }
+  const ok = await waitJob(stage, job_id);
+  refresh();
+  if (selected) loadEpisode(selected.id);
+  if (!ok) throw new Error(`${stage} failed`);
 }
 
-async function pollJob(stage, jobId) {
-  const base = { replay: '/api/replay/jobs', record: '/api/record/jobs' }[stage]
-    || '/api/pipeline/jobs';
-  const t = setInterval(async () => {
-    let j;
-    try { j = await api('GET', `${base}/${jobId}`); } catch { return; }
-    if (j.status === 'running') return;
-    clearInterval(t);
-    if (j.status === 'done') {
-      log(`${stage} done`, 'ok');
-      refresh();
-      if (selected) loadEpisode(selected.id);
-    } else {
-      log(`${stage} failed: ${j.error}`, 'error');
-    }
-  }, 1500);
+function waitJob(stage, jobId) {
+  const base = JOB_BASE[stage] || '/api/pipeline/jobs';
+  return new Promise(resolve => {
+    const t = setInterval(async () => {
+      let j;
+      try { j = await api('GET', `${base}/${jobId}`); } catch { return; }
+      if (j.status === 'running') return;
+      clearInterval(t);
+      if (j.status === 'done') { log(`${stage} done`, 'ok'); resolve(true); }
+      else { log(`${stage} failed: ${j.error}`, 'error'); resolve(false); }
+    }, 1500);
+  });
 }
+
+function pollJob(stage, jobId) { waitJob(stage, jobId).then(() => refresh()); }
 
 export async function runAll() {
+  if (!selected) return;
   for (const s of STAGES) {
-    await runStage({ dataset: { stage: s } });
-    await new Promise(r => setTimeout(r, 500));
+    try { await runOne(s); } catch { break; }
   }
 }
 
