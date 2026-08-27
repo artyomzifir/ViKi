@@ -25,13 +25,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from viki.perception.models import (
+from viki.contracts import (
     HandDetection,
     Landmarks3D,
     LM,
     PreparedFrame,
 )
-from viki.calibration.models import CalibrationExtrinsics
+from viki.contracts import CalibrationExtrinsics
 import viki.config as config
 
 # Palm/knuckle landmarks used to estimate the hand position when not using the

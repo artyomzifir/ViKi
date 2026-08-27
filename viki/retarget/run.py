@@ -2,7 +2,7 @@
 viki.retarget.run
 Consumes pre-computed end-effector trajectories (wrist positions and palm
 rotations, in robot-frame metres) produced by the smooth stage
-(``viki.prepare.processor``) and runs PINK IK against a Pinocchio robot
+(``viki.prepare.run``) and runs PINK IK against a Pinocchio robot
 description, writing a trajectory archive.
 
 This module is IK-only: deriving end-effector poses from raw landmarks happens

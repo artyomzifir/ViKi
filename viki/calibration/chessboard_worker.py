@@ -11,11 +11,11 @@ import cv2
 import numpy as np
 from typing import List
 from viki.cameras.base import Frame
-from viki.calibration.models import (
+from viki.calibration.geometry import canonical_board_extrinsics
+from viki.contracts import (
     CalibrationSample,
     CalibrationIntrinsics,
     CalibrationExtrinsics,
-    canonical_board_extrinsics,
 )
 from viki.calibration.worker import _CalibrationWorker
 

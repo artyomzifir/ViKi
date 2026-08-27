@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from viki.prepare.processor import estimate_fps
+from viki.prepare.run import estimate_fps
 from viki.retarget import (
     normalize_robot,
     retarget_from_poses,

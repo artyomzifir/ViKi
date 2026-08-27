@@ -21,8 +21,8 @@ from viki.retarget.eval_tracking_error import (  # noqa: E402
     select_q_key,
     select_target_source,
 )
-from viki.retarget.smoothing import adjusted_savgol_window, smooth_none  # noqa: E402
-from viki.retarget.archive_io import write_hdf5_archive  # noqa: E402
+from viki.dsp import adjusted_savgol_window, smooth_none  # noqa: E402
+from viki.retarget.archive import write_hdf5_archive  # noqa: E402
 
 
 class EvalTrackingErrorTests(unittest.TestCase):

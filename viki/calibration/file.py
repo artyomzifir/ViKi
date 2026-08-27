@@ -11,7 +11,7 @@ import json
 import logging
 import numpy as np
 from viki.config import INTRINSICS_FILENAME, EXTRINSICS_FILENAME
-from viki.calibration.models import CalibrationIntrinsics, CalibrationExtrinsics
+from viki.contracts import CalibrationIntrinsics, CalibrationExtrinsics
 
 
 def write_device_intrinsics(

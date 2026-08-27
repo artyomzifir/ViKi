@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Dict, List
 from viki.cameras.manager import CameraManager
-from viki.calibration.models import (
+from viki.contracts import (
     ArucoBoardParameters,
     BoardParameters,
     CalibrationSample,

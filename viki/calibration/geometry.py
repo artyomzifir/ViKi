@@ -1,34 +1,13 @@
 """
-viki.calibration.models
------------------------
-Compatibility shim. Calibration DTOs now live in :mod:`viki.contracts`; this
-module re-exports them. ``canonical_board_extrinsics`` is solver logic and
-stays here (it will move to ``viki.calibration.solve`` in a later step).
+viki.calibration.geometry
+-------------------------
+Board-pose maths for calibration workers.
 """
 
 from __future__ import annotations
 
 import cv2
 import numpy as np
-
-from viki.contracts import (  # noqa: F401
-    ArucoBoardParameters,
-    ArucoCalibrationSample,
-    BoardParameters,
-    CalibrationExtrinsics,
-    CalibrationIntrinsics,
-    CalibrationSample,
-)
-
-__all__ = [
-    "BoardParameters",
-    "ArucoBoardParameters",
-    "CalibrationSample",
-    "ArucoCalibrationSample",
-    "CalibrationIntrinsics",
-    "CalibrationExtrinsics",
-    "canonical_board_extrinsics",
-]
 
 
 def canonical_board_extrinsics(

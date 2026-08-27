@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-from .smoothing import smooth_landmark_sequence, interpolate_nans
+from viki.dsp import smooth_landmark_sequence, interpolate_nans
 from viki.perception.hand_angles import compute_end_effector_pose
-from viki.perception.models import HAND_LM_COUNT, LM
+from viki.contracts import HAND_LM_COUNT, LM
 import viki.config as config
 
 
@@ -210,7 +210,7 @@ class PreparationPipeline:
 
         # 2. Fusion part: fuse the interpolated per-camera trajectories onto a
         #    common time grid (deferred from capture time).
-        from .fusion import fuse_trajectories
+        from viki.prepare.fuse import fuse_trajectories
 
         raw_fused, grid = fuse_trajectories(raw_filled, ts_map, landmark_ids)
 

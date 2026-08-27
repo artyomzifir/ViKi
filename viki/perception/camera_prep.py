@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from viki.cameras.base import Frame
-from viki.perception.models import PreparedFrame
+from viki.contracts import PreparedFrame
 
 
 def prepare_frame(frame: Frame) -> PreparedFrame:

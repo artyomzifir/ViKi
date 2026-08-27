@@ -14,14 +14,14 @@ from typing import List
 from cv2.typing import MatLike
 from viki.cameras.base import Frame
 from viki.cameras.manager import CameraManager
-from viki.calibration.models import (
+from viki.calibration.geometry import canonical_board_extrinsics
+from viki.contracts import (
     ArucoBoardParameters,
     BoardParameters,
     ArucoCalibrationSample,
     CalibrationSample,
     CalibrationIntrinsics,
     CalibrationExtrinsics,
-    canonical_board_extrinsics,
 )
 from viki.calibration.worker import _CalibrationWorker
 

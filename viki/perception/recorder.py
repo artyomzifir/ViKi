@@ -31,7 +31,7 @@ from typing import List, Optional
 
 import json
 import numpy as np
-from viki.perception.models import HAND_LM_COUNT, SkeletonFrame, LM, DepthDebug
+from viki.contracts import HAND_LM_COUNT, SkeletonFrame, LM, DepthDebug
 import viki.config as config
 
 

@@ -17,7 +17,7 @@ import logging
 from typing import List
 from viki.cameras.base import Frame
 from viki.cameras.manager import CameraManager
-from viki.calibration.models import (
+from viki.contracts import (
     BoardParameters,
     CalibrationSample,
     CalibrationIntrinsics,

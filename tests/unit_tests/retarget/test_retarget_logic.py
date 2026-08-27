@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import viki.config as viki_config
 
-from viki.retarget.retarget_rgb_only import (
+from viki.retarget.run import (
     R_DEFAULT,
     align_rotations_to_initial,
     build_direct_rotation_targets,
@@ -228,7 +228,7 @@ class RetargetLogicTests(unittest.TestCase):
 
     def test_wrist_position_forces_zero_orientation_cost(self) -> None:
         robot = normalize_robot("ur10")
-        from viki.retarget.retarget_rgb_only import RunConfig
+        from viki.retarget.run import RunConfig
 
         cfg = RunConfig(
             robot=robot,
