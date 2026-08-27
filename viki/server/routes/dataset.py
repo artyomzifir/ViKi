@@ -42,7 +42,7 @@ from viki.config import (
     RETARGET_TRAJECTORY_SCALE,
     SKELETON_SMOOTHED_DIR,
 )
-from viki.server.robot_viz import robot_trajectory_stream
+from viki.render.robot_viz import robot_trajectory_stream
 from viki.render.robot_viz_shared import VizConfig
 
 router = APIRouter(prefix="/dataset", tags=["dataset"])

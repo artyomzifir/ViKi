@@ -1,5 +1,5 @@
 """
-viki.server.robot_viz
+viki.render.robot_viz
 --------------------
 MJPEG stream generator for the comprehensive robot trajectory visualisation.
 
