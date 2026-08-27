@@ -94,6 +94,16 @@ def _cmd_export(a) -> None:
     print(export_dataset(a.episodes, a.out, fps=a.fps))
 
 
+def _cmd_viz(a) -> None:
+    from viki.render.skeleton3d import render_episode_figure
+
+    ep = _episode(a.episode)
+    fig = render_episode_figure(ep, stage=a.stage)
+    out = a.out or str(ep.root / f"viz-{a.stage}.png")
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(out)
+
+
 def _cmd_run(a) -> None:
     from viki.episode import stage_done
     from viki.perception.extract import extract_episode
@@ -169,6 +179,12 @@ def _build_parser() -> argparse.ArgumentParser:
     px.add_argument("--out", required=True)
     px.add_argument("--fps", type=int, default=15)
     px.set_defaults(func=_cmd_export)
+
+    pv = sub.add_parser("viz", help="headless 3-D figure of an episode (rec|cln)")
+    pv.add_argument("episode")
+    pv.add_argument("--stage", default="cln", choices=["rec", "cln"])
+    pv.add_argument("--out", default=None, help="PNG path (default: <episode>/viz-<stage>.png)")
+    pv.set_defaults(func=_cmd_viz)
 
     prn = sub.add_parser("run", help="extract -> prepare -> retarget -> replay")
     prn.add_argument("episode")
