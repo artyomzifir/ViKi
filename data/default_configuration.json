@@ -69,7 +69,6 @@
   "SKELETON_COORDINATE_FRAME": "robot_base",
   "SKELETON_RECS_DIR": "data/skeleton_recs",
   "SKELETON_SMOOTHED_DIR": "data/skeleton_smoothed",
-  "SKELETON_COORDINATE_FRAME": "robot_base",
   "SKELETON_SAVE_JSON_DEBUG": false,
   "DISCARD_OUTLIERS": true,
   "DISCARD_OUTLIERS_MAX_PORTION": 0.2,
@@ -89,7 +88,42 @@
   "RETARGET_JOINT_SG_POLYORDER": 3,
   "RETARGET_RECENTER_TO_NEUTRAL": false,
   "RETARGET_TRAJECTORY_SCALE": 0.8,
-  "ROBOT_BASE_OFFSET": [0.0, 0.0, 0.0],
-  "TARGET_OFFSET": [0.0, 0.0, 0.0],
-  "MODELS_DIR": "models/"
+  "ROBOT_BASE_OFFSET": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "TARGET_OFFSET": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "MODELS_DIR": "models/",
+  "RETARGET_BASE_ROTATION": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "RETARGET_BASE_TRANSLATION": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "POSE_BACKEND": "mediapipe",
+  "GRIPPER": "binary",
+  "EXPORT_FPS": 15,
+  "EPISODES_DIR": "data/episodes",
+  "DATASETS_DIR": "data/datasets"
 }

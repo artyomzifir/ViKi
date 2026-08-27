@@ -24,11 +24,7 @@ from viki.calibration.manager import CalibrationManager
 from viki.perception.camera_prep import prepare_frame
 from viki.perception.geometry import lift_to_3d, camera_landmarks_to_world
 from viki.perception.hand_angles import compute_end_effector_pose
-from viki.perception.detectors import (
-    CompositeLandmarkDetector,
-    FusionMode,
-    MediaPipeHand,
-)
+from viki.perception.backends import HandPoseBackend, load_backend
 from viki.perception.models import (
     Landmarks3D,
     SkeletonFrame,
@@ -134,11 +130,13 @@ class SkeletonPipeline:
         discard_outliers_max_portion: float = viki.config.DISCARD_OUTLIERS_MAX_PORTION,
         position_from_wrist: bool = viki.config.POSITION_FROM_WRIST,
         depth_debug: bool = viki.config.DEPTH_DEBUG,
+        backend: str = getattr(viki.config, "POSE_BACKEND", "mediapipe"),
     ) -> None:
         self._hand = hand
         self._calibrator = calibrator
         self._manager = manager
-        self._detectors: dict[str, CompositeLandmarkDetector] = {}
+        self._backend_name = backend
+        self._detectors: dict[str, HandPoseBackend] = {}
         self._hand_type = hand
 
         self._discard_outliers = discard_outliers
@@ -267,15 +265,9 @@ class SkeletonPipeline:
             return dev_id, None, None
 
         if dev_id not in self._detectors:
-            self._detectors[dev_id] = CompositeLandmarkDetector(
-                detectors=[
-                    # MediaPipeArm(hand=self._hand, mode="video"),
-                    MediaPipeHand(hand=self._hand, mode="video"),
-                ],
-                mode=FusionMode.ANY,
-            )
+            self._detectors[dev_id] = load_backend(self._backend_name, mode="video")
 
-        det = self._detectors[dev_id].detect(prepared)
+        det = self._detectors[dev_id].detect(prepared, self._hand)
         return dev_id, det, prepared
 
     def close(self) -> None:

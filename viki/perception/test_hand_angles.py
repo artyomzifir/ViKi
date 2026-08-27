@@ -7,14 +7,13 @@ import unittest
 
 import numpy as np
 
-from viki.perception.detectors import MediaPipeHand
 from viki.perception.hand_angles import compute_end_effector_pose, compute_palm_rotation
-from viki.perception.models import LM, SkeletonFrame
+from viki.contracts import LM, SkeletonFrame
 from viki.perception.recorder import SkeletonRecorder
 
 
 def synthetic_points() -> dict[LM, np.ndarray]:
-    points = {LM(i): np.zeros(3, dtype=np.float32) for i in range(LM.N)}
+    points = {LM(i): np.zeros(3, dtype=np.float32) for i in range(21)}
     points[LM.WRIST] = np.array([0.0, 0.0, 0.0], dtype=np.float32)
     points[LM.MIDDLE_MCP] = np.array([1.0, 0.0, 0.0], dtype=np.float32)
     points[LM.PINKY_MCP] = np.array([0.0, 1.0, 0.0], dtype=np.float32)
@@ -79,8 +78,8 @@ class HandPoseTests(unittest.TestCase):
                 self.assertIn("timestamps", data)
                 self.assertIn("points", data)
                 self.assertIn("landmark_ids", data)
-                self.assertEqual(data["points"].shape, (1, LM.N, 3))
-                self.assertEqual(data["landmark_ids"].tolist(), list(range(LM.N)))
+                self.assertEqual(data["points"].shape, (1, 21, 3))
+                self.assertEqual(data["landmark_ids"].tolist(), list(range(21)))
 
 
 if __name__ == "__main__":

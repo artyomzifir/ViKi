@@ -6,16 +6,16 @@ import unittest
 
 import numpy as np
 
-from viki.perception.models import LM
+from viki.contracts import LM
 from viki.prepare.processor import stable_palm_orientation_mask
 
 
 class ProcessorOrientationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.points = np.zeros((5, LM.N, 3), dtype=np.float64)
+        self.points = np.zeros((5, 21, 3), dtype=np.float64)
         self.points[:, LM.MIDDLE_MCP] = [1.0, 0.0, 0.0]
         self.points[:, LM.THUMB_CMC] = [0.0, 1.0, 0.0]
-        self.ids = np.arange(LM.N, dtype=np.int32)
+        self.ids = np.arange(21, dtype=np.int32)
         self.rotations = np.tile(np.eye(3), (5, 1, 1))
         self.pose_valid = np.ones(5, dtype=bool)
 

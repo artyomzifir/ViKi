@@ -92,14 +92,78 @@ def _load_config():
 
 _config = _load_config()
 
-# We assign these to globals so that 'from viki.config import CONSTANT' still works
+# Legacy access: `from viki.config import CONSTANT`. Kept until every stage takes
+# an explicit `Config` argument; new code should use `viki.config.load()`.
 globals().update(_config)
 
-# Fallback defaults for retargeting offsets (backward compat with old config keys)
 if "ROBOT_BASE_OFFSET" not in _config:
     globals()["ROBOT_BASE_OFFSET"] = [0.0, 0.0, 0.0]
 if "TARGET_OFFSET" not in _config:
     globals()["TARGET_OFFSET"] = [0.0, 0.0, 0.0]
+
+
+# ─────────────────────────── explicit Config object ────────────────────────────
+
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Mapping
+
+
+@dataclass(frozen=True)
+class Config:
+    """
+    Immutable view over the merged configuration. Stages take this as an
+    argument instead of importing module globals.
+
+    Hot keys are plain attributes (via ``__getattr__`` over the frozen mapping);
+    ``cfg.get("KEY", default)`` covers optional/rare keys. UPPER_SNAKE names are
+    kept to match the JSON so the migration is mechanical.
+    """
+
+    _raw: Mapping[str, Any]
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return object.__getattribute__(self, "_raw")[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def get(self, name: str, default: Any = None) -> Any:
+        return self._raw.get(name, default)
+
+    def as_dict(self) -> dict:
+        return dict(self._raw)
+
+
+_DEFAULTS: dict[str, Any] = {
+    "ROBOT_BASE_OFFSET": [0.0, 0.0, 0.0],
+    "TARGET_OFFSET": [0.0, 0.0, 0.0],
+    "RETARGET_BASE_ROTATION": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "RETARGET_BASE_TRANSLATION": [0.0, 0.0, 0.0],
+    "POSE_BACKEND": "mediapipe",
+    "GRIPPER": "binary",
+    "EXPORT_FPS": 15,
+    "EPISODES_DIR": "data/episodes",
+    "DATASETS_DIR": "data/datasets",
+    "SKELETON_SAVE_JSON_DEBUG": False,
+}
+
+
+def load(path: str | None = None) -> Config:
+    """
+    Load configuration into an immutable :class:`Config`.
+
+    Reads ``path`` (default: the user config, copied from the default on first
+    run), overlays :data:`_DEFAULTS` for missing keys, and freezes the result.
+    """
+    raw = dict(_DEFAULTS)
+    if path is None:
+        raw.update(_load_config())
+    else:
+        with open(path) as f:
+            raw.update(json.load(f))
+    return Config(MappingProxyType(raw))
+
 
 # Keep a reference to the paths for the API
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_PATH
