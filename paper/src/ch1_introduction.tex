@@ -1,0 +1,199 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+\section{Background}
+\label{sec:background}
+
+Visuomotor policies such as Action Chunking Transformers (ACT) and Diffusion
+Policy have made behaviour cloning a practical route to robot manipulation, but
+their performance scales with the quantity and quality of demonstration data.
+The dominant way of acquiring that data is teleoperation: a human operator
+drives the robot through the task while joint states and camera streams are
+recorded. Teleoperation yields action labels that are, by construction, exactly
+executable on the target embodiment, which is its principal advantage. Its
+disadvantages are equally structural. Each episode consumes an operator's time
+in real time, the required hardware---a VR controller, an exoskeleton or a
+haptic device---is expensive and embodiment-specific, and the resulting motion
+is shaped as much by the latency and ergonomics of the interface as by the task
+itself.
+
+Human demonstrations recorded passively, with the demonstrator using their own
+hands and no interface at all, invert this trade-off. Data collection becomes
+cheap, fast and natural; a demonstrator can record dozens of episodes in the
+time a teleoperator records one, and the recorded motion reflects how the task
+is actually performed rather than how it can be performed through a control
+interface. What is lost is precisely the property teleoperation guarantees:
+there are no action labels, and the kinematics of a human arm and hand do not
+correspond to the kinematics of a robot manipulator. Bridging that gap is the
+retargeting problem, and it is the subject of this thesis.
+
+\section{Problem Statement}
+\label{sec:problem}
+
+Passive capture makes demonstration data cheap but produces observations, not
+actions. Converting an observed human hand trajectory into a robot joint
+trajectory that (i) reproduces the task-relevant motion, (ii) is smooth enough
+for a policy to imitate, and (iii) is physically executable on the target
+manipulator, is an underdetermined problem contaminated by perception noise.
+
+Two failure modes dominate. The first is noise amplification through the
+kinematic chain. Monocular or neural depth estimates of hand keypoints are
+noisy at the centimetre scale; inverse kinematics is nonlinear, so a bounded
+task-space perturbation may map to an unbounded joint-space excursion near
+singularities. The widespread response---low-pass filtering the observed
+trajectory before solving inverse kinematics, then filtering the joint
+trajectory afterwards---does not solve this. Task-space pre-filtering is
+applied in the wrong space to guarantee joint-space smoothness, and it removes
+genuine high-frequency task content along with the noise. This is the
+garbage-in-garbage-out pattern that motivates the present work.
+
+The second failure mode is representational. A trajectory recorded as an
+absolute sequence of positions in a camera or world frame is tied to the exact
+spatial layout of the recording session. If the object is moved, the trajectory
+is wrong; if the embodiment changes, it is wrong in a different way. What
+generalises is the relation between the hand and the object being manipulated,
+not the absolute path of the hand through space.
+
+\section{Research Gap}
+\label{sec:gap}
+
+Both failure modes have known remedies, and the literature has adopted them---
+but in disjoint communities.
+
+Optimisation-based retargeting, in which data fidelity, temporal smoothness and
+joint limits are posed as a single constrained optimisation over the robot
+configuration, is standard in \emph{online teleoperation}. AnyTeleop and the
+associated \texttt{dex-retargeting} library established the canonical form;
+Open-TeleVision, Bunny-VisionPro and ACE build directly on it; DexFlow extends
+the smoothness penalty to second order. In every case, however, a human remains
+in the control loop, the optimisation runs at interactive rates, and no dataset
+is produced.
+
+Conversely, \emph{offline} pipelines that generate datasets from passive human
+video adopt object-centric representations but not the joint-optimisation
+formulation. ORION plans over sparse object keyframes and does not perform
+per-frame hand retargeting at all. OKAMI reconstructs a parametric body-and-hand
+model and retargets in two decoupled stages, warping a reference trajectory to
+a new object position and then solving inverse kinematics---structurally the
+same sequential pattern criticised in Section~\ref{sec:problem}.
+
+A targeted prior-art review conducted for this work (Chapter~\ref{ch:lit},
+Section~\ref{sec:positioning}) found no published system combining passive
+markerless capture, a metrically calibrated multi-camera RGB-D rig, an
+object-centric dense trajectory representation, single-cost-functional
+retargeting, imitation-learning-ready dataset export, and physical replay used
+as a pre-export validation step. The nearest systems each satisfy some criteria
+and miss others. The gap addressed here is therefore not the invention of a new
+retargeting operator, but the transfer of an established formulation into a
+regime where it has not been applied, together with the sensing and validation
+infrastructure that regime requires.
+
+\section{Research Questions and Hypotheses}
+\label{sec:rq}
+
+The work is guided by one primary research question and three sub-questions.
+
+\vspace{2mm}
+\noindent\textbf{RQ.} \emph{How can human manipulation demonstrations captured
+passively by a calibrated multi-camera RGB-D rig be retargeted onto a robot
+manipulator so as to yield datasets suitable for training visuomotor imitation
+policies?}
+
+\begin{enumerate}[label=\textbf{RQ\arabic*.}, leftmargin=2.2em]
+  \item How does formulating retargeting as a single weighted cost functional,
+        combining a confidence-weighted data term with velocity and
+        acceleration penalties, affect the fidelity and smoothness of the
+        resulting joint trajectories compared with a sequential
+        smooth--IK--smooth pipeline?
+  \item What accuracy can be achieved for wrist pose estimation by
+        confidence-weighted fusion of multiple calibrated RGB-D views anchored
+        to a common ChArUco workspace frame, and how does the residual error
+        decompose across its independent sources?
+  \item To what extent does replaying synthesised trajectories on the physical
+        manipulator, prior to dataset export, improve the executability of the
+        exported dataset?
+\end{enumerate}
+
+\noindent The corresponding hypotheses are stated below. Following the
+convention for experimental computer-science hypotheses, each identifies an
+independent variable, a dependent variable, a population and a relation.
+
+\begin{description}[leftmargin=3.2em, style=nextline]
+  \item[\textnormal{\textbf{H1 (behaviour).}}]
+  Retargeting posed as a single weighted cost functional produces joint
+  trajectories with lower task-space tracking error and higher smoothness than
+  a sequential smooth--IK--smooth pipeline, on the same recorded demonstrations.
+  \emph{Independent variable:} retargeting formulation (joint vs.\ sequential).
+  \emph{Dependent variables:} wrist-pose tracking RMSE; spectral arc length of
+  the joint trajectory. \emph{Population:} recorded demonstrations of the
+  constrained task class defined in Section~\ref{sec:tasks}.
+  \emph{Relation:} the joint formulation dominates on both measures.
+
+  \item[\textnormal{\textbf{H2 (behaviour).}}]
+  Weighting the data term by per-frame perception confidence reduces tracking
+  error relative to uniform weighting, and the reduction is larger on frames
+  where hand landmarks are partially occluded.
+  \emph{Independent variable:} presence of confidence weighting.
+  \emph{Dependent variable:} wrist-pose tracking RMSE, stratified by occlusion.
+  \emph{Population:} as above. \emph{Relation:} monotone reduction, amplified
+  under occlusion.
+
+  \item[\textnormal{\textbf{H3 (dependability).}}]
+  Screening trajectories by physical replay before export increases the
+  proportion of exported episodes that execute successfully on the manipulator.
+  \emph{Independent variable:} presence of the replay screening stage.
+  \emph{Dependent variable:} executable fraction of the exported dataset.
+  \emph{Population:} as above. \emph{Relation:} positive.
+\end{description}
+
+The questions were checked against the FINER criteria. They are
+\emph{feasible}, in that the hardware, solver and evaluation protocol are all
+available and the task class is deliberately constrained; \emph{interesting}
+and \emph{relevant} to the robot-learning community, because demonstration cost
+is a recognised bottleneck; \emph{novel} in the specific sense established in
+Section~\ref{sec:gap}, namely a regime transfer rather than a new operator; and
+\emph{ethical}, as the study involves no human subjects beyond the author
+performing demonstrations and no personally identifying data is retained.
+
+\section{Contributions}
+\label{sec:contributions}
+
+This thesis makes the following contributions.
+
+\begin{enumerate}[leftmargin=2em]
+  \item A retargeting formulation for the \emph{offline} setting that poses
+        data fidelity, velocity smoothness and acceleration smoothness as one
+        constrained optimisation over the robot configuration, with the data
+        term weighted by per-frame perception confidence and made robust by a
+        Huber loss (Section~\ref{sec:retarget}).
+  \item An object-centric dense trajectory representation that stores each
+        demonstration both relative to the manipulated object and relative to a
+        fixed ChArUco workspace anchor, permitting downstream consumers to
+        select the representation that generalises better
+        (Section~\ref{sec:objcentric}).
+  \item A multi-camera RGB-D capture and calibration procedure with
+        confidence-weighted depth fusion and an explicit treatment of
+        cross-device timestamp alignment, together with an error budget that
+        separates the three independent contributions to residual pose error
+        (Sections~\ref{sec:calib}--\ref{sec:fusion}, Section~\ref{sec:errbudget}).
+  \item A physical-replay validation stage that filters kinematically
+        infeasible trajectories before dataset export, and an empirical
+        characterisation of what that stage rejects
+        (Sections~\ref{sec:replay}, \ref{sec:res-replay}).
+  \item An open implementation exporting LeRobot-compatible datasets, evaluated
+        end-to-end by training ACT and Diffusion Policy on the generated data
+        (Chapter~\ref{ch:impl}).
+\end{enumerate}
+
+\section{Thesis Structure}
+\label{sec:structure}
+
+Chapter~\ref{ch:lit} reviews prior work on hand representation, retargeting
+formulations, task representation, multi-camera RGB-D calibration and dataset
+generation, and positions \viki\ against the nearest published systems.
+Chapter~\ref{ch:method} describes the design of the system and the derivation
+of the retargeting cost functional. Chapter~\ref{ch:impl} reports the
+implementation, the evaluation protocol and the experimental results.
+Chapter~\ref{ch:disc} interprets those results, decomposes the error budget and
+states the limitations. Chapter~\ref{ch:concl} concludes and outlines future
+work.

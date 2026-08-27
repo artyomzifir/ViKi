@@ -17,10 +17,10 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 import viki.config as config
-from viki.optimization.preparation.processor import PreparationPipeline
-from viki.server.deps import get_processor
-from viki.server.smooth_viz import smooth_trajectory_stream
-from viki.viz.smooth_viz_shared import SmoothVizConfig
+from viki.prepare import PreparationPipeline
+
+from viki.render.smooth_viz import smooth_trajectory_stream
+from viki.render.smooth_viz_shared import SmoothVizConfig
 
 _MJPEG_MEDIA = "multipart/x-mixed-replace; boundary=frame"
 _STREAM_HEADERS = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
@@ -39,7 +39,6 @@ class SmoothRequest(BaseModel):
 async def list_recordings(
     page: int = 0,
     limit: int = 10,
-    processor: PreparationPipeline = Depends(get_processor),
 ):
     """
     List raw skeleton recordings (rec-*.npz), paginated.
@@ -56,13 +55,13 @@ async def list_recordings(
     dict
         {"recordings": list[str]} – list of filenames.
     """
+    processor = PreparationPipeline()
     return {"recordings": processor.list_recordings(page=page, page_size=limit)}
 
 
 @router.post("/smooth")
 async def smooth_recording(
     req: SmoothRequest,
-    processor: PreparationPipeline = Depends(get_processor),
 ):
     """
     Apply Savitzky-Golay smoothing to a raw recording, producing a prepared
@@ -87,6 +86,7 @@ async def smooth_recording(
     HTTPException 500
         If an internal error occurs.
     """
+    processor = PreparationPipeline()
     try:
         path, _ = processor.smooth_recording(
             req.filename,

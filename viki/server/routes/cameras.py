@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from viki import config
 from viki.calibration.manager import CalibrationManager
-from viki.capture.manager import CameraManager
+from viki.cameras.manager import CameraManager
 from viki.server.deps import get_calibrator, get_manager
 from viki.server.streams import camera_stream
 

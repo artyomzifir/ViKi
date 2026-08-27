@@ -12,8 +12,8 @@ import numpy as np
 from typing import List
 
 from cv2.typing import MatLike
-from viki.capture.base import Frame
-from viki.capture.manager import CameraManager
+from viki.cameras.base import Frame
+from viki.cameras.manager import CameraManager
 from viki.calibration.models import (
     ArucoBoardParameters,
     BoardParameters,

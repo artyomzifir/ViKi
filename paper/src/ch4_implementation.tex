@@ -1,0 +1,321 @@
+\chapter{Implementation and Results}
+\label{ch:impl}
+
+\section{Software Architecture}
+\label{sec:arch}
+
+The system is implemented in Python without a robotics middleware layer.
+Avoiding ROS was a deliberate choice: the pipeline is a batch data-processing
+system rather than a distributed real-time control system, and the node graph,
+message serialisation and build tooling that middleware provides would add
+operational complexity without addressing any requirement of the offline
+setting. Communication with the manipulator uses \texttt{ur-rtde} directly.
+
+The implementation is organised into the layers listed in
+Table~\ref{tab:modules}. The separation follows the pipeline stages of
+Fig.~\ref{fig:pipeline}, with the coordinate-frame contract---every spatial
+quantity carries an explicit frame identifier---enforced at module boundaries so
+that frame errors surface as type errors rather than as silent numerical
+mistakes.
+
+\begin{table}[htbp]
+\caption{Principal Modules of the Implementation}
+\label{tab:modules}
+\centering
+\small
+\begin{tabular}{p{32mm}p{45mm}p{45mm}}
+\toprule
+Module & Responsibility & Principal dependencies \\
+\midrule
+\texttt{capture} & Device drivers, hardware sync, host-clock stamping &
+  Azure Kinect SDK, \texttt{pyrealsense2} \\
+\texttt{calibration} & ChArUco detection, intrinsics, extrinsics, robot
+  registration & OpenCV \\
+\texttt{perception} & Landmark detection, depth lifting, confidence-weighted
+  fusion & MediaPipe, OpenCV \\
+\texttt{representation} & Object pose, object-relative transform, spline
+  interpolation & NumPy, SciPy \\
+\texttt{retargeting} & Cost functional assembly and solution & Pink, Pinocchio \\
+\texttt{replay} & Trajectory execution, proprioception logging, screening &
+  \texttt{ur-rtde} \\
+\texttt{export} & LeRobot/HDF5 serialisation & h5py, LeRobot \\
+\texttt{interface} & Recording control and inspection & FastAPI, Streamlit \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The Azure Kinect depth engine requires a software rendering context inside the
+containerised deployment; this is obtained by forcing software rasterisation
+through the appropriate driver environment variables. The system is released
+under the MIT licence.
+
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Hardware configuration}
+
+Experiments used a UR3 manipulator with a parallel-jaw gripper, two Azure
+Kinect DK cameras in master/subordinate hardware synchronisation and one Intel
+RealSense D435i, all observing a tabletop workspace anchored by a ChArUco
+board. Camera placement was near-orthogonal to preserve view overlap
+(Section~\ref{sec:hardware}). Recording ran at \ph{XX}~Hz.
+
+\subsection{Task suite}
+\label{sec:tasks}
+
+Evaluation used a deliberately constrained task class, chosen so that the
+quasi-static and rigid-object assumptions of Section~\ref{sec:assumptions} hold
+and so that success is unambiguously measurable:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \emph{Pick-and-place.} Grasp a rigid object and place it at a marked
+        target location.
+  \item \emph{Pick-and-place with displacement.} As above, but with the object
+        initialised at a pose not seen during demonstration, to test the
+        object-relative representation.
+  \item \emph{Pouring.} Grasp a container and tip it over a target, testing
+        orientation fidelity rather than position alone.
+  \item \ph{[Additional task, if included.]}
+\end{enumerate}
+
+For each task, \ph{N} demonstrations were recorded by \ph{one} demonstrator.
+
+\subsection{Baselines and ablations}
+
+The proposed formulation \eqref{eq:cost} is compared against:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{B1 --- Sequential.} Task-space low-pass filtering, per-frame
+        inverse kinematics, joint-space low-pass filtering. This is the
+        pattern used by offline pipelines such as \cite{okami} and the
+        principal comparison for H1.
+  \item \textbf{B2 --- Joint, no confidence.} Equation~\eqref{eq:cost} with
+        $\omega_t \equiv 1$. Isolates the contribution of confidence weighting
+        for H2.
+  \item \textbf{B3 --- Joint, no acceleration.} Equation~\eqref{eq:cost} with
+        $\lambda_a = 0$. Isolates the contribution of second-order smoothness.
+  \item \textbf{B4 --- Joint, no Huber.} Squared loss in place of
+        $\rho_\delta$. Isolates outlier robustification.
+  \item \textbf{B5 --- World-frame.} Workspace-anchored rather than
+        object-relative targets, evaluated on the displaced-object task only.
+\end{enumerate}
+
+\section{Evaluation Protocol and Metrics}
+\label{sec:metrics}
+
+Metrics were fixed before the final experimental runs, so that the criteria of
+success were not selected after observing the outcomes.
+
+\subsection{Retargeting fidelity}
+
+Task-space tracking error between the desired end-effector pose
+\eqref{eq:transfer} and the achieved pose $f(\bq_t)$, reported separately for
+translation and rotation:
+\begin{equation}
+  \mathrm{RMSE}_{\mathrm{pos}} =
+  \sqrt{\frac{1}{T}\sum_{t} \norm{\bm{p}_t^{\mathrm{des}} - \bm{p}_t}^{2}},
+  \qquad
+  \mathrm{RMSE}_{\mathrm{rot}} =
+  \sqrt{\frac{1}{T}\sum_{t} \norm{\Log(\bm{R}_t^{\mathrm{des}\,\top}
+  \bm{R}_t)}^{2}}.
+  \label{eq:rmse}
+\end{equation}
+
+\subsection{Smoothness}
+
+Spectral arc length of the joint velocity profile, a dimensionless smoothness
+measure that is invariant to amplitude and duration, together with mean
+absolute joint jerk. Lower magnitudes indicate smoother motion.
+
+\subsection{Feasibility}
+
+The proportion of synthesised episodes that execute on hardware without
+controller fault, joint limit violation or collision, and the mean tracking
+residual reported by the controller during replay.
+
+\subsection{Downstream policy success}
+
+ACT and Diffusion Policy trained on the exported dataset and evaluated over
+\ph{N} rollouts per task, reporting success rate under a task-specific success
+predicate.
+
+\subsection{Calibration and sensing accuracy}
+
+Reprojection error of the ChArUco calibration in pixels; cross-camera
+registration error as the mean distance between corresponding points in
+overlapping regions; and residual timestamp misalignment between device
+families.
+
+\section{Calibration and Sensing Results}
+\label{sec:res-calib}
+
+\begin{table}[htbp]
+\caption{Calibration and Synchronisation Accuracy}
+\label{tab:calib}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Quantity & Measured & Reference from literature \\
+\midrule
+ChArUco reprojection error (px)        & \ph{X.XX} & $<0.5$ typical \\
+Cross-camera registration, IR (mm)     & \ph{XX.X} & $7.4$--$9.9$ \cite{romeo} \\
+Cross-camera registration, colour (mm) & \ph{XX.X} & $20.9$--$21.4$ \cite{romeo} \\
+Kinect pair timestamp drift (ms/min)   & \ph{X.XX} & $<1$ \cite{ridgerun} \\
+Kinect--RealSense residual offset (ms) & \ph{X.XX} & --- \\
+Wrist position repeatability (mm)      & \ph{X.XX} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\TODO{Populate Table~\ref{tab:calib} from the calibration runs; discuss whether
+measured cross-camera registration falls within the range reported by
+\cite{romeo}, and if not, whether the discrepancy is attributable to board
+size, view overlap or working distance.}
+
+\section{Retargeting Fidelity}
+\label{sec:res-fidelity}
+
+\begin{table}[htbp]
+\caption{Retargeting Fidelity and Smoothness, Proposed Formulation Versus
+Sequential Baseline}
+\label{tab:fidelity}
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Method & $\mathrm{RMSE}_{\mathrm{pos}}$ (mm) & $\mathrm{RMSE}_{\mathrm{rot}}$
+(deg) & SAL & Jerk (rad/s$^3$) \\
+\midrule
+B1 Sequential            & \ph{XX.X} & \ph{X.X} & \ph{$-$X.XX} & \ph{XX.X} \\
+Proposed \eqref{eq:cost} & \ph{XX.X} & \ph{X.X} & \ph{$-$X.XX} & \ph{XX.X} \\
+\midrule
+Relative change          & \ph{$-$XX\%} & \ph{$-$XX\%} & \ph{$-$XX\%}
+                         & \ph{$-$XX\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\figplaceholder{45mm}
+\begin{figure}[htbp]
+\caption{Joint trajectory for a representative pick-and-place episode under the
+sequential baseline (B1) and the proposed formulation. \TODO{insert plot}}
+\label{fig:traj}
+\end{figure}
+
+\TODO{Report whether H1 is supported. State the statistical test used and the
+number of episodes; if the improvement is present on one metric but not the
+other, say so plainly rather than reporting only the favourable one.}
+
+\section{Ablation Studies}
+\label{sec:res-ablation}
+
+\begin{table}[htbp]
+\caption{Ablation of the Individual Terms of the Cost Functional}
+\label{tab:ablation}
+\centering
+\small
+\begin{tabular}{llcc}
+\toprule
+Variant & Removed term & $\mathrm{RMSE}_{\mathrm{pos}}$ (mm) & SAL \\
+\midrule
+Proposed & ---                        & \ph{XX.X} & \ph{$-$X.XX} \\
+B2 & confidence weighting $\omega_t$   & \ph{XX.X} & \ph{$-$X.XX} \\
+B3 & acceleration penalty $\lambda_a$  & \ph{XX.X} & \ph{$-$X.XX} \\
+B4 & Huber robustification $\rho_\delta$ & \ph{XX.X} & \ph{$-$X.XX} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Effect of Confidence Weighting Stratified by Landmark Occlusion}
+\label{tab:occlusion}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Frame subset & B2 (uniform) & Proposed (weighted) \\
+\midrule
+All frames                & \ph{XX.X} & \ph{XX.X} \\
+Low-occlusion frames      & \ph{XX.X} & \ph{XX.X} \\
+High-occlusion frames     & \ph{XX.X} & \ph{XX.X} \\
+\bottomrule
+\end{tabular}
+
+\vspace{1mm}
+{\footnotesize Values are $\mathrm{RMSE}_{\mathrm{pos}}$ in mm. Occlusion
+stratification uses the median of $\omega_t$ as the threshold.}
+\end{table}
+
+\TODO{Report whether H2 is supported, and specifically whether the benefit of
+confidence weighting is larger on high-occlusion frames as hypothesised. If the
+effect is uniform across strata, the mechanism proposed in
+Section~\ref{sec:retarget} is not the operative one and this must be stated.}
+
+\section{Replay Feasibility}
+\label{sec:res-replay}
+
+\begin{table}[htbp]
+\caption{Outcome of Physical Replay Screening}
+\label{tab:replay}
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Task & Episodes synthesised & Rejected at replay & Rejection cause (dominant) \\
+\midrule
+Pick-and-place              & \ph{NN} & \ph{NN} (\ph{XX\%}) & \ph{[cause]} \\
+Pick-and-place (displaced)  & \ph{NN} & \ph{NN} (\ph{XX\%}) & \ph{[cause]} \\
+Pouring                     & \ph{NN} & \ph{NN} (\ph{XX\%}) & \ph{[cause]} \\
+\midrule
+Total                       & \ph{NN} & \ph{NN} (\ph{XX\%}) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\TODO{Report the distribution of rejection causes---joint limit, singularity
+proximity, collision, controller tracking fault---since the distribution
+indicates which constraint in \eqref{eq:cjoint}--\eqref{eq:ccoll} is
+insufficiently modelled rather than merely how many episodes failed.}
+
+\section{Downstream Policy Performance}
+\label{sec:res-policy}
+
+\begin{table}[htbp]
+\caption{Success Rate of Policies Trained on the Exported Dataset}
+\label{tab:policy}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Task & ACT & Diffusion Policy \\
+\midrule
+Pick-and-place              & \ph{XX\%} & \ph{XX\%} \\
+Pick-and-place (displaced)  & \ph{XX\%} & \ph{XX\%} \\
+Pouring                     & \ph{XX\%} & \ph{XX\%} \\
+\midrule
+Mean                        & \ph{XX\%} & \ph{XX\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Effect of Representation Choice on the Displaced-Object Task}
+\label{tab:repr}
+\centering
+\small
+\begin{tabular}{lc}
+\toprule
+Representation & Success rate \\
+\midrule
+B5 Workspace-anchored (world frame) & \ph{XX\%} \\
+Object-relative \eqref{eq:objrel}   & \ph{XX\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\TODO{Report whether H3 is supported by comparing policy success on datasets
+with and without replay screening. Note that this requires training on the
+unscreened dataset as well, which doubles the training budget; if that
+comparison is not run, H3 must be evaluated on the executability metric alone
+and the weaker claim stated explicitly.}

@@ -10,7 +10,7 @@ calibration using OpenCV's `findChessboardCorners` and `calibrateCamera`.
 import cv2
 import numpy as np
 from typing import List
-from viki.capture.base import Frame
+from viki.cameras.base import Frame
 from viki.calibration.models import (
     CalibrationSample,
     CalibrationIntrinsics,

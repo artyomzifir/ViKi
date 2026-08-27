@@ -1,0 +1,196 @@
+\chapter{Analysis and Discussion}
+\label{ch:disc}
+
+\section{Interpretation of the Results}
+\label{sec:interpretation}
+
+\TODO{This section interprets rather than restates Chapter~\ref{ch:impl}. Write
+it after the numbers are in, structured as: what the key findings mean for each
+hypothesis; which results support them and which do not; how the findings
+compare with prior work; explanation of discrepancies; unexpected findings.}
+
+The three hypotheses of Section~\ref{sec:rq} address separable mechanisms, and
+the argument for each is independent of the others.
+
+\paragraph{H1 --- formulation.} The claim is that posing retargeting as one
+weighted functional dominates the sequential pipeline on both fidelity and
+smoothness simultaneously. The distinction matters because the sequential
+pipeline can be made arbitrarily smooth by increasing filter strength, at the
+cost of fidelity; the interesting question is therefore not whether either
+metric can be improved in isolation but whether the trade-off frontier itself
+moves. \ph{[Insert result.]} If the proposed method improves one metric while
+degrading the other, the correct conclusion is that the frontier has not moved
+and the improvement is a re-parameterisation of the same trade-off.
+
+\paragraph{H2 --- confidence weighting.} The mechanism proposed in
+Section~\ref{sec:retarget} predicts a specific signature: the benefit of
+weighting should concentrate on frames where perception is degraded, because
+that is where uniform weighting drags the solution toward a bad observation.
+A uniform improvement across occlusion strata would indicate that the weighting
+is acting as a global regulariser rather than through the proposed mechanism.
+\ph{[Insert result.]}
+
+\paragraph{H3 --- replay screening.} The claim is about dependability rather
+than accuracy: screening should raise the executable fraction of the exported
+dataset. \ph{[Insert result.]} The stronger claim---that screening improves
+downstream policy success---requires the paired training run noted in
+Section~\ref{sec:res-policy} and should not be asserted on the executability
+metric alone.
+
+\section{Comparison with Prior Work}
+\label{sec:comparison}
+
+Direct numerical comparison with the systems reviewed in
+Chapter~\ref{ch:lit} is not meaningful, since none is evaluated on the same
+task suite, embodiment or sensing configuration. What can be compared is
+qualitative behaviour and the class of guarantees provided.
+
+Relative to OKAMI \cite{okami}, the present system discards the parametric
+body-and-hand reconstruction and the two-stage warp-then-solve structure. The
+expected consequence is a lower perception error floor---time-of-flight depth
+in place of a mesh fit---at the cost of being restricted to parallel-jaw
+targets. Relative to ORION \cite{orion}, the present system retains the dense
+wrist trajectory that ORION discards, which should preserve velocity-profile
+information at the cost of a dependency on reliable hand observation. Relative
+to the online teleoperation systems \cite{anyteleop, opentv, ace}, the
+formulation is the same but the operating regime is not: the offline setting
+permits whole-trajectory optimisation with a well-defined acceleration term at
+every interior timestep and admits a physical validation stage, neither of
+which an interactive-rate solver can perform.
+
+The measured cross-camera registration error
+(Table~\ref{tab:calib}) should be compared against the $7.4$--$21.4$~mm range
+reported by Romeo et al.\ \cite{romeo}. \TODO{State whether the measured value
+falls in that range and, if not, diagnose the cause rather than reporting the
+discrepancy without explanation.}
+
+\section{Error Budget}
+\label{sec:errbudget}
+
+A central methodological commitment of this work is that residual error is
+decomposed rather than reported as a single aggregate figure. Three
+contributions are independent in origin and demand different remedies;
+conflating them would make the aggregate uninformative about what to improve.
+
+\begin{enumerate}[leftmargin=2em]
+  \item \emph{Landmark detection noise.} Error in the image-plane hand
+        landmarks, propagated through depth lifting. This contribution is
+        reduced by confidence weighting \eqref{eq:weights} and by multi-view
+        fusion, and it is characterised by the wrist-position repeatability
+        measurement of Table~\ref{tab:calib}. It is not reduced by better
+        calibration.
+  \item \emph{Calibration error.} Error in the camera-to-workspace and
+        robot-to-workspace transforms \eqref{eq:extrinsic}. This contribution
+        is systematic within a session, appears as a constant offset rather
+        than as noise, and is characterised by the reprojection and
+        cross-camera registration measurements. It is not reduced by
+        multi-view fusion, since all views inherit it.
+  \item \emph{Representation dependency.} Error introduced by the choice of
+        reference frame, specifically the sensitivity of world-frame
+        trajectories to object displacement. This contribution is zero when
+        the object is where it was during demonstration and grows with
+        displacement; it is characterised by the comparison of
+        Table~\ref{tab:repr} rather than by any calibration measurement.
+\end{enumerate}
+
+\begin{table}[htbp]
+\caption{Decomposition of Residual Wrist-Pose Error by Source}
+\label{tab:errbudget}
+\centering
+\small
+\begin{tabular}{llcc}
+\toprule
+Source & Character & Magnitude (mm) & Reduced by \\
+\midrule
+Landmark detection & random  & \ph{X.X} & fusion, confidence weighting \\
+Calibration        & systematic & \ph{X.X} & board size, view count \\
+Representation     & conditional & \ph{X.X} & object-relative frame \\
+\midrule
+Combined           & --- & \ph{XX.X} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\TODO{Populate and discuss. If the combined figure differs materially from the
+quadrature sum of the independent contributions, the sources are not
+independent and the decomposition must be revised rather than presented as if
+it held.}
+
+\section{Limitations}
+\label{sec:limitations}
+
+The assumptions of Section~\ref{sec:assumptions} translate into the following
+limitations, which are stated plainly rather than deferred to future work.
+
+\begin{enumerate}[leftmargin=2em]
+  \item \emph{Gripper abstraction.} A binary gripper state cannot represent
+        in-hand manipulation, regrasping or force-modulated grasps. Tasks
+        requiring these are outside the demonstrated capability, and extending
+        to dexterous hands would require reinstating the finger-level
+        representation that Section~\ref{sec:lit-hand} rejects.
+  \item \emph{Rigid-object assumption.} The object-relative transform
+        \eqref{eq:objrel} is undefined for deformable objects. Cloth, cable and
+        granular manipulation are excluded.
+  \item \emph{Dependence on object pose estimation.} The object-relative
+        representation inherits the error of the object pose estimator. Where
+        that estimator fails---textureless, symmetric or occluded objects---the
+        representation degrades to worse than the world-frame alternative it is
+        meant to improve upon.
+  \item \emph{Kinematic transfer only.} No force or contact model is estimated.
+        Success on tasks with a force-regulation component is not claimed.
+  \item \emph{Single demonstrator, constrained task class.} The evaluation uses
+        \ph{one} demonstrator and \ph{three} task types. Generalisation across
+        demonstrators, hand morphologies and task families is not established.
+  \item \emph{Sensing floor.} Cross-camera agreement at the centimetre level
+        \cite{romeo} bounds achievable accuracy. Tasks with tolerances below
+        that bound cannot be addressed by this sensing configuration
+        regardless of the retargeting formulation.
+  \item \emph{Cross-family synchronisation.} Alignment between the Kinect pair
+        and the RealSense is software-based and therefore millisecond-scale;
+        fast motion may exhibit residual misalignment between those streams.
+\end{enumerate}
+
+\section{Threats to Validity}
+\label{sec:validity}
+
+\paragraph{Internal validity.} Metrics were fixed before the final runs
+(Section~\ref{sec:metrics}) to prevent selection of criteria after observing
+outcomes. Baselines B1--B5 differ from the proposed method in exactly one
+component each, so attribution of any observed difference is unambiguous. The
+principal residual threat is that the sequential baseline's filter parameters
+are themselves tunable; an unfavourable choice would make the comparison
+misleading. \TODO{State how B1 filter parameters were selected---ideally by
+tuning them to optimise the baseline's own fidelity, not by adopting a default.}
+
+\paragraph{External validity.} The constrained task class was chosen for
+measurability, which necessarily limits generalisation. Results should not be
+read as claims about manipulation in general.
+
+\paragraph{Construct validity.} Spectral arc length measures smoothness of the
+velocity profile, which is a proxy for the property actually of interest---that
+a policy can imitate the trajectory. The proxy is standard but imperfect, and
+the downstream policy results of Section~\ref{sec:res-policy} are the more
+direct evidence.
+
+\section{Implications}
+\label{sec:implications}
+
+Three implications extend beyond the specific system.
+
+First, the transferability of the online retargeting formulation to the offline
+regime suggests that the separation between the teleoperation and
+video-imitation literatures is a historical accident rather than a technical
+necessity. The offline setting is strictly less constrained---no causality
+requirement, no latency budget---and therefore able to use the same formulation
+more thoroughly than the setting for which it was designed.
+
+Second, moving curation upstream of export, so that infeasible trajectories are
+removed before they enter the dataset rather than filtered after they have
+degraded a policy, is applicable to any pipeline that synthesises rather than
+records actions. The cost is one physical execution per episode; the benefit is
+that the exported dataset contains proprioception the robot actually attained.
+
+Third, the error decomposition of Section~\ref{sec:errbudget} is a
+transferable methodological point. Reporting a single aggregate accuracy figure
+for a multi-stage perception pipeline obscures which stage limits performance,
+and consequently which engineering effort would pay.

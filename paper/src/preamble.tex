@@ -1,0 +1,77 @@
+% ============================================================
+%  Shared preamble — ViKi BS thesis (Innopolis University)
+%  Compile with: xelatex (twice) — Cyrillic requires XeLaTeX
+% ============================================================
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguage{russian}
+
+\setmainfont{FreeSerif}[Ligatures=TeX]
+\setsansfont{FreeSans}[Ligatures=TeX]
+\setmonofont{DejaVu Sans Mono}[Scale=0.85]
+\newfontfamily\cyrillicfont{FreeSerif}[Ligatures=TeX]
+\newfontfamily\cyrillicfontsf{FreeSans}[Ligatures=TeX]
+\newfontfamily\cyrillicfonttt{DejaVu Sans Mono}[Scale=0.85]
+
+\usepackage{geometry}
+\geometry{a4paper, top=25mm, bottom=25mm, left=30mm, right=15mm}
+
+\usepackage{amsmath, amssymb, amsfonts, bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{setspace}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, fit, backgrounds}
+\usepackage[hidelinks]{hyperref}
+\usepackage{tocloft}
+
+\onehalfspacing
+\setlength{\parindent}{1.25em}
+\setlength{\parskip}{0.25em}
+
+% --- IEEE-ish caption style -------------------------------
+\captionsetup[figure]{labelfont=bf, labelsep=period, name=Fig., font=small}
+\captionsetup[table]{labelfont=bf, labelsep=newline, justification=centering,
+                     name=TABLE, font=small}
+\renewcommand{\thetable}{\Roman{table}}
+
+% --- placeholder macro ------------------------------------
+% Every unresolved number / empirical claim is wrapped in \ph{}
+% so it can be found with a single grep before submission.
+\definecolor{phcol}{RGB}{176,0,32}
+\newcommand{\ph}[1]{\textcolor{phcol}{\textbf{#1}}}
+\newcommand{\TODO}[1]{\textcolor{phcol}{\small\textsf{[TODO: #1]}}}
+
+% --- figure placeholder box -------------------------------
+\newcommand{\figplaceholder}[2][0.62\textwidth]{%
+  \begin{center}
+  \fbox{\parbox[c][#2][c]{#1}{\centering\textcolor{phcol}{\textsf{\small
+  [placeholder — insert figure]}}}}
+  \end{center}}
+
+% --- math notation ----------------------------------------
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\SE}{\mathrm{SE}(3)}
+\newcommand{\so}{\mathfrak{se}(3)}
+\newcommand{\bq}{\bm{q}}
+\newcommand{\bT}{\bm{T}}
+\newcommand{\be}{\bm{e}}
+\newcommand{\bx}{\bm{x}}
+\newcommand{\bw}{\bm{w}}
+\newcommand{\bJ}{\bm{J}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator{\Log}{Log}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+% --- misc --------------------------------------------------
+\newcommand{\viki}{ViKi}
+\renewcommand{\cftsecleader}{\cftdotfill{\cftdotsep}}

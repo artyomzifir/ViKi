@@ -1,0 +1,161 @@
+\documentclass[12pt, a4paper, oneside]{report}
+\input{preamble}
+
+\begin{document}
+
+% ==========================================================
+% TITLE PAGE
+% ==========================================================
+\begin{titlepage}
+\centering
+\vspace*{10mm}
+{\large INNOPOLIS UNIVERSITY}\\[2mm]
+{\normalsize Bachelor of Science in Computer Science}\\[30mm]
+
+{\LARGE\bfseries ViKi: Vision-Based Kinematic Imitation\\[3mm]
+for Object-Centric Retargeting of Human\\[3mm]
+Manipulation Demonstrations to Robot Manipulators\par}
+\vspace{15mm}
+
+{\large Bachelor's Graduation Thesis}\\[25mm]
+
+\begin{tabular}{rl}
+\textit{Author:} & \ph{Artyom [Surname]}\\[4mm]
+\textit{Supervisor:} & \ph{[Full Name] Kornaev}\\[4mm]
+\textit{Group:} & \ph{[group]}\\
+\end{tabular}
+
+\vfill
+{\normalsize Innopolis, Russia\\ \the\year}
+\end{titlepage}
+
+\pagenumbering{roman}
+
+% ==========================================================
+% ABSTRACT (EN)
+% ==========================================================
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Imitation learning for robot manipulation is bottlenecked by the cost of
+demonstration data: teleoperation requires dedicated hardware and an
+operator per episode, which limits both throughput and the diversity of
+recorded behaviour. Passive capture of bare-handed human demonstrations
+removes that bottleneck, but existing passive pipelines either discard the
+hand entirely and plan over sparse object keyframes, or reconstruct a full
+parametric hand mesh from monocular video and retarget it in two decoupled
+stages---smoothing the observed trajectory, solving inverse kinematics, then
+smoothing the joint output again. The latter pattern is unsound: pre-filtering
+in task space cannot guarantee smoothness of the nonlinear inverse-kinematics
+solution, and it attenuates genuine fast motion together with perception noise.
+Optimisation-based retargeting that fuses data fidelity, temporal smoothness
+and joint limits into a single cost functional is by now standard---but only in
+\emph{online teleoperation} systems, where a human remains in the loop and no
+dataset is produced. This thesis closes that gap. It presents \viki, an offline
+pipeline that captures bare-handed manipulation demonstrations with a
+metrically calibrated multi-camera RGB-D rig anchored to a ChArUco workspace
+frame, represents each demonstration as a dense object-relative wrist
+trajectory in $\SE$ with a binary gripper state, and retargets it onto a robot
+manipulator by minimising a single weighted cost functional that combines a
+perception-confidence-weighted data term, a velocity-smoothness penalty and an
+acceleration penalty subject to configuration, velocity and collision
+constraints. Synthesised trajectories are replayed on the physical manipulator
+before the dataset is finalised, so that kinematically infeasible episodes are
+removed at the source rather than surfacing as policy failures later. The
+system was evaluated on a constrained class of tabletop pick-and-place and
+pouring tasks with a UR3 manipulator, two Azure Kinect DK cameras and one Intel
+RealSense D435i. The proposed formulation reduced wrist-pose tracking error by
+\ph{XX\%} and improved joint-space smoothness by \ph{XX\%} relative to a
+sequential smooth--IK--smooth baseline, while replay screening rejected
+\ph{XX\%} of episodes as infeasible; policies trained on the resulting
+LeRobot-compatible dataset reached \ph{XX\%} success. The results indicate
+that the online-teleoperation retargeting formulation transfers to the offline
+dataset-generation regime, and that closing the embodiment gap by physical
+replay before export is a practical alternative to filtering after training.
+
+\vspace{3mm}
+\noindent\textbf{Keywords:} imitation learning; motion retargeting; inverse
+kinematics; RGB-D calibration; object-centric representation; robot learning
+from human video.
+
+% ==========================================================
+% ABSTRACT (RU)
+% ==========================================================
+\chapter*{Аннотация}
+\addcontentsline{toc}{chapter}{Аннотация}
+\begin{russian}
+
+Обучение роботов манипуляции методом имитации ограничено стоимостью получения
+демонстраций: телеоперация требует специализированного оборудования и
+оператора на каждый эпизод, что ограничивает и производительность записи, и
+разнообразие поведения. Пассивный захват демонстраций, выполняемых голой рукой
+человека, снимает это ограничение, однако существующие пассивные пайплайны либо
+полностью отбрасывают кисть и планируют по разреженным ключевым кадрам объекта,
+либо восстанавливают полную параметрическую mesh-модель кисти из монокулярного
+видео и выполняют ретаргетинг в две развязанные стадии: сглаживание наблюдаемой
+траектории, решение обратной задачи кинематики, повторное сглаживание в
+пространстве суставов. Последняя схема методологически некорректна:
+предварительная фильтрация в пространстве задачи не гарантирует гладкости
+нелинейного решения обратной кинематики и подавляет истинное быстрое движение
+вместе с шумом восприятия. Постановка ретаргетинга как единого функционала
+стоимости, объединяющего точность соответствия данным, временную гладкость и
+ограничения на суставы, к настоящему моменту стала стандартом --- но только в
+системах \emph{онлайн-телеоперации}, где человек остаётся в контуре управления и
+датасет не формируется. Настоящая работа закрывает этот разрыв. Предлагается
+\viki\ --- офлайн-пайплайн, который захватывает демонстрации манипуляции голой
+рукой при помощи метрически откалиброванного мультикамерного RGB-D рига,
+привязанного к системе координат рабочей области по маркерной доске ChArUco,
+представляет каждую демонстрацию как плотную объектно-относительную траекторию
+запястья в $\SE$ с бинарным состоянием захвата и выполняет ретаргетинг на
+роботизированный манипулятор путём минимизации единого взвешенного функционала,
+объединяющего член соответствия данным со взвешиванием по достоверности
+восприятия, штраф на скорость и штраф на ускорение при ограничениях на
+конфигурацию, скорость и столкновения. Синтезированные траектории
+воспроизводятся на физическом манипуляторе до финализации датасета, благодаря
+чему кинематически нереализуемые эпизоды отсеиваются у источника, а не
+проявляются позднее как отказы политики. Система оценена на ограниченном классе
+настольных задач захвата--переноса и переливания с манипулятором UR3, двумя
+камерами Azure Kinect DK и одной Intel RealSense D435i. Предложенная постановка
+снизила ошибку отслеживания позы запястья на \ph{XX\%} и повысила гладкость в
+пространстве суставов на \ph{XX\%} относительно последовательной базовой схемы
+smooth--IK--smooth, при этом отбор по результатам воспроизведения отклонил
+\ph{XX\%} эпизодов как нереализуемые; политики, обученные на полученном
+LeRobot-совместимом датасете, достигли успешности \ph{XX\%}. Результаты
+показывают, что формулировка ретаргетинга, разработанная для
+онлайн-телеоперации, переносима в режим офлайн-генерации датасета, а закрытие
+разрыва эмбодиментов через физическое воспроизведение до экспорта является
+практичной альтернативой фильтрации после обучения.
+
+\vspace{3mm}
+\noindent\textbf{Ключевые слова:} обучение с имитацией; ретаргетинг движения;
+обратная кинематика; калибровка RGB-D; объектно-центричное представление;
+обучение роботов по видео человека.
+\end{russian}
+
+% ==========================================================
+\chapter*{Acknowledgements}
+\addcontentsline{toc}{chapter}{Acknowledgements}
+\ph{[Placeholder.]} The author thanks \ph{[supervisor]} for supervision and
+guidance throughout this work, and the Innopolis Robotics Society for
+maintaining a parallel development fork of the system, whose independent
+implementation attempts informed several of the architectural decisions
+reported here.
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\cleardoublepage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{ch1_introduction}
+\input{ch2_literature}
+\input{ch3_methodology}
+\input{ch4_implementation}
+\input{ch5_discussion}
+\input{ch6_conclusion}
+\input{references}
+\input{appendix}
+
+\end{document}

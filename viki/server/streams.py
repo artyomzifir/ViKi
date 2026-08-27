@@ -2,7 +2,7 @@
 viki.server.streams
 --------------------
 MJPEG stream generators. These poll the CameraManager (non-blocking) and
-yield multipart JPEG chunks, delegating all pixel work to ``viki.viz``.
+yield multipart JPEG chunks, delegating all pixel work to ``viki.render``.
 
 Kept separate from the route handlers so the endpoints stay thin and the
 transport/timing logic lives in one place.
@@ -19,10 +19,10 @@ import numpy as np
 
 from viki.calibration.aruco_worker import ArucoWorker
 from viki.calibration.manager import CalibrationManager
-from viki.capture.manager import CameraManager
+from viki.cameras.manager import CameraManager
 from viki.config import JPEG_QUALITY, PLACEHOLDER_SIZE, STREAM_IDLE_SLEEP
-from viki.viz.depth import DepthColorizer, Undistorter, DepthStabilizer
-from viki.viz.mjpeg import mjpeg_chunk, placeholder
+from viki.render.depth import DepthColorizer, Undistorter, DepthStabilizer
+from viki.render.mjpeg import mjpeg_chunk, placeholder
 from viki.config import INTRINSICS_FILENAME
 
 

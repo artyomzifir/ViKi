@@ -1,56 +1,53 @@
 """
 viki.server.routes.recording
 ----------------------------
-Endpoints for starting/stopping RGB-D recording in the background worker.
+Record a synchronised RGB-D scene into a new episode directory
+(:class:`viki.cameras.record.SceneRecorder`). The recording runs in a background
+thread; poll the returned job id.
 """
+
+from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from viki.capture.manager import CameraManager
-from viki.server.deps import get_manager, get_worker
-from viki.server.skeleton_worker import SkeletonWorker
+
+from viki import config
+from viki.cameras.manager import CameraManager
+from viki.server import jobs
+from viki.server.deps import get_manager
 
 router = APIRouter(prefix="/record", tags=["recording"])
 
+
 class RecordRequest(BaseModel):
-    duration: float = 10.0
+    seconds: float = 10.0
     fps: int = 15
-    output_dir: str = "data/videos"
+    task: str = ""
+    demonstrator: str = ""
+    hand: str = "right"
+
 
 @router.post("/start")
-async def start_recording(
-    req: RecordRequest,
-    mgr: CameraManager = Depends(get_manager),
-    worker: SkeletonWorker = Depends(get_worker),
-):
-    """
-    Start an RGB-D recording in the background worker.
-
-    The recording will run for the specified duration and save raw colour
-    and depth data to the output directory.
-
-    Parameters
-    ----------
-    req : RecordRequest
-        Duration (seconds), FPS, and output directory.
-
-    Returns
-    -------
-    dict
-        {"status": "recording started in background worker", "duration": float, "fps": int}
-
-    Raises
-    ------
-    HTTPException 400
-        If no cameras are currently active.
-    """
+async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_manager)):
     if not mgr.active_device_ids():
-        raise HTTPException(status_code=400, detail="No cameras are currently active. Start cameras first.")
-    
-    worker.set_rgbd_recording(
-        enabled=True, 
-        duration=req.duration, 
-        output_dir=req.output_dir
-    )
-    
-    return {"status": "recording started in background worker", "duration": req.duration, "fps": req.fps}
+        raise HTTPException(400, "no cameras are active — start cameras first")
+
+    episodes_dir = getattr(config, "EPISODES_DIR", "data/episodes")
+    meta = {"task": req.task, "demonstrator": req.demonstrator, "hand": req.hand}
+
+    def _job():
+        from viki.cameras.record import SceneRecorder
+
+        rec = SceneRecorder(mgr, episodes_dir=episodes_dir, meta=meta)
+        ep = rec.record(req.seconds, fps=req.fps)
+        return {"episode": str(ep.root)}
+
+    return {"job_id": jobs.submit("record", _job)}
+
+
+@router.get("/jobs/{job_id}")
+async def recording_status(job_id: str):
+    j = jobs.get(job_id)
+    if j is None:
+        raise HTTPException(404, f"no job {job_id}")
+    return j
