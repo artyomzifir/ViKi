@@ -1,17 +1,29 @@
+# Single compose file. One image (Dockerfile `test` target = base + pytest),
+# four services:
+#
+#   web       docker compose up                       -> FastAPI on :8000
+#   test      docker compose run --rm test [args]      -> pytest tests/ (args append)
+#   cli       docker compose run --rm cli <verb> ...   -> `viki <verb> ...`
+#   terminal  docker compose run --rm terminal         -> bash, for manual poking
+#
+# Only `web` starts on `up`; the rest sit behind the `tools` profile and are
+# meant for `run`.
+
 x-common: &common
   build:
     context: .
     dockerfile: docker/Dockerfile
-    target: backend
+    target: test
+  image: viki
   network_mode: host
   privileged: true
   volumes:
     - /dev:/dev
     - /run/udev:/run/udev:ro
     - /tmp/.X11-unix:/tmp/.X11-unix
+    - ./viki:/app/viki
     - ./tests:/app/tests
     - ./data:/app/data
-    - ./viki:/app/viki
     - ./scripts:/app/scripts
     - ./models:/app/models
   environment:
@@ -25,21 +37,35 @@ x-common: &common
     - /dev/dri:/dev/dri
 
 services:
-  viki:
+  web:
     <<: *common
-    container_name: viki
+    container_name: viki-web
     restart: unless-stopped
     entrypoint: ["/app/docker/entrypoint.sh"]
-    command: ["uvicorn", "viki.server.app:app", "--host", "0.0.0.0", "--port", "8000"]  #, "--reload"]
+    command: ["uvicorn", "viki.server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  test:
+    <<: *common
+    container_name: viki-test
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["/app/docker/entrypoint.sh", "pytest"]
+    command: ["tests/", "-q"]
+
+  cli:
+    <<: *common
+    container_name: viki-cli
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["/app/docker/entrypoint.sh", "viki"]
+    command: ["--help"]
 
   terminal:
     <<: *common
-    network_mode: "host"
     container_name: viki-terminal
+    restart: "no"
+    profiles: ["tools"]
     stdin_open: true
     tty: true
     entrypoint: ["/app/docker/entrypoint.sh"]
     command: ["/bin/bash"]
-    restart: "no"
-    profiles:
-      - tools
