@@ -18,8 +18,8 @@ from typing import Any
 
 import numpy as np
 
-from .archive_io import load_archive, write_hdf5_archive
-from .smoothing import smooth_trajectory
+from .archive import load_archive, write_hdf5_archive
+from viki.dsp import smooth_trajectory
 
 
 RIGHT_WRIST = 16
