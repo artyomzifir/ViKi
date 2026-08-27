@@ -26,6 +26,9 @@ dependencies = [
 dev = [
     "pytest",
 ]
+export = [
+    "lerobot",
+]
 
 [build-system]
 requires = ["hatchling"]
