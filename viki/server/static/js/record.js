@@ -32,7 +32,7 @@ function template() {
       <section class="calib-sec">
         <div class="calib-sec-title">Dataset</div>
         <select id="rec-dataset"></select>
-        <div class="inline-add">
+        <div class="inline-add" id="rec-ds-add" hidden>
           <input type="text" id="rec-ds-name" placeholder="new dataset name">
           <button id="rec-ds-create">Create</button>
         </div>
@@ -135,10 +135,10 @@ async function loadDatasets(select) {
   try { ({ datasets: list } = await api('GET', '/api/datasets')); }
   catch (e) { log('Failed to load datasets: ' + e, 'error'); }
   const keep = select || sel.value;
-  sel.innerHTML = list.length
-    ? list.map(d => `<option value="${d.name}">${d.name} (${d.episodes})</option>`).join('')
-    : '<option value="">— none —</option>';
+  sel.innerHTML = '<option value="">＋ new dataset…</option>' +
+    list.map(d => `<option value="${d.name}">${d.name} (${d.episodes})</option>`).join('');
   if (keep && list.some(d => d.name === keep)) sel.value = keep;
+  else if (!keep && list.length) sel.value = list[0].name;   // prefer a real one
   onDatasetChange();
 }
 
@@ -159,6 +159,8 @@ function currentDataset() { return view?.querySelector('#rec-dataset')?.value ||
 function onDatasetChange() {
   const ds = currentDataset();
   view.querySelector('#rec-ds-label').textContent = ds || '—';
+  view.querySelector('#rec-ds-add').hidden = ds !== '';   // show only for "＋ new dataset…"
+  if (ds === '') view.querySelector('#rec-ds-name').focus();
   renamingPath = confirmDeletePath = null;
   loadEpisodes();
   updateHint();

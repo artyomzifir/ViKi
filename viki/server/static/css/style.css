@@ -209,6 +209,9 @@ header h1 {
 .calib-sec select, .calib-sec button { width: 100%; }
 .calib-sec .cfg-row { justify-content: space-between; }
 .calib-sec .cfg-row input, .calib-sec .cfg-row select { width: 120px; }
+.calib-sec .inline-add { align-items: center; }
+.calib-sec .inline-add input { width: auto; }
+.calib-sec .inline-add button { width: auto; white-space: nowrap; }
 
 /* ── record tab ───────────────────────────────────────────────────────── */
 
