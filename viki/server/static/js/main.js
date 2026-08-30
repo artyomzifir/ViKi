@@ -34,6 +34,16 @@ function show(name) {
   TABS[name].mod.mount(view);
 }
 
+// Re-mount the current tab (e.g. after a config save changed its defaults).
+function remount() {
+  if (!current) return;
+  const view = document.getElementById('view');
+  TABS[current].mod.unmount?.();
+  view.innerHTML = '';
+  TABS[current].mod.mount(view);
+}
+document.addEventListener('config:saved', remount);
+
 // ── persistent top-bar actions (delegated) ────────────────────────────────
 
 const CLICK_ACTIONS = {

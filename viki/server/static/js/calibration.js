@@ -31,6 +31,10 @@ function template() {
         <div class="calib-sec-title">Active preset</div>
         <select id="calib-preset"></select>
         <div class="hint" id="calib-preset-info">—</div>
+        <div class="inline-add">
+          <input type="text" id="calib-preset-name" placeholder="save current as…">
+          <button id="calib-preset-save">Save</button>
+        </div>
       </section>
 
       <section class="calib-sec">
@@ -85,20 +89,34 @@ function cardHTML(id, type, running) {
   </div>`;
 }
 
+let builtIds = '';  // csv of device ids currently rendered as cards
+
+// Rebuild the card list only when the set of devices changes; otherwise update
+// the mutable bits in place so the stream <img> and counts don't flicker.
 function renderCards() {
   const box = view?.querySelector('#calib-cards');
   if (!box) return;
   const ids = Object.keys(state);
-  if (!ids.length || !ids.some(id => state[id].running)) {
-    box.innerHTML = `<div class="empty-state"><h2>No live cameras</h2>
-      <p>Start cameras (top bar) to calibrate.</p></div>`;
-    // still show stopped cameras so you can start them
+  const key = ids.join(',');
+  if (key !== builtIds) {
+    builtIds = key;
+    box.innerHTML = ids.length
+      ? ids.map(id => cardHTML(id, state[id].type, state[id].running)).join('')
+      : `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
   }
-  if (ids.length) {
-    box.innerHTML = ids.map(id => cardHTML(id, state[id].type, state[id].running)).join('');
-    for (const id of ids) {
-      const img = box.querySelector(`img[data-id="${id}"]`);
-      if (img) img.src = state[id].running ? `/api/calibration/${id}/stream?t=${Date.now()}` : '';
+  for (const id of ids) {
+    const on = !!state[id]?.running;
+    const card = box.querySelector(`.calib-card[data-id="${id}"]`);
+    if (!card) continue;
+    card.querySelector('.dot').className = 'dot ' + (on ? 'green' : 'grey');
+    card.querySelector('[data-role="start"]').disabled = on;
+    card.querySelector('[data-role="stop"]').disabled = !on;
+    card.querySelector('[data-role="capture"]').disabled = !on;
+    const img = card.querySelector('img');
+    const want = on ? '1' : '';
+    if (img && img.dataset.on !== want) {
+      img.src = on ? `/api/calibration/${id}/stream?t=${Date.now()}` : '';
+      img.dataset.on = want;
     }
   }
 }
@@ -186,16 +204,24 @@ async function solve() {
       try { await api('POST', `/api/skeleton/capture_base/${id}`); }
       catch (e) { log(`Base depth capture failed for ${id}: ${e}`, 'error'); }
     }));
-    log('Extrinsics solved', 'ok');
-    const name = prompt('Save this calibration as a preset (name):', '');
-    if (name && name.trim()) {
-      await api('POST', '/api/calibration/save-as', { name: name.trim() });
-      log(`Saved preset "${name.trim()}"`, 'ok');
-    }
+    log('Extrinsics solved — name it below and Save to keep it as a preset', 'ok');
+    view?.querySelector('#calib-preset-name')?.focus();
     refreshPresets();
   } catch (e) {
     log('Extrinsics calibration failed: ' + e, 'error');
   }
+}
+
+async function savePreset() {
+  const input = view.querySelector('#calib-preset-name');
+  const name = (input.value || '').trim();
+  if (!name) { input.focus(); return; }
+  try {
+    await api('POST', '/api/calibration/save-as', { name });
+    log(`Saved preset "${name}"`, 'ok');
+    input.value = '';
+    refreshPresets();
+  } catch (e) { log('Save preset failed: ' + e, 'error'); }
 }
 
 async function clearSamples() {
@@ -241,6 +267,7 @@ async function activatePreset(name) {
 
 export function mount(container) {
   view = container;
+  builtIds = '';
   view.innerHTML = template();
   syncBoardFieldVisibility();
   renderCards();
@@ -248,6 +275,9 @@ export function mount(container) {
 
   view.addEventListener('click', onClick);
   view.addEventListener('change', onChange);
+  view.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.id === 'calib-preset-name') savePreset();
+  });
   onCamerasChanged = () => renderCards();
   document.addEventListener('cameras:changed', onCamerasChanged);
 
@@ -278,6 +308,7 @@ function onClick(e) {
     case 'calib-capture-all': captureAll(); break;
     case 'calib-solve': solve(); break;
     case 'calib-clear': clearSamples(); break;
+    case 'calib-preset-save': savePreset(); break;
   }
 }
 

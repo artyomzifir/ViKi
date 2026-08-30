@@ -1,12 +1,15 @@
 // Record tab: pick/create a dataset, give the take an initial label, capture a
 // synced RGB-D scene into data/datasets/<dataset>/<id>/, and browse + manage the
-// episodes already in that dataset.
+// episodes already in that dataset. All input is on-page — no browser dialogs.
 import { api, log, state, FRONTEND_CONFIG } from './core.js';
 import * as cameras from './cameras.js';
 
 let view = null;
 let onCamerasChanged = null;
 let recording = false;
+let builtIds = '';               // csv of device ids currently rendered as cards
+let renamingPath = null;         // episode row in inline-rename mode
+let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 
 // ── template ──────────────────────────────────────────────────────────────
 
@@ -29,7 +32,10 @@ function template() {
       <section class="calib-sec">
         <div class="calib-sec-title">Dataset</div>
         <select id="rec-dataset"></select>
-        <button id="rec-dataset-new">＋ New dataset…</button>
+        <div class="inline-add">
+          <input type="text" id="rec-ds-name" placeholder="new dataset name">
+          <button id="rec-ds-create">Create</button>
+        </div>
       </section>
 
       <section class="calib-sec">
@@ -57,7 +63,7 @@ function cardHTML(id, type, running) {
   return `
   <div class="cam-card" data-id="${id}">
     <div class="card-header">
-      <span class="dot ${running ? 'green' : 'grey'}"></span>
+      <span class="dot ${running ? 'green' : 'grey'}" data-role="dot" data-id="${id}"></span>
       <span class="name">${id}</span>
       <span class="tag ${type}">${type}</span>
       <button data-role="start" data-id="${id}" ${running ? 'disabled' : ''}>▶ Start</button>
@@ -72,23 +78,41 @@ function cardHTML(id, type, running) {
   </div>`;
 }
 
+// Full rebuild only when the set of devices changes; otherwise sync in place so
+// the res / fps / depth selects the user set are not blown away.
 function renderCards() {
   const box = view?.querySelector('#record-cards');
   if (!box) return;
   const ids = Object.keys(state);
-  if (!ids.length) {
-    box.innerHTML = `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
-    return;
+  const key = ids.join(',');
+  if (key !== builtIds) {
+    builtIds = key;
+    box.innerHTML = ids.length
+      ? ids.map(id => cardHTML(id, state[id].type, state[id].running)).join('')
+      : `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
   }
-  box.innerHTML = ids.map(id => cardHTML(id, state[id].type, state[id].running)).join('');
-  for (const id of ids) {
-    const on = state[id].running;
-    cameras.setStream(box.querySelector(`img[data-role="color"][data-id="${id}"]`),
-      on ? `/api/cameras/${id}/stream` : null);
-    cameras.setStream(box.querySelector(`img[data-role="depth"][data-id="${id}"]`),
-      on ? `/api/cameras/${id}/depth` : null);
-  }
+  for (const id of ids) syncCard(box, id);
   updateHint();
+}
+
+function syncCard(box, id) {
+  const on = !!state[id]?.running;
+  const dot = box.querySelector(`[data-role="dot"][data-id="${id}"]`);
+  if (dot) dot.className = 'dot ' + (on ? 'green' : 'grey');
+  const start = box.querySelector(`[data-role="start"][data-id="${id}"]`);
+  const stop = box.querySelector(`[data-role="stop"][data-id="${id}"]`);
+  if (start) start.disabled = on;
+  if (stop) stop.disabled = !on;
+  const color = box.querySelector(`img[data-role="color"][data-id="${id}"]`);
+  const depth = box.querySelector(`img[data-role="depth"][data-id="${id}"]`);
+  // (re)point the stream only when its on/off state flips
+  const want = on ? '1' : '';
+  if (color && color.dataset.on !== want) {
+    cameras.setStream(color, on ? `/api/cameras/${id}/stream` : null); color.dataset.on = want;
+  }
+  if (depth && depth.dataset.on !== want) {
+    cameras.setStream(depth, on ? `/api/cameras/${id}/depth` : null); depth.dataset.on = want;
+  }
 }
 
 function updateHint() {
@@ -118,13 +142,15 @@ async function loadDatasets(select) {
   onDatasetChange();
 }
 
-async function newDataset() {
-  const name = prompt('New dataset name:', '');
-  if (!name || !name.trim()) return;
+async function createDataset() {
+  const input = view.querySelector('#rec-ds-name');
+  const name = (input.value || '').trim();
+  if (!name) { input.focus(); return; }
   try {
-    await api('POST', '/api/datasets', { name: name.trim() });
-    log(`Created dataset "${name.trim()}"`, 'ok');
-    await loadDatasets(name.trim());
+    await api('POST', '/api/datasets', { name });
+    log(`Created dataset "${name}"`, 'ok');
+    input.value = '';
+    await loadDatasets(name);
   } catch (e) { log('Create dataset failed: ' + e, 'error'); }
 }
 
@@ -133,6 +159,7 @@ function currentDataset() { return view?.querySelector('#rec-dataset')?.value ||
 function onDatasetChange() {
   const ds = currentDataset();
   view.querySelector('#rec-ds-label').textContent = ds || '—';
+  renamingPath = confirmDeletePath = null;
   loadEpisodes();
   updateHint();
 }
@@ -156,34 +183,43 @@ async function loadEpisodes() {
 function rowHTML(ep) {
   const chips = STAGES.map(s =>
     `<span class="badge ${ep.has?.[s] ? 'ok' : ''}">${s[0].toUpperCase()}</span>`).join('');
-  return `
-  <div class="episode-row" data-path="${ep.path}">
-    <span class="ep-id">${ep.id}</span>
+  const id = renamingPath === ep.path
+    ? `<input class="ep-id-edit" data-role="ep-name" value="${ep.id}">
+       <button data-role="ep-rename-ok">save</button>
+       <button data-role="ep-rename-cancel">cancel</button>`
+    : `<span class="ep-id">${ep.id}</span>`;
+  const actions = confirmDeletePath === ep.path
+    ? `<span class="hint">delete?</span>
+       <button data-role="ep-delete-yes" class="danger">yes</button>
+       <button data-role="ep-delete-no">no</button>`
+    : `<button data-role="ep-rename">rename</button>
+       <button data-role="ep-delete" class="danger">del</button>`;
+  return `<div class="episode-row" data-path="${ep.path}">
+    ${id}
     <span class="ep-task">${ep.task || '<i>unlabelled</i>'}</span>
     <span class="ep-badges">${chips}</span>
-    <button data-role="ep-rename">rename</button>
-    <button data-role="ep-delete" class="danger">del</button>
+    ${actions}
   </div>`;
 }
 
-async function renameEpisode(path) {
-  const cur = path.split('/').pop();
-  const nid = prompt('Rename episode to:', cur);
-  if (!nid || nid === cur) return;
+async function doRename(path, newId) {
+  if (!newId || newId === path.split('/').pop()) { renamingPath = null; loadEpisodes(); return; }
   try {
-    await api('PATCH', '/api/episodes/rename', { path, new_id: nid });
+    await api('PATCH', '/api/episodes/rename', { path, new_id: newId });
     log('Episode renamed', 'ok');
-    loadEpisodes();
   } catch (e) { log('Rename failed: ' + e, 'error'); }
+  renamingPath = null;
+  loadEpisodes();
 }
 
-async function deleteEpisode(path) {
-  if (!confirm(`Delete episode ${path.split('/').pop()}? This removes all its files.`)) return;
+async function doDelete(path) {
   try {
     await api('DELETE', '/api/episodes', { path });
     log('Episode deleted', 'ok');
-    loadEpisodes();
   } catch (e) { log('Delete failed: ' + e, 'error'); }
+  confirmDeletePath = null;
+  loadEpisodes();
+  loadDatasets();
 }
 
 // ── record ───────────────────────────────────────────────────────────────
@@ -225,14 +261,28 @@ function onClick(e) {
   if (!btn) return;
   const row = e.target.closest('.episode-row');
   const id = btn.dataset.id;
+  const path = row?.dataset.path;
   switch (btn.id || btn.dataset.role) {
     case 'start': cameras.startCamera(id, cameras.readCardConfig(view, id)); break;
     case 'stop': cameras.stopCamera(id); break;
-    case 'rec-dataset-new': newDataset(); break;
+    case 'rec-ds-create': createDataset(); break;
     case 'rec-eps-refresh': loadEpisodes(); break;
     case 'rec-go': record(); break;
-    case 'ep-rename': if (row) renameEpisode(row.dataset.path); break;
-    case 'ep-delete': if (row) deleteEpisode(row.dataset.path); break;
+    case 'ep-rename': renamingPath = path; confirmDeletePath = null; loadEpisodes(); break;
+    case 'ep-rename-cancel': renamingPath = null; loadEpisodes(); break;
+    case 'ep-rename-ok':
+      doRename(path, row.querySelector('[data-role="ep-name"]').value.trim()); break;
+    case 'ep-delete': confirmDeletePath = path; renamingPath = null; loadEpisodes(); break;
+    case 'ep-delete-no': confirmDeletePath = null; loadEpisodes(); break;
+    case 'ep-delete-yes': doDelete(path); break;
+  }
+}
+
+function onKeydown(e) {
+  if (e.key === 'Enter' && e.target.id === 'rec-ds-name') createDataset();
+  else if (e.key === 'Enter' && e.target.dataset.role === 'ep-name') {
+    const row = e.target.closest('.episode-row');
+    doRename(row.dataset.path, e.target.value.trim());
   }
 }
 
@@ -245,11 +295,13 @@ function onChange(e) {
 
 export function mount(container) {
   view = container;
+  builtIds = '';
   view.innerHTML = template();
   renderCards();
   loadDatasets();
   view.addEventListener('click', onClick);
   view.addEventListener('change', onChange);
+  view.addEventListener('keydown', onKeydown);
   onCamerasChanged = () => renderCards();
   document.addEventListener('cameras:changed', onCamerasChanged);
 }

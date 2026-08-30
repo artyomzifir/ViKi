@@ -236,3 +236,11 @@ header h1 {
 .episode-row button { padding: 3px 8px; font-size: 11px; }
 .badge { width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 3px; font-size: 9px; background: var(--border); color: var(--muted); }
 .badge.ok { background: var(--accent); color: #fff; }
+.episode-row .ep-id-edit { width: 150px; padding: 3px 6px; font-size: 11px; }
+
+/* inline "create / save as" input + button row (datasets, calib presets) */
+.inline-add { display: flex; gap: 6px; }
+.inline-add input { flex: 1; min-width: 0; }
+.inline-add button { flex-shrink: 0; }
+
+button.armed { border-color: var(--yellow); color: var(--yellow); }

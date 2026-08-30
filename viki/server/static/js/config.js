@@ -2,7 +2,7 @@
 // day-to-day; everything else stays editable as raw JSON under "Advanced".
 // Single source of truth is CFG (the full object); curated widgets write through
 // to it and the Advanced textarea mirrors it.
-import { api, log } from './core.js';
+import { api, log, initializeFrontendConfig } from './core.js';
 
 let CFG = {};
 let dirty = false;
@@ -138,31 +138,55 @@ export async function save() {
     await api('POST', '/api/config', CFG);
     log('Configuration saved — restart to apply', 'ok');
     setDirty(true);
+    // Refresh the in-memory frontend config so tabs pick up new defaults, and
+    // ask the router to re-mount the current tab.
+    await initializeFrontendConfig(CFG);
+    document.dispatchEvent(new CustomEvent('config:saved'));
   } catch (e) {
     log('Failed to save config: ' + e, 'error');
   }
 }
 
-export async function reset() {
-  if (!confirm('Reset all settings to defaults? This overwrites your current configuration.')) return;
-  try {
-    await api('POST', '/api/config/reset');
-    log('Configuration reset to defaults — restart to apply', 'ok');
-    await open();
-    setDirty(true);
-  } catch (e) {
-    log('Failed to reset config: ' + e, 'error');
+// Two-click confirm on a modal button: first click arms it for 3 s, second runs.
+const _armed = {};
+function twoStep(action, run) {
+  const btn = document.querySelector(`#config-modal [data-action="${action}"]`);
+  if (_armed[action]) {
+    clearTimeout(_armed[action]);
+    delete _armed[action];
+    if (btn) { btn.textContent = btn.dataset.label; btn.classList.remove('armed'); }
+    run();
+    return;
   }
+  if (btn) {
+    btn.dataset.label = btn.dataset.label || btn.textContent;
+    btn.textContent = 'Click again to confirm';
+    btn.classList.add('armed');
+  }
+  _armed[action] = setTimeout(() => {
+    delete _armed[action];
+    if (btn) { btn.textContent = btn.dataset.label; btn.classList.remove('armed'); }
+  }, 3000);
 }
 
-export async function restart() {
-  if (!confirm('Restart the server? You will be disconnected for a few seconds.')) return;
-  try {
-    await api('POST', '/api/restart');
-    log('Restarting server… please wait.', 'ok');
-  } catch (e) {
-    log('Restart request failed: ' + e, 'error');
-  }
+export function reset() {
+  twoStep('cfgReset', async () => {
+    try {
+      await api('POST', '/api/config/reset');
+      log('Configuration reset to defaults — restart to apply', 'ok');
+      await open();
+      setDirty(true);
+    } catch (e) { log('Failed to reset config: ' + e, 'error'); }
+  });
+}
+
+export function restart() {
+  twoStep('cfgRestart', async () => {
+    try {
+      await api('POST', '/api/restart');
+      log('Restarting server… please wait.', 'ok');
+    } catch (e) { log('Restart request failed: ' + e, 'error'); }
+  });
 }
 
 // Let a tab that edited a shared key refresh an open modal.
