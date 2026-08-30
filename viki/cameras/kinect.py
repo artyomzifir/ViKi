@@ -239,6 +239,28 @@ _COLOR_RES_MAP = {
     (2048, 1536): K4A_COLOR_RESOLUTION_1536P,
 }
 
+# Emulated 640x480: 1280x720 -> centre-crop 960x720 -> resize 640x480.
+_EMU640_CROP_X = 160          # (1280 - 960) / 2
+_EMU640_SCALE = 640.0 / 960.0  # == 480 / 720, so a single uniform scale
+
+
+def _emulate_640x480_color(color: "np.ndarray") -> "np.ndarray":
+    cropped = color[:, _EMU640_CROP_X:_EMU640_CROP_X + 960]
+    return cv2.resize(cropped, (640, 480), interpolation=cv2.INTER_AREA)
+
+
+def _emulate_640x480_intrinsics(intr: "CameraIntrinsics") -> "CameraIntrinsics":
+    s = _EMU640_SCALE
+    return CameraIntrinsics(
+        fx=intr.fx * s,
+        fy=intr.fy * s,
+        cx=(intr.cx - _EMU640_CROP_X) * s,
+        cy=intr.cy * s,
+        width=640,
+        height=480,
+        dist_coeffs=intr.dist_coeffs,
+    )
+
 _DEPTH_MODE_MAP = {
     "NFOV_UNBINNED": K4A_DEPTH_MODE_NFOV_UNBINNED,
     "NFOV_2X2BINNED": K4A_DEPTH_MODE_NFOV_2X2BINNED,
@@ -288,11 +310,17 @@ class KinectBackend(CameraBackend):
         subordinate_delay_us: int = 0,
         synchronized_images_only: bool = True,
     ) -> None:
-        if color_resolution not in _COLOR_RES_MAP:
+        # (640, 480) is not a native Kinect colour mode. It is emulated: capture
+        # at 1280x720, centre-crop to 960x720, then downscale to 640x480. The
+        # colour intrinsics are transformed to match (see _emulate_640x480).
+        self._emulate_640 = tuple(color_resolution) == (640, 480)
+        native_color = (1280, 720) if self._emulate_640 else tuple(color_resolution)
+        if native_color not in _COLOR_RES_MAP:
             raise ValueError(
                 f"Unsupported color_resolution {color_resolution}. "
-                f"Supported: {list(_COLOR_RES_MAP)}"
+                f"Supported: {list(_COLOR_RES_MAP)} + (640, 480) [emulated]"
             )
+        self._native_color = native_color
         if depth_mode not in _DEPTH_MODE_MAP:
             raise ValueError(
                 f"Unknown depth_mode '{depth_mode}'. "
@@ -350,7 +378,7 @@ class KinectBackend(CameraBackend):
         # Build config
         config = K4ADeviceConfig(
             color_format=K4A_IMAGE_FORMAT_COLOR_BGRA32,
-            color_resolution=_COLOR_RES_MAP[self._color_resolution],
+            color_resolution=_COLOR_RES_MAP[self._native_color],
             depth_mode=_DEPTH_MODE_MAP[self._depth_mode],
             camera_fps=_FPS_MAP[self._fps],
             synchronized_images_only=self._synchronized_images_only,
@@ -370,7 +398,7 @@ class KinectBackend(CameraBackend):
         res = _lib.k4a_device_get_calibration(
             self._handle,
             _DEPTH_MODE_MAP[self._depth_mode],
-            _COLOR_RES_MAP[self._color_resolution],
+            _COLOR_RES_MAP[self._native_color],
             cal_buf,
         )
         if res == K4A_RESULT_SUCCEEDED:
@@ -385,6 +413,8 @@ class KinectBackend(CameraBackend):
             # Cache intrinsics once at startup
             self._color_intrinsics = self._get_intrinsics(K4A_CALIBRATION_TYPE_COLOR)
             self._depth_intrinsics = self._get_intrinsics(K4A_CALIBRATION_TYPE_DEPTH)
+            if self._emulate_640:
+                self._color_intrinsics = _emulate_640x480_intrinsics(self._color_intrinsics)
             if self._color_intrinsics.fx == 0 or self._depth_intrinsics.fx == 0:
                 _lib.k4a_device_close(self._handle)
                 raise RuntimeError(
@@ -430,6 +460,8 @@ class KinectBackend(CameraBackend):
                 raise TimeoutError("Color image is NULL in capture — frame dropped.")
 
             color = self._image_to_numpy_bgr(color_img)
+            if self._emulate_640:
+                color = _emulate_640x480_color(color)
             ts = int(_lib.k4a_image_get_timestamp_usec(color_img))
 
             if depth_img and (self._align_depth and self._transform):
@@ -597,7 +629,7 @@ class KinectBackend(CameraBackend):
         
         w, h = (0, 0)
         if cam_type == K4A_CALIBRATION_TYPE_COLOR:
-            w, h = self._color_resolution
+            w, h = self._native_color
         else:
             mode = self._depth_mode
             # Map depth mode to resolution

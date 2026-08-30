@@ -203,9 +203,36 @@ header h1 {
 .calib-stream { position: relative; background: #000; aspect-ratio: 16/9; }
 .calib-stream img { width: 100%; height: 100%; object-fit: contain; display: block; }
 
-.calib-side { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; }
+.calib-side, .record-side { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; }
 .calib-sec { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .calib-sec-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
 .calib-sec select, .calib-sec button { width: 100%; }
 .calib-sec .cfg-row { justify-content: space-between; }
 .calib-sec .cfg-row input, .calib-sec .cfg-row select { width: 120px; }
+
+/* ── record tab ───────────────────────────────────────────────────────── */
+
+.record-tab { display: flex; gap: 20px; align-items: flex-start; }
+.record-main { flex: 1; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.record-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 14px; }
+.cam-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cam-card .card-header { flex-wrap: wrap; }
+.cam-card .card-header .name { flex: 1; }
+.card-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.card-controls .sep { width: 1px; height: 18px; background: var(--border); }
+.streams { display: grid; grid-template-columns: 1fr 1px 1fr; }
+.stream-panel { position: relative; background: #000; aspect-ratio: 4/3; overflow: hidden; }
+.stream-panel img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.stream-divider { background: var(--border); }
+
+.record-episodes { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.record-episodes-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.episode-list { max-height: 340px; overflow-y: auto; }
+.episode-row { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.episode-row:hover { background: var(--bg); }
+.episode-row .ep-id { font-family: inherit; color: var(--muted); }
+.episode-row .ep-task { flex: 1; }
+.episode-row .ep-badges { display: flex; gap: 3px; }
+.episode-row button { padding: 3px 8px; font-size: 11px; }
+.badge { width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 3px; font-size: 9px; background: var(--border); color: var(--muted); }
+.badge.ok { background: var(--accent); color: #fff; }

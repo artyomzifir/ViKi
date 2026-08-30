@@ -3,12 +3,13 @@
 import { api, log, mountLog, initializeFrontendConfig } from './core.js';
 import * as cameras from './cameras.js';
 import * as calibration from './calibration.js';
+import * as record from './record.js';
 import * as configModal from './config.js';
 import { makeStub } from './tabs_stub.js';
 
 const TABS = {
   calibration: { label: 'Calibration', mod: calibration },
-  record: { label: 'Record', mod: makeStub('Record') },
+  record: { label: 'Record', mod: record },
   extract: { label: 'Extract', mod: makeStub('Extract') },
   prepare: { label: 'Prepare', mod: makeStub('Prepare') },
   retarget: { label: 'Retarget', mod: makeStub('Retarget') },

@@ -22,6 +22,7 @@ from viki.cameras.manager import CameraManager
 from viki.server.routes import (
     calibration,
     cameras,
+    datasets,
     export,
     label,
     pipeline,
@@ -58,6 +59,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 router = APIRouter(prefix="/api", tags=["api"])
 for mod in (cameras, calibration, skeleton, system, recording, pipeline, replay, label, export):
     router.include_router(mod.router)
+router.include_router(datasets.router)
+router.include_router(datasets.ep_router)
 app.include_router(router)
 
 

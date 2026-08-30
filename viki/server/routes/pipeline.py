@@ -15,7 +15,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from viki import config
+from viki import config, datasets
 from viki.contracts import Episode
 from viki.episode import read_status
 from viki.server import jobs
@@ -27,8 +27,15 @@ _ep = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 def _episode(path_or_id: str) -> Episode:
     p = Path(path_or_id)
-    if not p.is_absolute() and not p.exists():
-        p = Path(getattr(config, "EPISODES_DIR", "data/episodes")) / path_or_id
+    if not p.is_dir():
+        # bare id: look in the legacy flat dir, then every dataset
+        cand = datasets.episodes_root() / path_or_id
+        if not cand.is_dir():
+            for ds in datasets.datasets_root().glob("*/"):
+                if (ds / path_or_id).is_dir():
+                    cand = ds / path_or_id
+                    break
+        p = cand
     ep = Episode(root=p)
     if not ep.root.is_dir():
         raise HTTPException(404, f"no episode at {path_or_id}")
@@ -39,29 +46,9 @@ def _episode(path_or_id: str) -> Episode:
 
 
 @_ep.get("/episodes")
-async def list_episodes():
-    root = Path(getattr(config, "EPISODES_DIR", "data/episodes"))
-    root.mkdir(parents=True, exist_ok=True)
-    out = []
-    for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
-        ep = Episode(root=d)
-        meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
-        out.append(
-            {
-                "id": ep.id,
-                "path": str(d),
-                "task": (meta.get("labels") or {}).get("task", meta.get("task", "")),
-                "stages": read_status(ep).get("stages", {}),
-                "has": {
-                    "raw": ep.raw_dir.is_dir(),
-                    "rec": ep.rec_npz.exists(),
-                    "cln": ep.cln_npz.exists(),
-                    "plan": ep.plan_h5.exists(),
-                    "replay": ep.replay_h5.exists(),
-                },
-            }
-        )
-    return {"episodes": out}
+async def list_episodes(dataset: str | None = None):
+    """All episodes (grouped datasets + legacy flat dir), or one dataset's."""
+    return {"episodes": datasets.list_episodes(dataset)}
 
 
 # ── stage jobs ────────────────────────────────────────────────────────

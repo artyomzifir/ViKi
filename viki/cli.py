@@ -40,7 +40,8 @@ def _cmd_record(a) -> None:
         mgr.start(dev)
     rec = SceneRecorder(
         mgr,
-        episodes_dir=a.episodes_dir,
+        dataset=a.dataset,
+        episodes_dir=None if a.dataset else a.episodes_dir,
         meta={"task": a.task, "demonstrator": a.demonstrator, "hand": a.hand},
     )
     ep = rec.record(a.seconds, fps=a.fps)
@@ -141,6 +142,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--demonstrator", default="")
     pr.add_argument("--hand", default="right", choices=["left", "right"])
     pr.add_argument("--cameras", nargs="*", help="device ids (default: all detected)")
+    pr.add_argument("--dataset", default=None, help="dataset folder under data/datasets/")
     pr.add_argument("--episodes-dir", default="data/episodes")
     pr.set_defaults(func=_cmd_record)
 
