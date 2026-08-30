@@ -473,10 +473,50 @@ class CalibrationManager:
             )
         return extrinsics
 
-    def capture_all(self) -> None:
-        """Manually trigger sample capture for all active workers."""
-        for device_id, worker in self._workers.items():
-            worker.capture()
+    def capture_all(self) -> dict:
+        """Capture one board set across the whole rig.
+
+        A set is kept only if **every** active camera detected the board (so the
+        per-worker sample lists stay index-aligned). On success the annotated
+        colour frame of each camera is saved to
+        ``data/calibrations/_live/set-NNN/<dev>.jpg``. Returns
+        ``{"captured": bool, "missing": [dev, ...], "index": int}``.
+        """
+        from viki.calibration import captures
+
+        devs = list(self._workers)
+        if not devs:
+            return {"captured": False, "missing": []}
+
+        before = {d: self._workers[d].samples_count for d in devs}
+        for d in devs:
+            self._workers[d].capture()
+        grew = [d for d in devs if self._workers[d].samples_count > before[d]]
+        missing = [d for d in devs if d not in grew]
+        if missing:
+            for d in grew:  # roll back the partial set
+                self._workers[d].pop_sample(self._workers[d].samples_count - 1)
+            return {"captured": False, "missing": missing}
+
+        idx = self._workers[devs[0]].samples_count - 1
+        images = {}
+        for d in devs:
+            w = self._workers[d]
+            frame = w.samples[-1].frame
+            try:
+                images[d] = w.mark_board(frame)
+            except Exception:  # noqa: BLE001
+                images[d] = frame.color
+        captures.save_set(captures.LIVE, idx, images)
+        return {"captured": True, "missing": [], "index": idx}
+
+    def clear_all(self) -> None:
+        """Drop every sample on every worker and wipe the live capture photos."""
+        from viki.calibration import captures
+
+        for worker in self._workers.values():
+            worker.clear()
+        captures.wipe(captures.LIVE)
 
     def capture(self, device_id: str) -> None:
         """Manually trigger sample capture for a specific device."""
@@ -501,7 +541,7 @@ class CalibrationManager:
     # ── capture-sets (one ``capture_all`` == one set, index-aligned) ──────────
 
     def list_sample_sets(self) -> list[dict]:
-        """One row per capture set: which cameras detected the board in it."""
+        """One row per capture set: per-camera corner count + preview image URL."""
         devs = list(self._workers)
         n = max((self._workers[d].samples_count for d in devs), default=0)
         rows = []
@@ -512,14 +552,18 @@ class CalibrationManager:
                 cams[d] = {
                     "detected": i < len(s),
                     "corners": (len(s[i].corners) if i < len(s) and s[i].corners is not None else 0),
+                    "image": f"/api/calibration/samples/{i}/{d}.jpg",
                 }
             rows.append({"index": i, "cameras": cams})
         return rows
 
     def delete_sample_set(self, index: int) -> None:
-        """Drop capture set ``index`` from every worker."""
+        """Drop capture set ``index`` from every worker and from disk."""
+        from viki.calibration import captures
+
         for worker in self._workers.values():
             worker.pop_sample(index)
+        captures.delete_set(captures.LIVE, index)
 
     def sets_payload(self) -> dict[str, list[dict]]:
         """Serialize every worker's samples for storing in a preset."""

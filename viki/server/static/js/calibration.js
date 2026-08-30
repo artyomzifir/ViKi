@@ -93,7 +93,7 @@ function renderCards() {
   if (key !== builtIds) {
     builtIds = key;
     box.innerHTML = ids.length
-      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running)).join('')
+      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running, { depth: false })).join('')
       : `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
   }
   for (const id of ids) {
@@ -163,8 +163,11 @@ async function startSession() {
 }
 
 async function captureAll() {
-  try { await api('POST', '/api/calibration/capture'); log('Captured a set', 'ok'); }
-  catch (e) { log('Capture failed: ' + e, 'error'); }
+  try {
+    const r = await api('POST', '/api/calibration/capture');
+    if (r.captured) log(`Captured set #${r.index}`, 'ok');
+    else log(`Board not seen by: ${(r.missing || []).join(', ') || 'a camera'} — set discarded`, 'error');
+  } catch (e) { log('Capture failed: ' + e, 'error'); }
   refreshSets();
 }
 
@@ -185,23 +188,25 @@ async function solve() {
 }
 
 async function clearSamples() {
-  for (const id of Object.keys(state)) {
-    try { await api('POST', `/api/calibration/clear/${id}`); } catch { /* ignore */ }
-  }
-  log('Cleared calibration samples');
+  try { await api('POST', '/api/calibration/clear'); log('Cleared calibration samples'); }
+  catch (e) { log('Clear failed: ' + e, 'error'); }
   refreshSets();
 }
 
 // ── captured-sets list (live or from an opened preset) ───────────────────
 
 function setRow(row, canDelete) {
-  const cams = Object.entries(row.cameras)
-    .map(([d, c]) => `<span class="set-cam ${c.detected ? 'ok' : ''}">${d}${c.detected ? ` ${c.corners}` : ' ✗'}</span>`)
-    .join('');
+  const cams = Object.entries(row.cameras).map(([d, c]) => `
+    <div class="set-cam-box">
+      <div class="set-cam ${c.detected ? 'ok' : ''}">${d} ${c.detected ? c.corners : '✗'}</div>
+      ${c.image ? `<img class="set-thumb" data-role="set-thumb" src="${c.image}" alt="${d}" loading="lazy">` : ''}
+    </div>`).join('');
   const del = canDelete
     ? `<button data-role="set-del" data-i="${row.index}" class="danger">del</button>` : '';
-  return `<div class="set-row"><span class="set-n">#${row.index}</span>${cams}${del}</div>`;
+  return `<div class="set-row"><div class="set-row-head"><span class="set-n">#${row.index}</span>${del}</div>${cams}</div>`;
 }
+
+let _setsSig = '';   // only re-render the list (and reload thumbs) when it changes
 
 async function refreshSets() {
   const box = view?.querySelector('#calib-sets-list');
@@ -211,6 +216,9 @@ async function refreshSets() {
   view.querySelector('#calib-sets-live').hidden = true;
   try {
     const rows = await api('GET', '/api/calibration/samples');
+    const sig = JSON.stringify(rows.map(r => [r.index, Object.values(r.cameras).map(c => c.corners)]));
+    if (sig === _setsSig) return;
+    _setsSig = sig;
     box.innerHTML = rows.length ? rows.map(r => setRow(r, true)).join('')
       : '<div class="hint" style="padding:8px">no sets yet — Start session, then Capture all</div>';
   } catch (e) { box.innerHTML = `<div class="hint" style="padding:8px">${e}</div>`; }
@@ -226,12 +234,13 @@ function renderPresetSets() {
   const devs = Object.keys(sets);
   const n = Math.max(0, ...devs.map(d => sets[d].length));
   if (!n) { box.innerHTML = '<div class="hint" style="padding:8px">this preset has no stored sets</div>'; return; }
+  const imgs = presetDetail?.set_images || {};
   const rows = [];
   for (let i = 0; i < n; i++) {
     const camObj = {};
     for (const d of devs) {
       const s = sets[d][i];
-      camObj[d] = { detected: !!s, corners: s ? s.corners.length : 0 };
+      camObj[d] = { detected: !!s, corners: s ? s.corners.length : 0, image: (imgs[i] || {})[d] || null };
     }
     rows.push(setRow({ index: i, cameras: camObj }, true));
   }
@@ -292,7 +301,7 @@ async function openPreset() {
   } catch (e) { log('Open preset failed: ' + e, 'error'); }
 }
 
-function backToLive() { openedPreset = null; presetDetail = null; refreshSets(); }
+function backToLive() { openedPreset = null; presetDetail = null; _setsSig = ''; refreshSets(); }
 
 async function savePreset() {
   const input = view.querySelector('#calib-preset-name');
@@ -311,6 +320,7 @@ async function savePreset() {
 export function mount(container) {
   view = container;
   builtIds = '';
+  _setsSig = '';
   openedPreset = null;
   view.innerHTML = template();
   syncBoardFieldVisibility();
@@ -340,6 +350,7 @@ export function unmount() {
 // ── events ────────────────────────────────────────────────────────────────
 
 function onClick(e) {
+  if (e.target.dataset.role === 'set-thumb') { window.open(e.target.src, '_blank'); return; }
   const btn = e.target.closest('button');
   if (!btn) return;
   const id = btn.dataset.id;

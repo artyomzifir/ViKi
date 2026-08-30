@@ -146,7 +146,14 @@ async def capture_all(
             400,
             "Calibration session not started. Please click 'Sync Parameters' first.",
         )
-    cal.capture_all()
+    return cal.capture_all()
+
+
+@router.post("/clear")
+async def clear_all(cal: CalibrationManager = Depends(get_calibrator)):
+    """Drop every sample on every camera and wipe the live capture photos."""
+    cal.clear_all()
+    return {"status": "cleared"}
 
 
 @router.post("/start/{device_id}")
@@ -572,6 +579,30 @@ async def delete_sample_set(
 ):
     cal.delete_sample_set(index)
     return {"status": "deleted", "index": index}
+
+
+def _capture_image(owner: str, index: int, device: str):
+    from fastapi.responses import FileResponse
+
+    from viki.calibration import captures
+
+    p = captures.image_path(owner, index, device)
+    if not p.is_file():
+        raise HTTPException(404, "no capture image")
+    return FileResponse(str(p), media_type="image/jpeg")
+
+
+@router.get("/samples/{index}/{device}.jpg")
+async def sample_image(index: int, device: str):
+    """Preview photo of a live capture set (annotated with the detected board)."""
+    from viki.calibration import captures
+
+    return _capture_image(captures.LIVE, index, device)
+
+
+@router.get("/presets/{name}/sets/{index}/{device}.jpg")
+async def preset_sample_image(name: str, index: int, device: str):
+    return _capture_image(name, index, device)
 
 
 # ── presets ─────────────────────────────────────────────────────────────────

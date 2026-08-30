@@ -100,12 +100,26 @@ def list_presets() -> list[dict]:
     return out
 
 
+def _set_images(name: str) -> dict:
+    """{set_index: {device: image_url}} for the preview thumbnails."""
+    from viki.calibration import captures
+
+    safe = _safe_name(name)
+    return {
+        r["index"]: {
+            d: f"/api/calibration/presets/{safe}/sets/{r['index']}/{d}.jpg"
+            for d in r["devices"]
+        }
+        for r in captures.list_sets(safe)
+    }
+
+
 def read_detail(name: str) -> dict:
     """Full preset content for the reopen view."""
     data = _read(name)
     if isinstance(data, list):
         return {"name": _safe_name(name), "version": 1, "extrinsics": data,
-                "sets": {}, "intrinsics": {}, "board": None}
+                "sets": {}, "intrinsics": {}, "board": None, "set_images": {}}
     return {
         "name": _safe_name(name),
         "version": data.get("version", 2),
@@ -113,6 +127,7 @@ def read_detail(name: str) -> dict:
         "sets": data.get("sets", {}),
         "intrinsics": data.get("intrinsics", {}),
         "board": data.get("board"),
+        "set_images": _set_images(name),
     }
 
 
@@ -124,8 +139,12 @@ def save_as(
     intrinsics: dict | None = None,
     board: dict | None = None,
 ) -> Path:
+    from viki.calibration import captures
+
     if not extrinsics:
         raise ValueError("no solved extrinsics to save")
+    if _safe_name(name) == captures.LIVE:
+        raise ValueError(f"{captures.LIVE!r} is reserved")
     PRESETS_DIR.mkdir(parents=True, exist_ok=True)
     dst = preset_path(name)
     dst.write_text(json.dumps({
@@ -135,6 +154,7 @@ def save_as(
         "intrinsics": intrinsics or {},
         "board": board,
     }, indent=2))
+    captures.copy(captures.LIVE, _safe_name(name))  # freeze the session photos
     return dst
 
 
@@ -146,9 +166,12 @@ def activate(name: str, dst: str | None = None) -> Path:
 
 
 def delete(name: str) -> None:
+    from viki.calibration import captures
+
     p = preset_path(name)
     if p.exists():
         p.unlink()
+    captures.wipe(_safe_name(name))
     if current_active() == _safe_name(name):
         _set_active("")
 
@@ -174,6 +197,9 @@ def delete_set(name: str, index: int) -> dict:
     intr = data.get("intrinsics") or {}
     data["extrinsics"] = solve_extrinsics(sets, intr, board)
     preset_path(name).write_text(json.dumps(data, indent=2))
+
+    from viki.calibration import captures
+    captures.delete_set(_safe_name(name), index)
 
     if current_active() == _safe_name(name):
         _write_active_extrinsics(data["extrinsics"])

@@ -81,9 +81,14 @@ export function setRecording(on) {
 
 // Shared card markup used by the Record and Calibration tabs. The tab points
 // the COLOR / DEPTH <img>s at whatever stream it wants (via setStream).
-export function cameraCardHTML(id, type, running) {
+// Pass {depth:false} to omit the DEPTH panel (calibration doesn't need it, and
+// each held MJPEG stream costs a browser connection slot).
+export function cameraCardHTML(id, type, running, opts = {}) {
+  const depthPanel = opts.depth === false ? '' : `
+      <div class="stream-divider"></div>
+      <div class="stream-panel"><img data-role="depth" data-id="${id}"><span class="stream-label">DEPTH</span></div>`;
   return `
-  <div class="cam-card" data-id="${id}">
+  <div class="cam-card${opts.depth === false ? ' no-depth' : ''}" data-id="${id}">
     <div class="card-header">
       <span class="dot ${running ? 'green' : 'grey'}" data-role="dot" data-id="${id}"></span>
       <span class="name">${id}</span>
@@ -93,9 +98,7 @@ export function cameraCardHTML(id, type, running) {
     </div>
     <div class="card-controls">${controlsHTML(id, type)}</div>
     <div class="streams">
-      <div class="stream-panel"><img data-role="color" data-id="${id}"><span class="stream-label">COLOR</span></div>
-      <div class="stream-divider"></div>
-      <div class="stream-panel"><img data-role="depth" data-id="${id}"><span class="stream-label">DEPTH</span></div>
+      <div class="stream-panel"><img data-role="color" data-id="${id}"><span class="stream-label">COLOR</span></div>${depthPanel}
     </div>
   </div>`;
 }

@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from viki.calibration import presets
+from viki.calibration import captures, presets
 
 
 @pytest.fixture(autouse=True)
@@ -13,7 +13,26 @@ def _tmp_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(presets, "PRESETS_DIR", tmp_path / "calibrations")
     monkeypatch.setattr(presets, "EXTRINSICS_FILENAME", str(tmp_path / "extrinsics.json"))
     monkeypatch.setattr(presets, "USER_CONFIG_PATH", str(tmp_path / "user.json"))
+    monkeypatch.setattr(captures, "ROOT", tmp_path / "calibrations")
     (tmp_path / "user.json").write_text("{}")
+
+
+def test_captures_save_list_delete_renumber(tmp_path, monkeypatch):
+    monkeypatch.setattr(captures, "ROOT", tmp_path / "cap")
+    img = np.zeros((8, 8, 3), np.uint8)
+    for i in range(3):
+        captures.save_set("_live", i, {"cam0": img, "cam1": img})
+    assert [r["index"] for r in captures.list_sets("_live")] == [0, 1, 2]
+
+    captures.delete_set("_live", 1)  # -> 0, (was 2 -> 1)
+    rows = captures.list_sets("_live")
+    assert [r["index"] for r in rows] == [0, 1]
+    assert rows[1]["devices"] == ["cam0", "cam1"]
+
+    captures.copy("_live", "rigX")
+    assert [r["index"] for r in captures.list_sets("rigX")] == [0, 1]
+    captures.wipe("rigX")
+    assert captures.list_sets("rigX") == []
 
 
 def _extr(dev):
