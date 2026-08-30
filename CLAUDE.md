@@ -97,6 +97,16 @@ add it to both JSON files, declare its type annotation in `config.py`.
 ## Frontend
 
 `viki/server/static/` — plain HTML/CSS/JS, no build step. `index.html` + one JS module per UI panel
-(`cameras.js`, `calibration.js`, `episodes.js`, `viewer.js` — a hand-rolled canvas 3-D
-orbit view, no WebGL/vendored deps). Served directly
-by FastAPI.
+(`cameras.js`, `calibration.js`, `record.js`, …). Served directly by FastAPI.
+
+Exception: the **Viewer tab** (`viewer.js`) renders a per-frame coloured depth
+point cloud + skeleton with **three.js** (WebGL). three.js is the one vendored
+dep — `static/js/vendor/three.module.js` + `OrbitControls.js`, resolved by an
+importmap in `index.html`. A dense cloud (~10^5 points/frame) is not viable on a
+hand-rolled 2-D canvas. Everything else stays plain, no-build JS.
+
+**Pipeline viz artifact:** `viki cloud <episode>` (`viki/perception/cloud.py`)
+turns `raw/` into `cloud/<i:06d>.bin` (`int32 n` · `float32[n*3]` xyz m ·
+`uint8[n*3]` rgb) + `cloud/meta.json`, served by
+`GET /api/pipeline/episode/{id}/cloud[/{frame}]`. Nothing downstream reads it;
+it is not part of `viki run`.
