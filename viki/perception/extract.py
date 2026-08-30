@@ -45,8 +45,17 @@ def _read_json(p: Path) -> dict:
     return json.loads(p.read_text()) if p.exists() else {}
 
 
-def _depth_K(intr: dict) -> np.ndarray | None:
-    if not intr:
+def _depth_K(entry: dict) -> np.ndarray | None:
+    """Depth camera matrix from one camera's ``raw/intrinsics.json`` entry.
+
+    Handles both layouts: the recorder's nested form
+    ``{"color": {...}, "depth": {...}, "source": ...}`` and the older flat form
+    ``{"fx": ..., "fy": ..., "cx": ..., "cy": ...}``.
+    """
+    if not entry:
+        return None
+    intr = entry.get("depth") or entry.get("color") or entry
+    if not intr or "fx" not in intr:
         return None
     return np.array(
         [[intr["fx"], 0, intr["cx"]], [0, intr["fy"], intr["cy"]], [0, 0, 1]],
