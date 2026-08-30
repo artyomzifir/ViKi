@@ -150,6 +150,15 @@ class RealSenseBackend(CameraBackend):
     def is_running(self) -> bool:
         return self._running
 
+    @property
+    def config(self) -> dict:
+        return {
+            "color_width": int(self._color_res[0]),
+            "color_height": int(self._color_res[1]),
+            "fps": int(self._fps),
+            "depth_mode": None,  # RealSense has no depth-mode enum
+        }
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------

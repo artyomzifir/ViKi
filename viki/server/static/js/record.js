@@ -84,8 +84,15 @@ function syncCard(box, id) {
   if (dot) dot.className = 'dot ' + (on ? 'green' : 'grey');
   const start = box.querySelector(`[data-role="start"][data-id="${id}"]`);
   const stop = box.querySelector(`[data-role="stop"][data-id="${id}"]`);
-  if (start) start.disabled = on;
+  if (start) start.disabled = false;   // allow Start to restart with new settings
   if (stop) stop.disabled = !on;
+  const warn = box.querySelector(`[data-role="warn"][data-id="${id}"]`);
+  if (warn) {
+    const m = cameras.configMismatch(box, id);
+    warn.hidden = !m;
+    if (m) warn.textContent = `⚠ running as ${(state[id].cfg.depth_mode || '')} `
+      + `${state[id].cfg.color_width}×${state[id].cfg.color_height}@${state[id].cfg.fps} — Start to apply`;
+  }
   const color = box.querySelector(`img[data-role="color"][data-id="${id}"]`);
   const depth = box.querySelector(`img[data-role="depth"][data-id="${id}"]`);
   // (re)point the stream only when its on/off state flips
@@ -219,6 +226,12 @@ async function record() {
     fps: +view.querySelector('#rec-fps').value || 15,
   };
   if (!body.dataset) { log('Pick a dataset first', 'error'); return; }
+  const box = view.querySelector('#record-cards');
+  const stale = Object.keys(state).filter(id => state[id].running && cameras.configMismatch(box, id));
+  if (stale.length) {
+    log(`${stale.join(', ')}: card settings not applied — click Start on the card first`, 'error');
+    return;
+  }
   let job_id;
   try { ({ job_id } = await api('POST', '/api/record/start', body)); }
   catch (e) { log('Record failed: ' + e, 'error'); return; }
@@ -273,7 +286,10 @@ function onKeydown(e) {
 
 function onChange(e) {
   if (e.target.id === 'rec-dataset') onDatasetChange();
-  else if (e.target.dataset.role === 'depthmode') cameras.updateFpsForDepthMode(view, e.target.dataset.id);
+  else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
+    if (e.target.dataset.role === 'depthmode') cameras.updateFpsForDepthMode(view, e.target.dataset.id);
+    renderCards();  // refresh the "running as X" mismatch warning
+  }
 }
 
 // ── mount / unmount ──────────────────────────────────────────────────────

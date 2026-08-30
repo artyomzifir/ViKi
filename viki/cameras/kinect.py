@@ -43,10 +43,13 @@ K4A_COLOR_RESOLUTION_720P = 1  # 1280x720
 K4A_COLOR_RESOLUTION_1080P = 2  # 1920x1080
 K4A_COLOR_RESOLUTION_1536P = 4  # 2048x1536
 
-K4A_DEPTH_MODE_NFOV_UNBINNED = 3  # 640x576
-K4A_DEPTH_MODE_NFOV_2X2BINNED = 2  # 320x288
-K4A_DEPTH_MODE_WFOV_UNBINNED = 5  # 1024x1024
-K4A_DEPTH_MODE_WFOV_2X2BINNED = 4  # 512x512
+# k4a_depth_mode_t (k4atypes.h) — OFF=0, then sequential. These were all +1 too
+# high, so e.g. NFOV_UNBINNED (must be 2) was sent as 3 = WFOV_2X2BINNED and the
+# camera silently captured 512x512 instead of 640x576.
+K4A_DEPTH_MODE_NFOV_2X2BINNED = 1  # 320x288
+K4A_DEPTH_MODE_NFOV_UNBINNED = 2  # 640x576
+K4A_DEPTH_MODE_WFOV_2X2BINNED = 3  # 512x512
+K4A_DEPTH_MODE_WFOV_UNBINNED = 4  # 1024x1024
 
 K4A_FRAMES_PER_SECOND_5 = 0
 K4A_FRAMES_PER_SECOND_15 = 1
@@ -619,6 +622,15 @@ class KinectBackend(CameraBackend):
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def config(self) -> dict:
+        return {
+            "color_width": int(self._color_resolution[0]),
+            "color_height": int(self._color_resolution[1]),
+            "fps": int(self._fps),
+            "depth_mode": self._depth_mode,
+        }
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

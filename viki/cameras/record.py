@@ -128,9 +128,14 @@ class SceneRecorder:
             di = frame.depth_intrinsics if frame else None
             # Prefer the live SDK-reported intrinsics; fall back to a stored file.
             file_i = read_device_intrinsics(dev_id)
+            depth_intr = self._intr_dict(di)
+            if depth_intr and frame is not None and frame.has_depth():
+                # Stamp the *actual* frame size, not the nominal-from-mode value.
+                dh, dw = frame.depth.shape[:2]
+                depth_intr["width"], depth_intr["height"] = int(dw), int(dh)
             intr[dev_id] = {
                 "color": self._intr_dict(ci) or self._intr_dict(file_i),
-                "depth": self._intr_dict(di),
+                "depth": depth_intr,
                 "source": "sdk" if ci is not None else ("file" if file_i else "none"),
             }
             e = read_device_extrinsics(dev_id)
@@ -142,6 +147,7 @@ class SceneRecorder:
             backend = self._mgr.get_backend(dev_id)
             cams[dev_id] = {
                 "type": type(backend).__name__.replace("Backend", "").lower() if backend else None,
+                "requested": backend.config if backend else None,
                 "color_shape": list(frame.color.shape) if frame is not None else None,
                 "depth_shape": list(frame.depth.shape) if frame is not None and frame.has_depth() else None,
             }

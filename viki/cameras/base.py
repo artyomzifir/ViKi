@@ -66,6 +66,13 @@ class CameraBackend(ABC):
     def is_running(self) -> bool:
         """True if the stream is active."""
 
+    @property
+    def config(self) -> dict:
+        """The capture settings this backend was started with, so the manager
+        can tell whether a re-``start`` needs a restart. Keys are backend-
+        specific but always JSON-able. Default: empty (config unknown)."""
+        return {}
+
     @abstractmethod
     def project_color_to_depth(
         self, u: float, v: float, z: float

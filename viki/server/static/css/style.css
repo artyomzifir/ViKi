@@ -181,6 +181,7 @@ header h1 {
   padding: 10px 14px; border-bottom: 1px solid var(--border);
 }
 .card-header .name { font-weight: 600; font-size: 12px; }
+.cam-warn { font-size: 10px; color: var(--yellow); flex-basis: 100%; }
 .tag { padding: 2px 7px; border-radius: 3px; font-size: 10px; font-weight: 600; background: var(--border); color: var(--muted); }
 .tag.realsense { background: #1a2a4a; color: #5b9fff; }
 .tag.kinect { background: #1a3a2a; color: #4ade80; }

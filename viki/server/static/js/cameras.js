@@ -42,12 +42,15 @@ export async function startCamera(id, cfg = {}) {
     color_width: cfg.color_width, color_height: cfg.color_height,
     fps: cfg.fps, depth_mode: cfg.depth_mode,
   };
-  log(`Starting ${id}...`);
+  log(`Starting ${id}…`);
   try {
     const res = await api('POST', `/api/cameras/${id}/start`, c);
     if (res.detail) { log(`${id} error: ${res.detail}`, 'error'); return; }
-    log(`${id} started`, 'ok');
-    if (state[id]) { state[id].running = true; state[id].fresh = false; }
+    const msg = { restarted: `${id} restarted with new settings`,
+                  unchanged: `${id} already running with these settings` }[res.status]
+                || `${id} started`;
+    log(msg, 'ok');
+    if (state[id]) { state[id].running = true; state[id].fresh = false; state[id].cfg = null; }
   } catch (e) {
     log(`Failed to start ${id}: ${e}`, 'error');
   }
@@ -95,6 +98,7 @@ export function cameraCardHTML(id, type, running, opts = {}) {
       <span class="tag ${type}">${type}</span>
       <button data-role="start" data-id="${id}" ${running ? 'disabled' : ''}>▶ Start</button>
       <button data-role="stop" data-id="${id}" class="danger" ${running ? '' : 'disabled'}>■ Stop</button>
+      <span class="cam-warn" data-role="warn" data-id="${id}" hidden></span>
     </div>
     <div class="card-controls">${controlsHTML(id, type)}</div>
     <div class="streams">
@@ -152,12 +156,24 @@ export function setStream(imgEl, url) {
 export async function fetchInfo(id) {
   try {
     const info = await api('GET', `/api/cameras/${id}/info`);
-    if (state[id]) state[id].fresh = !!info;
+    if (state[id]) { state[id].fresh = !!info; state[id].cfg = info?.config || null; }
     return info;
   } catch {
     if (state[id]) state[id].fresh = false;
     return null;
   }
+}
+
+// True if the card's selected settings differ from what the camera is actually
+// running with (i.e. Start would restart it). null when not comparable yet.
+export function configMismatch(root, id) {
+  const running = state[id]?.cfg;
+  if (!state[id]?.running || !running) return null;
+  const want = readCardConfig(root, id);
+  const keys = state[id].type === 'kinect'
+    ? ['color_width', 'color_height', 'fps', 'depth_mode'] : ['color_width', 'color_height', 'fps'];
+  const diff = keys.filter(k => String(running[k]) !== String(want[k]));
+  return diff.length ? { running, want, diff } : null;
 }
 
 // ── header status pills + ViKi dot ────────────────────────────────────────
