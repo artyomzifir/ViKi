@@ -2,9 +2,9 @@
 viki.render
 -----------
 All visualisation: depth colourisation + undistortion (:mod:`viki.render.depth`),
-MJPEG encoding (:mod:`viki.render.mjpeg`), and the matplotlib 3-D trajectory /
-robot / skeleton views (:mod:`viki.render.robot_viz`, :mod:`viki.render.smooth_viz`).
-Pure numpy/cv2/matplotlib — no FastAPI, no camera, reusable from scripts.
+MJPEG encoding (:mod:`viki.render.mjpeg`), and the matplotlib 3-D episode
+skeleton view (:mod:`viki.render.skeleton3d`). Pure numpy/cv2/matplotlib — no
+FastAPI, no camera, reusable from scripts.
 """
 
 from viki.render.depth import DepthColorizer, DepthStabilizer, Undistorter  # noqa: F401

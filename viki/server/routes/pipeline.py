@@ -1,10 +1,9 @@
 """
 viki.server.routes.pipeline
 ---------------------------
-Offline stage endpoints. Groups the legacy optimization (raw -> prepared) and
-dataset (prepared -> plan.h5) routers, plus the episode-oriented API the web UI
-uses: list episodes, run a stage as a job, and fetch an episode's 3-D geometry
-for the viewer.
+Offline stage endpoints: the episode-oriented API the web UI uses — list
+episodes, run a stage as a job, and fetch an episode's 3-D geometry for the
+viewer.
 """
 
 from __future__ import annotations
@@ -20,11 +19,8 @@ from viki import config
 from viki.contracts import Episode
 from viki.episode import read_status
 from viki.server import jobs
-from viki.server.routes import dataset, optimization
 
 router = APIRouter()
-router.include_router(optimization.router)
-router.include_router(dataset.router)
 
 _ep = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
