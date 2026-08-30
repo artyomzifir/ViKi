@@ -56,11 +56,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip-compile pyproject.toml -o requirements.txt && \
     pip install -r requirements.txt
 
+# The source tree is never baked into the image: docker-compose.yml bind-mounts
+# ./viki -> /app/viki at runtime and PYTHONPATH=/app makes it importable. We only
+# install an editable link (the stub package dir is enough) so the `viki` console
+# script and package metadata exist; the real modules come from the bind mount.
 RUN mkdir -p viki && touch viki/__init__.py
-RUN pip install --no-deps -e .
-
-# Copy real source (will be overwritten by bind mount at runtime anyway)
-COPY ./viki/ ./viki/
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps -e .
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
@@ -72,5 +73,8 @@ CMD ["/bin/bash"]
 
 # Test target
 FROM base AS test
-RUN --mount=type=cache,target=/root/.cache/pip pip install ".[dev]"
+# "-e" keeps the project a link to the (bind-mounted) tree, not a copy in
+# site-packages; "[dev]" pulls the test extras (pytest). Runtime deps are
+# already satisfied from requirements.txt above, so this resolves from cache.
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e ".[dev]"
 CMD ["/bin/bash"]
