@@ -31,6 +31,10 @@ PLACEHOLDER_SIZE: list[int]
 DEFAULT_SYNCHRONIZED_IMAGES_ONLY: bool
 FRAME_BUFFER_SIZE: int
 RECORD_DEPTH: bool
+CLOUD_STRIDE: int  # keep every Nth depth pixel per axis when building the cloud
+CLOUD_VOXEL_M: float  # voxel-downsample leaf size (metres); 0 disables
+CLOUD_WORKSPACE_BBOX: list[float]  # world AABB [xmin,xmax,ymin,ymax,zmin,zmax]; empty = no crop
+CLOUD_MAX_POINTS_PER_FRAME: int
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
 SKELETON_COORDINATE_FRAME: str
@@ -148,6 +152,10 @@ _DEFAULTS: dict[str, Any] = {
     "DATASETS_DIR": "data/datasets",
     "SKELETON_SAVE_JSON_DEBUG": False,
     "ACTIVE_CALIBRATION": "",
+    "CLOUD_STRIDE": 6,
+    "CLOUD_VOXEL_M": 0.005,
+    "CLOUD_WORKSPACE_BBOX": [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2],
+    "CLOUD_MAX_POINTS_PER_FRAME": 40000,
 }
 
 

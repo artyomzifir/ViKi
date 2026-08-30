@@ -461,6 +461,11 @@ class Episode:
     def replay_h5(self) -> Path:
         return self.root / "replay.h5"
 
+    @property
+    def cloud_dir(self) -> Path:
+        """Per-frame coloured point cloud (``<i:06d>.bin`` + ``meta.json``)."""
+        return self.root / "cloud"
+
 
 # ──────────────────────── artifact schema keys ─────────────────────────
 # The exact array keys each stage writes. Writers and readers assert against
