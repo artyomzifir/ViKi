@@ -1,6 +1,7 @@
 {
   "INTRINSICS_FILENAME": "data/intrinsics_calibration.json",
   "EXTRINSICS_FILENAME": "data/extrinsics_calibration.json",
+  "ACTIVE_CALIBRATION": "",
   "DEFAULT_FPS": 15,
   "DEFAULT_COLOR_WIDTH": 1280,
   "DEFAULT_COLOR_HEIGHT": 720,

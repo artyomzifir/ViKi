@@ -1,47 +1,54 @@
-// Entry point: wire event delegation (data-action = click, data-change = change),
-// then bootstrap the app. Handlers live in feature modules; this file only maps
-// declarative attributes to them and extracts arguments from the element.
-import { api, log, initializeFrontendConfig } from './core.js';
-import * as config from './config.js';
+// Entry point: the tab router + the persistent top-bar wiring. Each tab module
+// exposes mount(viewEl) / unmount(); switching tabs replaces #view entirely.
+import { api, log, mountLog, initializeFrontendConfig } from './core.js';
 import * as cameras from './cameras.js';
 import * as calibration from './calibration.js';
-import * as episodes from './episodes.js';
-import { initViewer } from './viewer.js';
+import * as configModal from './config.js';
+import { makeStub } from './tabs_stub.js';
 
-// data-action -> handler (click). Handlers read any args from the element dataset.
+const TABS = {
+  calibration: { label: 'Calibration', mod: calibration },
+  record: { label: 'Record', mod: makeStub('Record') },
+  extract: { label: 'Extract', mod: makeStub('Extract') },
+  prepare: { label: 'Prepare', mod: makeStub('Prepare') },
+  retarget: { label: 'Retarget', mod: makeStub('Retarget') },
+  replay: { label: 'Replay', mod: makeStub('Replay') },
+  export: { label: 'Export', mod: makeStub('Export') },
+  viewer: { label: 'Viewer', mod: makeStub('Viewer') },
+};
+const DEFAULT_TAB = 'calibration';
+
+let current = null;
+
+function show(name) {
+  if (!TABS[name]) name = DEFAULT_TAB;
+  if (current === name) return;
+  const view = document.getElementById('view');
+  TABS[current]?.mod.unmount?.();
+  view.innerHTML = '';
+  current = name;
+  location.hash = name;
+  document.querySelectorAll('#tabbar [data-tab]').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === name));
+  TABS[name].mod.mount(view);
+}
+
+// ── persistent top-bar actions (delegated) ────────────────────────────────
+
 const CLICK_ACTIONS = {
-  // cameras / toolbar
   scanDevices: () => cameras.scanDevices(),
   startAll: () => cameras.startAll(),
   stopAll: () => cameras.stopAll(),
-  startCamera: el => cameras.startCamera(el.dataset.id),
-  stopCamera: el => cameras.stopCamera(el.dataset.id),
-  // config
-  toggleConfig: () => config.toggleConfig(),
-  toggleConfigHelp: () => config.toggleConfigHelp(),
-  loadConfig: () => config.loadConfig(),
-  resetConfig: () => config.resetConfig(),
-  saveConfig: () => config.saveConfig(),
-  restartServer: () => config.restartServer(),
-  // calibration
-  toggleCalibration: () => calibration.toggleCalibration(),
-  captureSample: () => calibration.captureSample(),
-  extrinsicsCalibration: () => calibration.extrinsicsCalibration(),
-  clearCalibration: () => calibration.clearCalibration(),
-  // episodes
-  toggleEpisodes: () => episodes.togglePanel(),
-  refreshEpisodes: () => episodes.refresh(),
-  recordScene: () => episodes.recordScene(),
-  runStage: el => episodes.runStage(el),
-  runAllStages: () => episodes.runAll(),
-  saveLabels: () => episodes.saveLabels(),
-};
-
-// data-change -> handler (change on inputs/selects).
-const CHANGE_ACTIONS = {
-  updateFpsForDepthMode: el => cameras.updateFpsForDepthMode(el.dataset.id),
-  toggleBoardFields: () => calibration.toggleBoardFields(),
-  syncBoardParameters: () => calibration.syncBoardParameters(),
+  showTab: el => show(el.dataset.tab),
+  toggleLog: () => {
+    const p = document.getElementById('log-popover');
+    if (p) p.hidden = !p.hidden;
+  },
+  toggleConfig: () => configModal.toggle(),
+  cfgSave: () => configModal.save(),
+  cfgReset: () => configModal.reset(),
+  cfgRestart: () => configModal.restart(),
+  cfgClose: () => configModal.close(),
 };
 
 document.addEventListener('click', e => {
@@ -51,56 +58,49 @@ document.addEventListener('click', e => {
   if (fn) fn(el, e);
 });
 
-document.addEventListener('change', e => {
-  const el = e.target.closest('[data-change]');
-  if (!el) return;
-  const fn = CHANGE_ACTIONS[el.dataset.change];
-  if (fn) fn(el, e);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    configModal.close();
+    const p = document.getElementById('log-popover');
+    if (p) p.hidden = true;
+  }
 });
 
+// close popover / modal when clicking their backdrop
+document.getElementById('config-modal')?.addEventListener('click', e => {
+  if (e.target.id === 'config-modal') configModal.close();
+});
+
+// ── boot ─────────────────────────────────────────────────────────────────
+
 async function init() {
+  mountLog();
   try {
     const cfg = await api('GET', '/api/config');
     await initializeFrontendConfig(cfg);
     log('Configuration loaded from server', 'ok');
   } catch (e) {
     log('Failed to load initial config: ' + e, 'error');
-    // Fallback to some minimal defaults if API fails
-    initializeFrontendConfig({
-      DEFAULT_FPS: 15,
-      DEFAULT_COLOR_WIDTH: 1280,
-      DEFAULT_COLOR_HEIGHT: 720,
-      DEFAULT_DEPTH_MODE: 'NFOV_UNBINNED',
-      SKELETON_DEPTH_SAMP_RADIUS: 15,
-      SKELETON_DEPTH_BASE_DIR: 'data/depth_bases/',
-      SKELETON_ENABLE_DEPTH_VALIDATION: true,
-      SKELETON_DEPTH_SUBTRACT_THRESHOLD: 0.01,
-      HAND_TO_DETECT: 'right',
-      CALIB_MODE: 'manual',
-      CALIB_BOARD_TYPE: 'aruco',
-      BONE_LENGTHS: {},
-      BONE_TOLERANCE: 0.2,
-      CALIB_CHESS_BOARD_SIZE: [8, 6],
-      CALIB_CHESS_SQUARE_SIZE: 0.025,
-      CALIB_ARUCO_BOARD_SIZE: [10, 8],
-      CALIB_ARUCO_SQUARE_SIZE: 0.05,
-      CALIB_ARUCO_MARKER_SIZE: 0.035,
-      CALIB_ARUCO_DICT: 4,
-      RECORDING_DURATION: 10.0,
-      RECORDING_FPS: 15,
+    await initializeFrontendConfig({
+      DEFAULT_FPS: 15, DEFAULT_COLOR_WIDTH: 1280, DEFAULT_COLOR_HEIGHT: 720,
+      DEFAULT_DEPTH_MODE: 'NFOV_UNBINNED', HAND_TO_DETECT: 'right',
+      CALIB_BOARD_TYPE: 'aruco', CALIB_CHESS_BOARD_SIZE: [8, 6],
+      CALIB_CHESS_SQUARE_SIZE: 0.025, CALIB_ARUCO_BOARD_SIZE: [8, 10],
+      CALIB_ARUCO_SQUARE_SIZE: 0.05, CALIB_ARUCO_MARKER_SIZE: 0.035,
+      CALIB_ARUCO_DICT: 4, RECORDING_DURATION: 10, RECORDING_FPS: 15,
       REALSENSE_RESOLUTIONS: ['640x480', '1280x720', '1920x1080'],
       REALSENSE_FPS: [15, 30],
       KINECT_RESOLUTIONS: ['1280x720', '1920x1080', '2048x1536'],
       KINECT_FPS: [5, 15, 30],
       KINECT_DEPTH_MODES: ['NFOV_UNBINNED', 'NFOV_2X2BINNED', 'WFOV_UNBINNED', 'WFOV_2X2BINNED'],
-      KINECT_DEPTH_MODE_MAX_FPS: { 'WFOV_UNBINNED': 15 }
+      KINECT_DEPTH_MODE_MAX_FPS: { WFOV_UNBINNED: 15 },
     });
   }
 
-  cameras.scanDevices();
-  calibration.populateArucoDicts();
-  calibration.toggleBoardFields();
-  initViewer();
+  await cameras.scanDevices();
+  cameras.startStatusPoll();
+  show(location.hash?.slice(1) || DEFAULT_TAB);
+  window.addEventListener('hashchange', () => show(location.hash.slice(1)));
 }
 
 init();

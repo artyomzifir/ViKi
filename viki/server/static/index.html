@@ -4,215 +4,66 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ViKi — Capture</title>
+  <title>ViKi</title>
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 
 <body>
 
   <header>
-    <div class="dot" id="server-dot"></div>
+    <div class="dot grey" id="server-dot"></div>
     <h1>ViKi</h1>
-    <span class="subtitle">capture server</span>
+
+    <div class="cam-cluster">
+      <button data-action="scanDevices">⟳ Scan</button>
+      <button data-action="startAll">▶ Start all</button>
+      <button class="danger" data-action="stopAll">■ Stop all</button>
+      <div id="camera-pills" class="camera-pills"></div>
+    </div>
+
+    <div class="header-right">
+      <button class="log-toggle" data-action="toggleLog" title="Show log">▸</button>
+      <div class="log-line" id="log-line"></div>
+      <button class="gear" data-action="toggleConfig" title="Configuration">⚙</button>
+    </div>
   </header>
 
-  <div class="toolbar">
-    <button class="primary" data-action="scanDevices">⟳ Scan devices</button>
-    <button data-action="startAll">▶ Start all</button>
-    <button class="danger" data-action="stopAll">■ Stop all</button>
-    <div class="sep"></div>
-    <button id="btn-calib-toggle" data-action="toggleCalibration">⚙ Calibration</button>
-    <button id="btn-episodes-toggle" data-action="toggleEpisodes">🎬 Episodes</button>
-    <button style="margin-left: auto" data-action="toggleConfig">⚙ Config</button>
+  <nav id="tabbar">
+    <button data-action="showTab" data-tab="calibration">Calibration</button>
+    <button data-action="showTab" data-tab="record">Record</button>
+    <button data-action="showTab" data-tab="extract">Extract</button>
+    <button data-action="showTab" data-tab="prepare">Prepare</button>
+    <button data-action="showTab" data-tab="retarget">Retarget</button>
+    <button data-action="showTab" data-tab="replay">Replay</button>
+    <button data-action="showTab" data-tab="export">Export</button>
+    <button data-action="showTab" data-tab="viewer">Viewer</button>
+  </nav>
+
+  <main id="view"></main>
+
+  <div id="log-popover" hidden>
+    <div class="log-popover-head">
+      <span>Log</span>
+      <button data-action="toggleLog">✕</button>
+    </div>
+    <div class="log-list"></div>
   </div>
 
-  <div class="config-panel" id="config-panel">
-    <div class="config-header">
-      <span class="title">Server Configuration</span>
-      <button class="danger" data-action="toggleConfig">✕ Close</button>
-    </div>
-    <div class="config-body">
-      <textarea id="config-editor" spellcheck="false"></textarea>
-      <div class="config-help" id="config-help">
-        <div><b>INTRINSICS_FILENAME</b>: Path to intrinsics calibration</div>
-        <div><b>EXTRINSICS_FILENAME</b>: Path to extrinsics calibration</div>
-        <div><b>DEFAULT_FPS</b>: Default frames per second for camera start</div>
-        <div><b>DEFAULT_COLOR_WIDTH</b>: Default color image width</div>
-        <div><b>DEFAULT_COLOR_HEIGHT</b>: Default color image height</div>
-        <div><b>DEFAULT_DEPTH_MODE</b>: Default depth mode (NFOV_UNBINNED recommended)</div>
-        <div><b>JPEG_QUALITY</b>: Quality of JPEG encoding (0-100)</div>
-        <div><b>STREAM_IDLE_SLEEP</b>: Sleep duration for MJPEG stream generators (default value works well)</div>
-        <div><b>PLACEHOLDER_SIZE</b>: Dimensions of the placeholder image when camera not started</div>
-        <div><b>DEFAULT_SYNCHRONIZED_IMAGES_ONLY</b>: Only use synchronized frames (not tested with true)</div>
-        <div><b>FRAME_BUFFER_SIZE</b>: Number of frames kept in ring buffer per camera</div>
-        <div><b>RECORD_DEPTH</b>: Save depth frames as .npy files alongside the rgb-d videos (heavy on the disk)</div>
-        <div><b>DEPTH_PROJECTION_DEBUG</b>: Enable debug plotting for depth projection (slows down live skeleton
-          estimation)</div>
-        <div><b>SKELETON_DEPTH_SAMP_RADIUS</b>: Radius for depth sampling during fusion (default worked well in testing)
-        </div>
-        <div><b>SKELETON_DEPTH_BASE_DIR</b>: Directory for background depth frames</div>
-        <div><b>SKELETON_ENABLE_DEPTH_VALIDATION</b>: Toggle depth-based outlier rejection (disabling WILL lead to great
-          instability)</div>
-        <div><b>SKELETON_DEPTH_SUBTRACT_THRESHOLD</b>: Min depth diff for object detection (untested outside default
-          value)</div>
-        <div><b>HAND_TO_DETECT</b>: Hand side to estimate ('left' or 'right')</div>
-        <div><b>CALIB_MODE</b>: Calibration mode ('manual' or 'auto') (auto is deprecated)</div>
-        <div><b>CALIB_BOARD_TYPE</b>: Board type ('chess' or 'aruco')</div>
-        <div><b>BONE_LENGTHS</b>: Manual bone length overrides {(Parent, Child): length_m} (default uses a moving mean,
-          use this if you're sure you know what you're doing)</div>
-        <div><b>BONE_TOLERANCE</b>: Tolerance for kinematic constraints (0.0-1.0) (default works well with mean for
-          lenghts)</div>
-        <div><b>CALIB_CHESS_BOARD_SIZE</b>: Default chessboard dimensions [cols, rows]</div>
-        <div><b>CALIB_CHESS_SQUARE_SIZE</b>: Default chessboard square size in meters</div>
-        <div><b>CALIB_ARUCO_BOARD_SIZE</b>: Default aruco board dimensions [cols, rows]</div>
-        <div><b>CALIB_ARUCO_SQUARE_SIZE</b>: Default aruco square size in meters</div>
-        <div><b>CALIB_ARUCO_MARKER_SIZE</b>: Default aruco marker size in meters</div>
-        <div><b>CALIB_ARUCO_DICT</b>: OpenCV Aruco dictionary ID (our main board has 40 markers total, each 5x5, so
-          DICT_5X5_50 is good)<br>=============================================<br></div>
-        <div>Load: pulls the user configuration from backend</div>
-        <div>Reset to Defaults: loads the default parameters for the system</div>
-        <div>Save: save the current configuratiuon to the server</div>
-        <div>Restart Server: restarts docker to apply all the configuration changes</div>
-
+  <div id="config-modal" hidden>
+    <div class="cfg-dialog">
+      <div class="cfg-head">
+        <span class="title">Server Configuration</span>
+        <button data-action="cfgClose">✕</button>
       </div>
-      <div class="config-footer">
-        <span class="hint">Restart is required for changes to take effect</span>
-        <button data-action="toggleConfigHelp">❔ Help</button>
-        <button data-action="loadConfig">Load</button>
-        <button data-action="resetConfig">Reset to Defaults</button>
-        <button class="primary" data-action="saveConfig">Save</button>
-        <button class="danger" data-action="restartServer">Restart Server</button>
-      </div>
-    </div>
-
-  </div>
-  </div>
-
-  <div class="calib-panel" id="calib-panel">
-
-    <div class="calib-header">
-      <span class="title">Camera Calibration</span>
-      <button class="danger" data-action="toggleCalibration">✕ Close</button>
-    </div>
-    <div class="calib-body">
-      <div id="calib-streams" class="calib-streams">
-        <!-- streams -->
-      </div>
-      <div class="calib-controls">
-        <div class="board-params">
-          <!-- Board type selector -->
-          <div class="field-row">
-            <label for="board-type">Board type</label>
-            <select id="board-type" data-change="toggleBoardFields">
-              <option value="chess">Chessboard</option>
-              <option value="aruco">ChArUco</option>
-            </select>
-          </div>
-
-          <!-- Common fields (always visible) -->
-          <div class="field-row">
-            <label>Board width</label>
-            <input type="number" id="board-width" value="8" min="1" data-change="syncBoardParameters" />
-          </div>
-          <div class="field-row">
-            <label>Board height</label>
-            <input type="number" id="board-height" value="6" min="1" data-change="syncBoardParameters" />
-          </div>
-          <div class="field-row">
-            <label>Square size (m)</label>
-            <input type="number" id="square-size" value="0.05" step="0.001" min="0.01"
-              data-change="syncBoardParameters" />
-          </div>
-
-          <!-- Aruco‑specific fields (hidden by default) -->
-          <div id="aruco-fields" style="display: none;">
-            <div class="field-row">
-              <label>Marker size (m)</label>
-              <input type="number" id="marker-size" value="0.035" step="0.001" min="0.01"
-                data-change="syncBoardParameters" />
-            </div>
-            <div class="field-row">
-              <label>Dictionary</label>
-              <select id="aruco-dict" data-change="syncBoardParameters"></select>
-            </div>
-          </div>
-        </div>
-        <button id="btn-capture-sample" class="primary" data-action="captureSample">Capture Sample</button>
-        <div style="height: 1px; background: var(--border); margin: 4px 0;"></div>
-        <button class="primary" data-action="extrinsicsCalibration">Calibrate Extrinsics</button>
-        <div style="height: 1px; background: var(--border); margin: 4px 0;"></div>
-        <button class="danger" data-action="clearCalibration">Clear Samples</button>
-        <div
-          style="font-size: 11px; color: var(--muted); margin-top: 12px; white-space: pre-line; text-align: center; line-height: 1.4;">
-          Extrinsic calibration requires 1 sample per camera</div>
-
+      <div class="cfg-body"></div>
+      <div class="cfg-banner" hidden>Restart required to apply changes.</div>
+      <div class="cfg-foot">
+        <button data-action="cfgReset">Reset to defaults</button>
+        <button class="primary" data-action="cfgSave">Save</button>
+        <button class="danger" data-action="cfgRestart">Restart server</button>
       </div>
     </div>
   </div>
-
-  <div class="skeleton-panel" id="episodes-panel">
-    <div class="skeleton-header">
-      <span class="title">Episodes</span>
-      <button class="danger" data-action="toggleEpisodes">✕ Close</button>
-    </div>
-    <div class="episodes-body">
-      <div class="episodes-left">
-        <div class="rec-bar">
-          <input id="rec-task" placeholder="task (e.g. pick the cube)" />
-          <input id="rec-seconds" type="number" value="10" min="1" style="width:64px" />
-          <button class="primary" data-action="recordScene">● Record</button>
-          <button data-action="refreshEpisodes">⟳</button>
-        </div>
-        <div id="episode-list" class="episode-list"></div>
-      </div>
-      <div class="episodes-right" id="episode-detail" style="display:none;">
-        <div class="ed-head">Episode <b id="ed-id"></b></div>
-        <div class="ed-stages">
-          <button data-action="runStage" data-stage="extract">Extract</button>
-          <button data-action="runStage" data-stage="prepare">Prepare</button>
-          <button data-action="runStage" data-stage="retarget">Retarget</button>
-          <button data-action="runStage" data-stage="replay">Replay</button>
-          <button class="primary" data-action="runAllStages">Run all</button>
-        </div>
-        <div class="ed-labels">
-          <label>Task <input id="lbl-task" /></label>
-          <label>Hand
-            <select id="lbl-hand"><option>right</option><option>left</option></select>
-          </label>
-          <label>Outcome
-            <select id="lbl-outcome">
-              <option>unrated</option><option>good</option><option>bad</option>
-            </select>
-          </label>
-          <button class="primary" data-action="saveLabels">Save labels</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="skeleton-panel" id="viewer-panel">
-    <div class="skeleton-header">
-      <span class="title">3-D viewer</span>
-      <span class="hint" id="viewer-frame-lbl"></span>
-    </div>
-    <div class="viewer-body">
-      <canvas id="viewer-canvas"></canvas>
-      <div class="viewer-bar">
-        <button id="viewer-play">▶</button>
-        <input type="range" id="viewer-frame" min="0" max="0" value="0" style="flex:1" />
-        <label class="hint"><input type="checkbox" id="viewer-raw" /> raw points</label>
-      </div>
-    </div>
-  </div>
-
-  <div class="grid" id="grid">
-    <div class="empty-state">
-      <h2>No cameras detected</h2>
-      <p>Click "Scan devices" to discover connected cameras</p>
-    </div>
-  </div>
-
-  <div id="log"></div>
 
   <script type="module" src="/static/js/main.js"></script>
 </body>

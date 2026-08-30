@@ -42,6 +42,11 @@ async def lifespan(app: FastAPI):
     """Build the two long-lived objects; stop cameras on shutdown."""
     app.state.manager = CameraManager()
     app.state.calibrator = CalibrationManager(app.state.manager)
+    from viki.calibration import presets as _presets
+
+    applied = _presets.apply_active_on_startup()
+    if applied:
+        logging.getLogger(__name__).info("active calibration preset: %s", applied)
     app.state.calibrator.load_all_extrinsics()
     yield
     app.state.manager.stop_all()

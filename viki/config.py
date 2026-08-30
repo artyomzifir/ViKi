@@ -20,6 +20,7 @@ USER_CONFIG_PATH = "data/user_configuration.json"
 # Duck variables which LSP can catch and use
 INTRINSICS_FILENAME: str
 EXTRINSICS_FILENAME: str
+ACTIVE_CALIBRATION: str  # name of the active preset under data/calibrations/, or ""
 DEFAULT_FPS: int
 DEFAULT_COLOR_WIDTH: int
 DEFAULT_COLOR_HEIGHT: int
@@ -146,6 +147,7 @@ _DEFAULTS: dict[str, Any] = {
     "EPISODES_DIR": "data/episodes",
     "DATASETS_DIR": "data/datasets",
     "SKELETON_SAVE_JSON_DEBUG": False,
+    "ACTIVE_CALIBRATION": "",
 }
 
 

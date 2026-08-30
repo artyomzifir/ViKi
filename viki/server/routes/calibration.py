@@ -539,3 +539,53 @@ def marked_stream(
         media_type=_MJPEG_MEDIA,
         headers=_STREAM_HEADERS,
     )
+
+
+# ── extrinsics presets ──────────────────────────────────────────────────────
+# Named calibration sets under data/calibrations/. One is "active" (its name in
+# ACTIVE_CALIBRATION); activating copies it onto EXTRINSICS_FILENAME.
+
+from pydantic import BaseModel  # noqa: E402
+from viki.calibration import presets as _presets  # noqa: E402
+
+
+class _PresetName(BaseModel):
+    name: str
+
+
+@router.get("/presets")
+async def list_presets():
+    """List saved calibration presets: name, mtime, cameras, active flag."""
+    return _presets.list_presets()
+
+
+@router.post("/save-as")
+async def save_preset(body: _PresetName):
+    """Copy the current solved extrinsics into a named preset."""
+    try:
+        path = _presets.save_as(body.name)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "success", "name": path.stem}
+
+
+@router.post("/activate")
+async def activate_preset(
+    body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)
+):
+    """Make a preset active: copy onto EXTRINSICS_FILENAME + reload extrinsics."""
+    try:
+        _presets.activate(body.name)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    cal.load_all_extrinsics()
+    return {"status": "success", "name": body.name}
+
+
+@router.delete("/presets/{name}")
+async def delete_preset(name: str):
+    try:
+        _presets.delete(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "deleted", "name": name}
