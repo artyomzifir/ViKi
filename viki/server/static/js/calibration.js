@@ -1,6 +1,5 @@
 // Camera calibration: board params, per-device streams, capture, extrinsics.
 import { api, log, state, FRONTEND_CONFIG } from './core.js';
-import { setCameraExtrinsics, setCalibBoard, setCalibCameras, captureBaseDepth } from './skeleton.js';
 
 const ARUCO_DICTS = [
   'DICT_4X4_50', 'DICT_4X4_100', 'DICT_4X4_250', 'DICT_4X4_1000',
@@ -217,26 +216,14 @@ async function intrinsicsCalibration() {
 export async function extrinsicsCalibration() {
   log(`Extrinsics calibration started...`);
   try {
-    const res = await api('POST', '/api/calibration/extrinsics');
-    const extrinsics = {};
-    res.forEach(extr => {
-      extrinsics[extr.device_id] = { rvec: extr.rvec, tvec: extr.tvec };
-    });
-    setCameraExtrinsics(extrinsics);
-
-    // Fetch viz data for the 3D skeleton panel (board + camera frames)
-    try {
-      const viz = await api('GET', '/api/calibration/viz');
-      setCalibBoard(viz.board);
-      setCalibCameras(viz.cameras);
-    } catch { /* non-critical */ }
+    await api('POST', '/api/calibration/extrinsics');
 
     // Snapshot the now-empty scene as static background depth for every camera
     // so skeleton estimation can subtract it. Run after extrinsics so the
     // board (if still in view) is out of the way.
     await Promise.all(Object.keys(state).map(async (id) => {
       try {
-        await captureBaseDepth(id);
+        await api('POST', `/api/skeleton/capture_base/${id}`);
       } catch (e) {
         log(`Base depth capture for ${id} failed: ${e}`, 'error');
       }
