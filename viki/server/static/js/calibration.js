@@ -1,7 +1,8 @@
 // Calibration tab: extrinsics only (camera -> world via a ChArUco anchor).
-// Intrinsics are trusted from the camera SDK, so there is no intrinsics UI.
-// Left: one card per camera with the board-overlay stream. Right: preset picker,
-// board params, session / capture / solve controls.
+// Three zones: camera cards (same widget as Record) | captured-sets list |
+// preset picker + board params. Captures are rig-wide only ("Capture all"), so
+// set N is index-aligned across cameras and can be deleted as a unit. A saved
+// preset carries its sets, so it can be reopened, pruned, and re-solved.
 import { api, log, state, FRONTEND_CONFIG } from './core.js';
 import * as cameras from './cameras.js';
 
@@ -16,6 +17,8 @@ const ARUCO_DICTS = [
 let view = null;
 let countPoll = null;
 let onCamerasChanged = null;
+let builtIds = '';
+let openedPreset = null;   // name of the preset whose sets are shown, or null (live)
 
 // ── template ──────────────────────────────────────────────────────────────
 
@@ -26,11 +29,21 @@ function template() {
   return `
   <div class="calib-tab">
     <div class="calib-cards" id="calib-cards"></div>
+
+    <div class="calib-sets">
+      <div class="calib-sets-head">
+        <span id="calib-sets-title">Captured sets</span>
+        <button id="calib-sets-live" hidden>← live</button>
+      </div>
+      <div id="calib-sets-list"></div>
+    </div>
+
     <aside class="calib-side">
       <section class="calib-sec">
         <div class="calib-sec-title">Active preset</div>
         <select id="calib-preset"></select>
         <div class="hint" id="calib-preset-info">—</div>
+        <button id="calib-preset-open" hidden>Open sets</button>
         <div class="inline-add">
           <input type="text" id="calib-preset-name" placeholder="save current as…">
           <button id="calib-preset-save">Save</button>
@@ -60,39 +73,18 @@ function template() {
 
       <section class="calib-sec">
         <button id="calib-start-session" class="primary">Start session</button>
-        <button id="calib-capture-all">Capture all</button>
+        <button id="calib-capture-all" class="primary">Capture all</button>
         <button id="calib-solve" class="primary">Calibrate extrinsics</button>
         <button id="calib-clear" class="danger">Clear samples</button>
-        <div class="hint">Extrinsic calibration needs ≥1 sample per camera, with the
-          board visible to every camera at once.</div>
+        <div class="hint">Capture the whole rig at once, with the board visible to
+          every camera. Delete bad sets on the left before calibrating.</div>
       </section>
     </aside>
   </div>`;
 }
 
-function cardHTML(id, type, running) {
-  return `
-  <div class="calib-card" data-id="${id}">
-    <div class="card-header">
-      <span class="dot ${running ? 'green' : 'grey'}"></span>
-      <span class="name">${id}</span>
-      <span class="tag ${type}">${type}</span>
-      <span class="calib-count" data-id="${id}">no session</span>
-      <button data-role="start" data-id="${id}" ${running ? 'disabled' : ''}>▶ Start</button>
-      <button data-role="stop" data-id="${id}" class="danger" ${running ? '' : 'disabled'}>■ Stop</button>
-      <button data-role="capture" data-id="${id}" class="primary" ${running ? '' : 'disabled'}>Capture</button>
-    </div>
-    <div class="calib-stream">
-      <img data-id="${id}" alt="${id}">
-      <span class="stream-label">${id}</span>
-    </div>
-  </div>`;
-}
+// ── camera cards (shared widget, in-place sync) ──────────────────────────
 
-let builtIds = '';  // csv of device ids currently rendered as cards
-
-// Rebuild the card list only when the set of devices changes; otherwise update
-// the mutable bits in place so the stream <img> and counts don't flicker.
 function renderCards() {
   const box = view?.querySelector('#calib-cards');
   if (!box) return;
@@ -101,22 +93,24 @@ function renderCards() {
   if (key !== builtIds) {
     builtIds = key;
     box.innerHTML = ids.length
-      ? ids.map(id => cardHTML(id, state[id].type, state[id].running)).join('')
+      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running)).join('')
       : `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
   }
   for (const id of ids) {
     const on = !!state[id]?.running;
-    const card = box.querySelector(`.calib-card[data-id="${id}"]`);
+    const card = box.querySelector(`.cam-card[data-id="${id}"]`);
     if (!card) continue;
-    card.querySelector('.dot').className = 'dot ' + (on ? 'green' : 'grey');
+    card.querySelector('[data-role="dot"]').className = 'dot ' + (on ? 'green' : 'grey');
     card.querySelector('[data-role="start"]').disabled = on;
     card.querySelector('[data-role="stop"]').disabled = !on;
-    card.querySelector('[data-role="capture"]').disabled = !on;
-    const img = card.querySelector('img');
+    const col = card.querySelector('img[data-role="color"]');
+    const dep = card.querySelector('img[data-role="depth"]');
     const want = on ? '1' : '';
-    if (img && img.dataset.on !== want) {
-      img.src = on ? `/api/calibration/${id}/stream?t=${Date.now()}` : '';
-      img.dataset.on = want;
+    if (col && col.dataset.on !== want) {
+      cameras.setStream(col, on ? `/api/calibration/${id}/stream` : null); col.dataset.on = want;
+    }
+    if (dep && dep.dataset.on !== want) {
+      cameras.setStream(dep, on ? `/api/cameras/${id}/depth` : null); dep.dataset.on = want;
     }
   }
 }
@@ -141,16 +135,12 @@ function boardParams() {
 }
 
 function syncBoardFieldVisibility() {
-  view.querySelector('#aruco-fields').style.display =
-    boardType() === 'aruco' ? '' : 'none';
+  view.querySelector('#aruco-fields').style.display = boardType() === 'aruco' ? '' : 'none';
 }
 
 async function syncParams() {
-  try {
-    await api('POST', `/api/calibration/sync?board_type=${boardType()}`, boardParams());
-  } catch (e) {
-    log('Board param sync failed: ' + e, 'error');
-  }
+  try { await api('POST', `/api/calibration/sync?board_type=${boardType()}`, boardParams()); }
+  catch (e) { log('Board param sync failed: ' + e, 'error'); }
 }
 
 // ── session / capture / solve ─────────────────────────────────────────────
@@ -169,37 +159,19 @@ async function startSession() {
     try { await api('POST', ep, params); }
     catch (e) { log(`Session start failed for ${id}: ${e}`, 'error'); }
   }
-  updateCounts();
+  refreshSets();
 }
 
 async function captureAll() {
-  try { await api('POST', '/api/calibration/capture'); log('Captured a sample on all cameras', 'ok'); }
+  try { await api('POST', '/api/calibration/capture'); log('Captured a set', 'ok'); }
   catch (e) { log('Capture failed: ' + e, 'error'); }
-  updateCounts();
-}
-
-async function captureOne(id) {
-  try { await api('POST', `/api/calibration/capture/${id}`); log(`Captured a sample on ${id}`, 'ok'); }
-  catch (e) { log(`Capture failed for ${id}: ${e}`, 'error'); }
-  updateCounts();
-}
-
-async function updateCounts() {
-  await Promise.all(Object.keys(state).map(async id => {
-    const el = view?.querySelector(`.calib-count[data-id="${id}"]`);
-    if (!el) return;
-    try {
-      const s = await api('GET', `/api/calibration/status/${id}?t=${Date.now()}`);
-      el.textContent = s.started ? `${s.samples_count} samples` : 'no session';
-    } catch { el.textContent = 'error'; }
-  }));
+  refreshSets();
 }
 
 async function solve() {
   log('Calibrating extrinsics…');
   try {
     await api('POST', '/api/calibration/extrinsics');
-    // Snapshot the (now board-free) scene as background depth for scene subtraction.
     await Promise.all(Object.keys(state).map(async id => {
       try { await api('POST', `/api/skeleton/capture_base/${id}`); }
       catch (e) { log(`Base depth capture failed for ${id}: ${e}`, 'error'); }
@@ -212,24 +184,73 @@ async function solve() {
   }
 }
 
-async function savePreset() {
-  const input = view.querySelector('#calib-preset-name');
-  const name = (input.value || '').trim();
-  if (!name) { input.focus(); return; }
-  try {
-    await api('POST', '/api/calibration/save-as', { name });
-    log(`Saved preset "${name}"`, 'ok');
-    input.value = '';
-    refreshPresets();
-  } catch (e) { log('Save preset failed: ' + e, 'error'); }
-}
-
 async function clearSamples() {
   for (const id of Object.keys(state)) {
     try { await api('POST', `/api/calibration/clear/${id}`); } catch { /* ignore */ }
   }
   log('Cleared calibration samples');
-  updateCounts();
+  refreshSets();
+}
+
+// ── captured-sets list (live or from an opened preset) ───────────────────
+
+function setRow(row, canDelete) {
+  const cams = Object.entries(row.cameras)
+    .map(([d, c]) => `<span class="set-cam ${c.detected ? 'ok' : ''}">${d}${c.detected ? ` ${c.corners}` : ' ✗'}</span>`)
+    .join('');
+  const del = canDelete
+    ? `<button data-role="set-del" data-i="${row.index}" class="danger">del</button>` : '';
+  return `<div class="set-row"><span class="set-n">#${row.index}</span>${cams}${del}</div>`;
+}
+
+async function refreshSets() {
+  const box = view?.querySelector('#calib-sets-list');
+  if (!box) return;
+  if (openedPreset) { renderPresetSets(); return; }
+  view.querySelector('#calib-sets-title').textContent = 'Captured sets';
+  view.querySelector('#calib-sets-live').hidden = true;
+  try {
+    const rows = await api('GET', '/api/calibration/samples');
+    box.innerHTML = rows.length ? rows.map(r => setRow(r, true)).join('')
+      : '<div class="hint" style="padding:8px">no sets yet — Start session, then Capture all</div>';
+  } catch (e) { box.innerHTML = `<div class="hint" style="padding:8px">${e}</div>`; }
+}
+
+let presetDetail = null;
+
+function renderPresetSets() {
+  const box = view.querySelector('#calib-sets-list');
+  view.querySelector('#calib-sets-title').textContent = `Preset "${openedPreset}"`;
+  view.querySelector('#calib-sets-live').hidden = false;
+  const sets = presetDetail?.sets || {};
+  const devs = Object.keys(sets);
+  const n = Math.max(0, ...devs.map(d => sets[d].length));
+  if (!n) { box.innerHTML = '<div class="hint" style="padding:8px">this preset has no stored sets</div>'; return; }
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const camObj = {};
+    for (const d of devs) {
+      const s = sets[d][i];
+      camObj[d] = { detected: !!s, corners: s ? s.corners.length : 0 };
+    }
+    rows.push(setRow({ index: i, cameras: camObj }, true));
+  }
+  box.innerHTML = rows.join('');
+}
+
+async function deleteLiveSet(i) {
+  try { await api('DELETE', `/api/calibration/samples/${i}`); log(`Deleted set #${i}`); }
+  catch (e) { log('Delete failed: ' + e, 'error'); }
+  refreshSets();
+}
+
+async function deletePresetSet(i) {
+  try {
+    presetDetail = await api('DELETE', `/api/calibration/presets/${encodeURIComponent(openedPreset)}/sets/${i}`);
+    log(`Preset "${openedPreset}": dropped set #${i}, re-solved`, 'ok');
+    renderPresetSets();
+    refreshPresets();
+  } catch (e) { log('Delete + re-solve failed: ' + e, 'error'); }
 }
 
 // ── presets ───────────────────────────────────────────────────────────────
@@ -243,9 +264,11 @@ async function refreshPresets() {
     sel.innerHTML = '<option value="">(current, unsaved)</option>' +
       presets.map(p => `<option value="${p.name}" ${p.active ? 'selected' : ''}>${p.name}</option>`).join('');
     const active = presets.find(p => p.active);
+    const sel_p = presets.find(p => p.name === sel.value);
     info.textContent = active
-      ? `${active.cameras.length} cameras · solved ${new Date(active.solved_at * 1000).toLocaleString()}`
+      ? `active: ${active.cameras.length} cam · ${active.sets} sets · ${new Date(active.solved_at * 1000).toLocaleString()}`
       : `${presets.length} saved preset(s)`;
+    view.querySelector('#calib-preset-open').hidden = !(sel_p && sel_p.sets > 0);
   } catch (e) {
     info.textContent = 'presets unavailable';
     log('Failed to load calibration presets: ' + e, 'error');
@@ -254,13 +277,33 @@ async function refreshPresets() {
 
 async function activatePreset(name) {
   if (!name) return;
-  try {
-    await api('POST', '/api/calibration/activate', { name });
-    log(`Activated calibration preset "${name}"`, 'ok');
-  } catch (e) {
-    log(`Failed to activate "${name}": ${e}`, 'error');
-  }
+  try { await api('POST', '/api/calibration/activate', { name }); log(`Activated preset "${name}"`, 'ok'); }
+  catch (e) { log(`Failed to activate "${name}": ${e}`, 'error'); }
   refreshPresets();
+}
+
+async function openPreset() {
+  const name = view.querySelector('#calib-preset').value;
+  if (!name) return;
+  try {
+    presetDetail = await api('GET', `/api/calibration/presets/${encodeURIComponent(name)}`);
+    openedPreset = name;
+    renderPresetSets();
+  } catch (e) { log('Open preset failed: ' + e, 'error'); }
+}
+
+function backToLive() { openedPreset = null; presetDetail = null; refreshSets(); }
+
+async function savePreset() {
+  const input = view.querySelector('#calib-preset-name');
+  const name = (input.value || '').trim();
+  if (!name) { input.focus(); return; }
+  try {
+    await api('POST', '/api/calibration/save-as', { name });
+    log(`Saved preset "${name}"`, 'ok');
+    input.value = '';
+    refreshPresets();
+  } catch (e) { log('Save preset failed: ' + e, 'error'); }
 }
 
 // ── mount / unmount ───────────────────────────────────────────────────────
@@ -268,10 +311,12 @@ async function activatePreset(name) {
 export function mount(container) {
   view = container;
   builtIds = '';
+  openedPreset = null;
   view.innerHTML = template();
   syncBoardFieldVisibility();
   renderCards();
   refreshPresets();
+  refreshSets();
 
   view.addEventListener('click', onClick);
   view.addEventListener('change', onChange);
@@ -280,16 +325,14 @@ export function mount(container) {
   });
   onCamerasChanged = () => renderCards();
   document.addEventListener('cameras:changed', onCamerasChanged);
-
-  updateCounts();
-  countPoll = setInterval(updateCounts, 1000);
+  countPoll = setInterval(() => { if (!openedPreset) refreshSets(); }, 1500);
 }
 
 export function unmount() {
   if (countPoll) { clearInterval(countPoll); countPoll = null; }
   if (onCamerasChanged) document.removeEventListener('cameras:changed', onCamerasChanged);
   onCamerasChanged = null;
-  view?.querySelectorAll('.calib-stream img').forEach(img => { img.src = ''; });
+  view?.querySelectorAll('.streams img').forEach(img => { img.src = ''; });
   api('POST', '/api/calibration/reset').catch(() => { });
   view = null;
 }
@@ -301,14 +344,18 @@ function onClick(e) {
   if (!btn) return;
   const id = btn.dataset.id;
   switch (btn.id || btn.dataset.role) {
-    case 'start': cameras.startCamera(id); break;
+    case 'start': cameras.startCamera(id, cameras.readCardConfig(view, id)); break;
     case 'stop': cameras.stopCamera(id); break;
-    case 'capture': captureOne(id); break;
     case 'calib-start-session': startSession(); break;
     case 'calib-capture-all': captureAll(); break;
     case 'calib-solve': solve(); break;
     case 'calib-clear': clearSamples(); break;
     case 'calib-preset-save': savePreset(); break;
+    case 'calib-preset-open': openPreset(); break;
+    case 'calib-sets-live': backToLive(); break;
+    case 'set-del':
+      openedPreset ? deletePresetSet(+btn.dataset.i) : deleteLiveSet(+btn.dataset.i);
+      break;
   }
 }
 
@@ -317,5 +364,6 @@ function onChange(e) {
   if (el.id === 'board-type') { syncBoardFieldVisibility(); syncParams(); }
   else if (['board-width', 'board-height', 'square-size', 'marker-size'].includes(el.id)
     || el.id === 'aruco-dict') { syncParams(); }
-  else if (el.id === 'calib-preset') { activatePreset(el.value); }
+  else if (el.id === 'calib-preset') { activatePreset(el.value); refreshPresets(); }
+  else if (el.dataset.role === 'depthmode') cameras.updateFpsForDepthMode(view, el.dataset.id);
 }

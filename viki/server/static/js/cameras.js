@@ -79,6 +79,27 @@ export function setRecording(on) {
 
 // ── per-tab camera card helpers ───────────────────────────────────────────
 
+// Shared card markup used by the Record and Calibration tabs. The tab points
+// the COLOR / DEPTH <img>s at whatever stream it wants (via setStream).
+export function cameraCardHTML(id, type, running) {
+  return `
+  <div class="cam-card" data-id="${id}">
+    <div class="card-header">
+      <span class="dot ${running ? 'green' : 'grey'}" data-role="dot" data-id="${id}"></span>
+      <span class="name">${id}</span>
+      <span class="tag ${type}">${type}</span>
+      <button data-role="start" data-id="${id}" ${running ? 'disabled' : ''}>▶ Start</button>
+      <button data-role="stop" data-id="${id}" class="danger" ${running ? '' : 'disabled'}>■ Stop</button>
+    </div>
+    <div class="card-controls">${controlsHTML(id, type)}</div>
+    <div class="streams">
+      <div class="stream-panel"><img data-role="color" data-id="${id}"><span class="stream-label">COLOR</span></div>
+      <div class="stream-divider"></div>
+      <div class="stream-panel"><img data-role="depth" data-id="${id}"><span class="stream-label">DEPTH</span></div>
+    </div>
+  </div>`;
+}
+
 export function controlsHTML(id, type) {
   const cfg = CAMERA_CONFIG[type] || CAMERA_CONFIG.realsense;
   const resOpts = (cfg.resolutions || []).map(r =>
@@ -97,7 +118,7 @@ export function controlsHTML(id, type) {
 
 export function readCardConfig(root, id) {
   const q = role => root.querySelector(`[data-role="${role}"][data-id="${id}"]`);
-  const resVal = q('res')?.value || '640x480';
+  const resVal = q('res')?.value || '1280x720';
   const [w, h] = resVal.split('x').map(Number);
   return {
     color_width: w, color_height: h,

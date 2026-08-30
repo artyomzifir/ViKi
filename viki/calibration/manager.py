@@ -498,6 +498,55 @@ class CalibrationManager:
             return 0
         return worker.samples_count
 
+    # ── capture-sets (one ``capture_all`` == one set, index-aligned) ──────────
+
+    def list_sample_sets(self) -> list[dict]:
+        """One row per capture set: which cameras detected the board in it."""
+        devs = list(self._workers)
+        n = max((self._workers[d].samples_count for d in devs), default=0)
+        rows = []
+        for i in range(n):
+            cams = {}
+            for d in devs:
+                s = self._workers[d].samples
+                cams[d] = {
+                    "detected": i < len(s),
+                    "corners": (len(s[i].corners) if i < len(s) and s[i].corners is not None else 0),
+                }
+            rows.append({"index": i, "cameras": cams})
+        return rows
+
+    def delete_sample_set(self, index: int) -> None:
+        """Drop capture set ``index`` from every worker."""
+        for worker in self._workers.values():
+            worker.pop_sample(index)
+
+    def sets_payload(self) -> dict[str, list[dict]]:
+        """Serialize every worker's samples for storing in a preset."""
+        from viki.calibration.samples import sample_to_dict
+
+        return {
+            dev: [sample_to_dict(s) for s in worker.samples]
+            for dev, worker in self._workers.items()
+        }
+
+    def board_cfg(self) -> dict | None:
+        """The active board parameters as a plain dict, or None."""
+        from viki.calibration.samples import board_params_to_dict
+
+        bp = self.get_board_params()
+        return board_params_to_dict(bp) if bp is not None else None
+
+    def color_intrinsics_payload(self) -> dict[str, dict]:
+        """SDK-reported colour intrinsics for every active worker's camera."""
+        out: dict[str, dict] = {}
+        for dev in self._workers:
+            frame = self._mgr.latest_frame(dev)
+            ci = frame.color_intrinsics if frame else None
+            if ci is not None:
+                out[dev] = {"fx": ci.fx, "fy": ci.fy, "cx": ci.cx, "cy": ci.cy}
+        return out
+
     def get_board_params(self):
         """Return board parameters from the first active worker, or None."""
         for w in self._workers.values():

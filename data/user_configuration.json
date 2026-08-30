@@ -1,7 +1,7 @@
 {
   "INTRINSICS_FILENAME": "data/intrinsics_calibration.json",
   "EXTRINSICS_FILENAME": "data/extrinsics_calibration.json",
-  "DEFAULT_FPS": 15,
+  "DEFAULT_FPS": 30,
   "DEFAULT_COLOR_WIDTH": 1280,
   "DEFAULT_COLOR_HEIGHT": 720,
   "DEFAULT_DEPTH_MODE": "NFOV_UNBINNED",
@@ -48,7 +48,6 @@
     30
   ],
   "KINECT_RESOLUTIONS": [
-    "640x480",
     "1280x720",
     "1920x1080",
     "2048x1536"
@@ -126,5 +125,6 @@
   "GRIPPER": "binary",
   "EXPORT_FPS": 15,
   "EPISODES_DIR": "data/episodes",
-  "DATASETS_DIR": "data/datasets"
+  "DATASETS_DIR": "data/datasets",
+  "ACTIVE_CALIBRATION": ""
 }

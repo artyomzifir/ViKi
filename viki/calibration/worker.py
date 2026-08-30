@@ -172,6 +172,15 @@ class _CalibrationWorker(ABC):
         with self._lock:
             self._samples = []
 
+    def pop_sample(self, index: int) -> bool:
+        """Drop the sample at ``index`` (a capture-set position). Returns True if
+        a sample was removed."""
+        with self._lock:
+            if 0 <= index < len(self._samples):
+                self._samples.pop(index)
+                return True
+            return False
+
     def capture(self) -> None:
         """
         Fetch the latest frame from the camera and attempt to add a sample.

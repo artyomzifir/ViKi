@@ -545,26 +545,69 @@ def marked_stream(
 # Named calibration sets under data/calibrations/. One is "active" (its name in
 # ACTIVE_CALIBRATION); activating copies it onto EXTRINSICS_FILENAME.
 
+import json as _json  # noqa: E402
+
 from pydantic import BaseModel  # noqa: E402
+
 from viki.calibration import presets as _presets  # noqa: E402
+from viki.config import EXTRINSICS_FILENAME as _EXTR_FILE  # noqa: E402
 
 
 class _PresetName(BaseModel):
     name: str
 
 
+# ── live capture sets ───────────────────────────────────────────────────────
+
+
+@router.get("/samples")
+async def list_sample_sets(cal: CalibrationManager = Depends(get_calibrator)):
+    """One row per capture set: which cameras saw the board in it."""
+    return cal.list_sample_sets()
+
+
+@router.delete("/samples/{index}")
+async def delete_sample_set(
+    index: int, cal: CalibrationManager = Depends(get_calibrator)
+):
+    cal.delete_sample_set(index)
+    return {"status": "deleted", "index": index}
+
+
+# ── presets ─────────────────────────────────────────────────────────────────
+
+
 @router.get("/presets")
 async def list_presets():
-    """List saved calibration presets: name, mtime, cameras, active flag."""
+    """name, mtime, cameras, #sets, active flag."""
     return _presets.list_presets()
 
 
-@router.post("/save-as")
-async def save_preset(body: _PresetName):
-    """Copy the current solved extrinsics into a named preset."""
+@router.get("/presets/{name}")
+async def get_preset(name: str):
     try:
-        path = _presets.save_as(body.name)
-    except (ValueError, FileNotFoundError) as exc:
+        return _presets.read_detail(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/save-as")
+async def save_preset(body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)):
+    """Bundle the current solve + its capture sets + SDK intrinsics + board
+    params into a named preset so it can be reopened and re-solved later."""
+    try:
+        extr = _json.loads(open(_EXTR_FILE).read())
+    except (OSError, ValueError):
+        raise HTTPException(400, "no current extrinsics — run the solve first")
+    try:
+        path = _presets.save_as(
+            body.name,
+            extrinsics=extr,
+            sets=cal.sets_payload(),
+            intrinsics=cal.color_intrinsics_payload(),
+            board=cal.board_cfg(),
+        )
+    except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"status": "success", "name": path.stem}
 
@@ -573,7 +616,6 @@ async def save_preset(body: _PresetName):
 async def activate_preset(
     body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)
 ):
-    """Make a preset active: copy onto EXTRINSICS_FILENAME + reload extrinsics."""
     try:
         _presets.activate(body.name)
     except (ValueError, FileNotFoundError) as exc:
@@ -589,3 +631,20 @@ async def delete_preset(name: str):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"status": "deleted", "name": name}
+
+
+@router.delete("/presets/{name}/sets/{index}")
+async def delete_preset_set(
+    name: str, index: int, cal: CalibrationManager = Depends(get_calibrator)
+):
+    """Drop a capture set from a saved preset, re-solve, re-save. If the preset
+    is active, the new extrinsics are pushed live too."""
+    try:
+        detail = _presets.delete_set(name, index)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if _presets.current_active() == name:
+        cal.load_all_extrinsics()
+    return detail

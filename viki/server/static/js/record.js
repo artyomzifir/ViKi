@@ -59,24 +59,7 @@ function template() {
   </div>`;
 }
 
-function cardHTML(id, type, running) {
-  return `
-  <div class="cam-card" data-id="${id}">
-    <div class="card-header">
-      <span class="dot ${running ? 'green' : 'grey'}" data-role="dot" data-id="${id}"></span>
-      <span class="name">${id}</span>
-      <span class="tag ${type}">${type}</span>
-      <button data-role="start" data-id="${id}" ${running ? 'disabled' : ''}>▶ Start</button>
-      <button data-role="stop" data-id="${id}" class="danger" ${running ? '' : 'disabled'}>■ Stop</button>
-    </div>
-    <div class="card-controls">${cameras.controlsHTML(id, type)}</div>
-    <div class="streams">
-      <div class="stream-panel"><img data-role="color" data-id="${id}"><span class="stream-label">COLOR</span></div>
-      <div class="stream-divider"></div>
-      <div class="stream-panel"><img data-role="depth" data-id="${id}"><span class="stream-label">DEPTH</span></div>
-    </div>
-  </div>`;
-}
+const cardHTML = cameras.cameraCardHTML;
 
 // Full rebuild only when the set of devices changes; otherwise sync in place so
 // the res / fps / depth selects the user set are not blown away.
