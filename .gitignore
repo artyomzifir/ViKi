@@ -239,6 +239,8 @@ models/
 
 
 AGENTS.md
+CLAUDE.md
+.claude/*
 
 assets/
 node_modules/
