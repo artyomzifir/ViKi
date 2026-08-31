@@ -41,9 +41,8 @@ function template() {
       <section class="calib-sec">
         <div class="calib-sec-title">Label</div>
         <div class="cfg-row"><label>Task</label><input type="text" id="rec-task" placeholder="pick the cube"></div>
-        <div class="cfg-row"><label>Hand</label>
-          <select id="rec-hand"><option>right</option><option>left</option></select></div>
         <div class="cfg-row"><label>Demonstrator</label><input type="text" id="rec-demo"></div>
+        <div class="hint">hand is chosen per-run in the Extract tab</div>
       </section>
 
       <section class="calib-sec">
@@ -252,7 +251,6 @@ async function record() {
   const body = {
     dataset: currentDataset(),
     task: view.querySelector('#rec-task').value,
-    hand: view.querySelector('#rec-hand').value,
     demonstrator: view.querySelector('#rec-demo').value,
     seconds: +view.querySelector('#rec-seconds').value || 10,
     fps: +view.querySelector('#rec-fps').value || 15,
