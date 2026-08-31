@@ -45,7 +45,7 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
         ep = rec.record(req.seconds, fps=req.fps)
         return {"episode": str(ep.root), "dataset": req.dataset}
 
-    return {"job_id": jobs.submit("record", _job)}
+    return {"job_id": jobs.submit("record", _job, queued=False)}
 
 
 @router.get("/jobs/{job_id}")
