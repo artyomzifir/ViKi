@@ -292,6 +292,10 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .viewer-hud dt { color: var(--muted); }
 .viewer-hud dd { color: var(--text); word-break: break-all; }
 .viewer-help { font-size: 10px; color: var(--muted); margin-top: auto; }
+.viewer-field input[type="number"] { width: 100%; }
+.viewer-layers { display: flex; flex-direction: column; gap: 3px; }
+.viewer-layer { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text); }
+.viewer-timeline button { padding: 3px 7px; font-size: 11px; }
 .viewer-timeline {
   grid-column: 1 / -1;
   background: var(--surface);

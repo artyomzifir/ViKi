@@ -185,6 +185,19 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
     ep = _episode(ep_id)
     out: dict = {"id": ep.id, "cameras": {}, "n_frames": 0}
 
+    meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
+    preset_name = meta.get("calibration_preset")
+    if preset_name:
+        try:
+            from viki.calibration import presets as _presets
+
+            board = _presets.read_detail(preset_name).get("board")
+            if board:
+                out["board"] = board
+        except Exception:  # noqa: BLE001
+            pass
+    out["workspace_bbox"] = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
+
     extr_path = ep.raw_dir / "extrinsics.json"
     if extr_path.exists():
         from viki.render.robot_viz_shared import camera_gaze_dir, camera_world_pos
