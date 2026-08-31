@@ -8,7 +8,7 @@ let view = null;
 let onCamerasChanged = null;
 let recording = false;
 let builtIds = '';               // csv of device ids currently rendered as cards
-let renamingPath = null;         // episode row in inline-rename mode
+let editingPath = null;          // episode row in inline metadata-edit mode
 let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 
 // ── template ──────────────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ function onDatasetChange() {
   view.querySelector('#rec-ds-label').textContent = ds || '—';
   view.querySelector('#rec-ds-add').hidden = ds !== '';   // show only for "＋ new dataset…"
   if (ds === '') view.querySelector('#rec-ds-name').focus();
-  renamingPath = confirmDeletePath = null;
+  editingPath = confirmDeletePath = null;
   loadEpisodes();
   updateHint();
 }
@@ -172,35 +172,53 @@ async function loadEpisodes() {
     : '<div class="hint" style="padding:10px">no episodes yet</div>';
 }
 
+function esc(s) {
+  return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
 function rowHTML(ep) {
   const chips = STAGES.map(s =>
     `<span class="badge ${ep.has?.[s] ? 'ok' : ''}">${s[0].toUpperCase()}</span>`).join('');
-  const id = renamingPath === ep.path
-    ? `<input class="ep-id-edit" data-role="ep-name" value="${ep.id}">
-       <button data-role="ep-rename-ok">save</button>
-       <button data-role="ep-rename-cancel">cancel</button>`
-    : `<span class="ep-id">${ep.id}</span>`;
+
+  if (editingPath === ep.path) {
+    const hand = (ep.hand || 'right').toLowerCase();
+    return `<div class="episode-row editing" data-path="${ep.path}">
+      <span class="ep-id" title="capture id (not editable)">${ep.id}</span>
+      <input class="ep-edit-name" data-role="ep-name" placeholder="name / task"
+             value="${esc(ep.task)}">
+      <input class="ep-edit-demo" data-role="ep-demo" placeholder="demonstrator"
+             value="${esc(ep.demonstrator)}">
+      <select class="ep-edit-hand" data-role="ep-hand">
+        <option value="right"${hand === 'right' ? ' selected' : ''}>right</option>
+        <option value="left"${hand === 'left' ? ' selected' : ''}>left</option>
+      </select>
+      <button data-role="ep-edit-save">save</button>
+      <button data-role="ep-edit-cancel">cancel</button>
+    </div>`;
+  }
+
   const actions = confirmDeletePath === ep.path
     ? `<span class="hint">delete?</span>
        <button data-role="ep-delete-yes" class="danger">yes</button>
        <button data-role="ep-delete-no">no</button>`
-    : `<button data-role="ep-rename">rename</button>
+    : `<button data-role="ep-edit">edit</button>
        <button data-role="ep-delete" class="danger">del</button>`;
+  const meta = [ep.demonstrator, ep.hand].filter(Boolean).join(' · ');
   return `<div class="episode-row" data-path="${ep.path}">
-    ${id}
-    <span class="ep-task">${ep.task || '<i>unlabelled</i>'}</span>
+    <span class="ep-id" title="capture id">${ep.id}</span>
+    <span class="ep-task">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}${
+      meta ? ` <span class="ep-meta">${esc(meta)}</span>` : ''}</span>
     <span class="ep-badges">${chips}</span>
     ${actions}
   </div>`;
 }
 
-async function doRename(path, newId) {
-  if (!newId || newId === path.split('/').pop()) { renamingPath = null; loadEpisodes(); return; }
+async function doEditMeta(path, fields) {
   try {
-    await api('PATCH', '/api/episodes/rename', { path, new_id: newId });
-    log('Episode renamed', 'ok');
-  } catch (e) { log('Rename failed: ' + e, 'error'); }
-  renamingPath = null;
+    await api('PATCH', '/api/episodes/meta', { path, ...fields });
+    log('Episode updated', 'ok');
+  } catch (e) { log('Update failed: ' + e, 'error'); }
+  editingPath = null;
   loadEpisodes();
 }
 
@@ -266,11 +284,15 @@ function onClick(e) {
     case 'rec-ds-create': createDataset(); break;
     case 'rec-eps-refresh': loadEpisodes(); break;
     case 'rec-go': record(); break;
-    case 'ep-rename': renamingPath = path; confirmDeletePath = null; loadEpisodes(); break;
-    case 'ep-rename-cancel': renamingPath = null; loadEpisodes(); break;
-    case 'ep-rename-ok':
-      doRename(path, row.querySelector('[data-role="ep-name"]').value.trim()); break;
-    case 'ep-delete': confirmDeletePath = path; renamingPath = null; loadEpisodes(); break;
+    case 'ep-edit': editingPath = path; confirmDeletePath = null; loadEpisodes(); break;
+    case 'ep-edit-cancel': editingPath = null; loadEpisodes(); break;
+    case 'ep-edit-save':
+      doEditMeta(path, {
+        task: row.querySelector('[data-role="ep-name"]').value.trim(),
+        demonstrator: row.querySelector('[data-role="ep-demo"]').value.trim(),
+        hand: row.querySelector('[data-role="ep-hand"]').value,
+      }); break;
+    case 'ep-delete': confirmDeletePath = path; editingPath = null; loadEpisodes(); break;
     case 'ep-delete-no': confirmDeletePath = null; loadEpisodes(); break;
     case 'ep-delete-yes': doDelete(path); break;
   }
@@ -278,9 +300,13 @@ function onClick(e) {
 
 function onKeydown(e) {
   if (e.key === 'Enter' && e.target.id === 'rec-ds-name') createDataset();
-  else if (e.key === 'Enter' && e.target.dataset.role === 'ep-name') {
+  else if (e.key === 'Enter' && ['ep-name', 'ep-demo'].includes(e.target.dataset.role)) {
     const row = e.target.closest('.episode-row');
-    doRename(row.dataset.path, e.target.value.trim());
+    doEditMeta(row.dataset.path, {
+      task: row.querySelector('[data-role="ep-name"]').value.trim(),
+      demonstrator: row.querySelector('[data-role="ep-demo"]').value.trim(),
+      hand: row.querySelector('[data-role="ep-hand"]').value,
+    });
   }
 }
 

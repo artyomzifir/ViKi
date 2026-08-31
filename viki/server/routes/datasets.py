@@ -44,6 +44,13 @@ class _EpMove(BaseModel):
     dataset: str
 
 
+class _EpMeta(BaseModel):
+    path: str
+    task: str | None = None
+    demonstrator: str | None = None
+    hand: str | None = None
+
+
 def _run(fn, *args):
     try:
         result = fn(*args)
@@ -98,6 +105,14 @@ async def delete_episode(body: _EpPath):
 @ep_router.patch("/rename")
 async def rename_episode(body: _EpRename):
     return _run(datasets.rename_episode, body.path, body.new_id)
+
+
+@ep_router.patch("/meta")
+async def update_episode_meta(body: _EpMeta):
+    return _run(
+        datasets.update_episode_meta,
+        body.path, body.task, body.demonstrator, body.hand,
+    )
 
 
 @ep_router.patch("/move")

@@ -247,7 +247,12 @@ header h1 {
 .episode-row button { padding: 3px 8px; font-size: 11px; }
 .badge { width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 3px; font-size: 9px; background: var(--border); color: var(--muted); }
 .badge.ok { background: var(--accent); color: #fff; }
-.episode-row .ep-id-edit { width: 150px; padding: 3px 6px; font-size: 11px; }
+.episode-row .ep-meta { color: var(--muted); font-size: 11px; }
+.episode-row.editing { flex-wrap: wrap; }
+.episode-row.editing .ep-id { width: 100%; }
+.episode-row .ep-edit-name { flex: 1 1 120px; padding: 3px 6px; font-size: 11px; }
+.episode-row .ep-edit-demo { flex: 1 1 90px; padding: 3px 6px; font-size: 11px; }
+.episode-row .ep-edit-hand { padding: 3px 6px; font-size: 11px; }
 
 /* inline "create / save as" input + button row (datasets, calib presets) */
 .inline-add { display: flex; gap: 6px; }

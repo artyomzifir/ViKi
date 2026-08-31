@@ -62,3 +62,25 @@ def test_rename_episode(roots):
     ep = new_episode(ds / "d")
     dst = datasets.rename_episode(ep.root, "take-01")
     assert dst.name == "take-01" and dst.is_dir()
+
+
+def test_update_episode_meta(roots):
+    import json
+
+    ds, _ = roots
+    datasets.create_dataset("d")
+    ep = new_episode(ds / "d", {"task": "pick", "hand": "right", "demonstrator": "a"})
+
+    datasets.update_episode_meta(ep.root, task="pour the cup", hand="left")
+
+    # directory id is untouched; meta.json carries the edits
+    assert (ds / "d" / ep.id).is_dir()
+    summary = datasets.list_episodes("d")[0]
+    assert summary["task"] == "pour the cup"
+    assert summary["hand"] == "left"
+    assert summary["demonstrator"] == "a"  # left alone when not passed
+    meta = json.loads((ep.root / "meta.json").read_text())
+    assert meta["hand"] == "left" and meta["task"] == "pour the cup"
+
+    with pytest.raises(ValueError):
+        datasets.update_episode_meta(ep.root, hand="middle")
