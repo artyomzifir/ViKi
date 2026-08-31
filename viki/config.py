@@ -35,6 +35,8 @@ CLOUD_STRIDE: int  # keep every Nth depth pixel per axis when building the cloud
 CLOUD_VOXEL_M: float  # voxel-downsample leaf size (metres); 0 disables
 CLOUD_WORKSPACE_BBOX: list[float]  # world AABB [xmin,xmax,ymin,ymax,zmin,zmax]; empty = no crop
 CLOUD_MAX_POINTS_PER_FRAME: int
+PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
+PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
 SKELETON_COORDINATE_FRAME: str
@@ -156,6 +158,8 @@ _DEFAULTS: dict[str, Any] = {
     "CLOUD_VOXEL_M": 0.005,
     "CLOUD_WORKSPACE_BBOX": [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2],
     "CLOUD_MAX_POINTS_PER_FRAME": 40000,
+    "PERCEPTION_TRACK_LM": [0, 1, 3, 4, 5, 8, 9, 13, 17],
+    "PERCEPTION_INTERP_MAX_GAP": 0,
 }
 
 

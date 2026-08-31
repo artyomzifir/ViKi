@@ -101,7 +101,9 @@ class PreparationPipeline:
     def __init__(self) -> None:
         self.recs_dir = Path(config.SKELETON_RECS_DIR)
         self.smoothed_dir = Path(config.SKELETON_SMOOTHED_DIR)
-        
+        # >0 leaves interior gaps longer than this many frames unfilled
+        self.interp_max_gap = int(getattr(config, "PERCEPTION_INTERP_MAX_GAP", 0))
+
         self.recs_dir.mkdir(parents=True, exist_ok=True)
         self.smoothed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -213,7 +215,7 @@ class PreparationPipeline:
         # 1. Interpolation part: per camera, independently fill NaN gaps (linear).
         raw_filled: dict[str, np.ndarray] = {}
         for dev in trajectories:
-            raw_filled[dev] = interpolate_nans(trajectories[dev])
+            raw_filled[dev] = interpolate_nans(trajectories[dev], max_gap=self.interp_max_gap)
 
         # 2. Fusion: confidence-weighted average across cameras onto a common
         #    grid (paper §3.5, eq. 2 — weights from rec.npz["confidence"]).
@@ -368,7 +370,9 @@ def estimate_fps(timestamps_us: np.ndarray) -> float:
     return float(1.0 / np.median(dt))
 
 
-def prepare_episode(ep, window_length: int = 7, polyorder: int = 2) -> str:
+def prepare_episode(
+    ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None
+) -> str:
     """
     Episode-aware wrapper around :meth:`PreparationPipeline.smooth_recording`:
     ``ep.rec_npz`` -> ``ep.cln_npz``. Returns the cln.npz path.
@@ -387,6 +391,8 @@ def prepare_episode(ep, window_length: int = 7, polyorder: int = 2) -> str:
         pp = PreparationPipeline()
         pp.recs_dir = stage_p
         pp.smoothed_dir = stage_p
+        if interp_max_gap is not None:
+            pp.interp_max_gap = int(interp_max_gap)
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
 

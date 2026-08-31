@@ -144,14 +144,14 @@ def _pack(xyz: np.ndarray, rgb: np.ndarray) -> bytes:
     )
 
 
-def build_cloud(ep) -> str:
+def build_cloud(ep, stride: int | None = None) -> str:
     """Write ``cloud/<i>.bin`` + ``cloud/meta.json`` for the episode. Returns the dir."""
     raw = ep.raw_dir
     intr_all = _read_json(raw / "intrinsics.json")
     extr_all = _read_json(raw / "extrinsics.json")
     meta_all = _read_json(ep.meta_path)
 
-    stride = max(1, int(getattr(config, "CLOUD_STRIDE", 6)))
+    stride = max(1, int(stride if stride is not None else getattr(config, "CLOUD_STRIDE", 6)))
     voxel = float(getattr(config, "CLOUD_VOXEL_M", 0.005))
     bbox = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
     cap = int(getattr(config, "CLOUD_MAX_POINTS_PER_FRAME", 40000))
