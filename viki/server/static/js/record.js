@@ -17,11 +17,18 @@ let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 function template() {
   const cfg = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
   const rec = { duration: cfg.duration ?? 10, fps: cfg.fps ?? 15, ...sessionGet('record', {}) };
-  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2] }), ...sessionGet('cloud', {}) };
+  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [] }), ...sessionGet('cloud', {}) };
   return `
   <div class="record-tab">
-    <div class="record-main">
-      <div class="record-cards" id="record-cards"></div>
+    <aside class="record-leftcol">
+      <section class="calib-sec">
+        <div class="calib-sec-title">Dataset</div>
+        <select id="rec-dataset"></select>
+        <div class="inline-add" id="rec-ds-add" hidden>
+          <input type="text" id="rec-ds-name" placeholder="new dataset name">
+          <button id="rec-ds-create">Create</button>
+        </div>
+      </section>
       <div class="record-episodes">
         <div class="record-episodes-head">
           <span>Episodes in <b id="rec-ds-label">—</b></span>
@@ -29,28 +36,21 @@ function template() {
         </div>
         <div id="rec-episode-list" class="episode-list"></div>
       </div>
-    </div>
+    </aside>
+
+    <div class="record-cards" id="record-cards"></div>
 
     <aside class="record-side">
       <section class="calib-sec">
-        <div class="calib-sec-title">1 · Dataset</div>
-        <select id="rec-dataset"></select>
-        <div class="inline-add" id="rec-ds-add" hidden>
-          <input type="text" id="rec-ds-name" placeholder="new dataset name">
-          <button id="rec-ds-create">Create</button>
-        </div>
-      </section>
-
-      <section class="calib-sec">
-        <div class="calib-sec-title">2 · Label <span class="hint">(optional)</span></div>
+        <div class="calib-sec-title">Label <span class="hint">(optional)</span></div>
         <div class="cfg-row"><label>Task</label><input type="text" id="rec-task" placeholder="pick the cube"></div>
         <div class="cfg-row"><label>Demonstrator</label><input type="text" id="rec-demo"></div>
         <div class="hint">hand is chosen per-run in the Extract tab</div>
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">3 · Capture</div>
-        <div class="cfg-row"><label>Seconds</label>
+        <div class="calib-sec-title">Capture</div>
+        <div class="cfg-row"><label>Max seconds</label>
           <input type="number" id="rec-seconds" min="1" value="${rec.duration}"></div>
         <div class="cfg-row"><label>FPS</label>
           <input type="number" id="rec-fps" min="1" value="${rec.fps}"></div>
@@ -59,16 +59,18 @@ function template() {
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">4 · Point cloud <span class="hint">(built per episode after capture)</span></div>
-        <div class="cfg-row"><label>Depth px stride</label>
+        <div class="calib-sec-title">Point cloud <span class="hint">(built after capture)</span></div>
+        <div class="rec-field"><label>Depth pixel stride</label>
           <input type="number" id="rec-cl-stride" min="1" step="1" value="${cl.stride}"></div>
-        <div class="cfg-row"><label>Voxel leaf (m)</label>
+        <div class="rec-field"><label>Voxel leaf (m) <span class="hint">— 0 keeps every point</span></label>
           <input type="number" id="rec-cl-voxel" min="0" step="0.001" value="${cl.voxel}"></div>
-        <div class="cfg-row"><label>Max points / frame</label>
+        <div class="rec-field"><label>Max points / frame <span class="hint">— 0 = no cap</span></label>
           <input type="number" id="rec-cl-max" min="0" step="1000" value="${cl.maxPoints}"></div>
-        <div class="cfg-row"><label>Workspace AABB</label>
-          <input type="text" id="rec-cl-bbox" placeholder="x0,x1,y0,y1,z0,z1" value="${(cl.bbox || []).join(', ')}"></div>
-        <div class="hint">x0,x1,y0,y1,z0,z1 in metres — empty = no crop</div>
+        <div class="rec-field"><label>Workspace crop AABB <span class="hint">— empty = full scene (1:1)</span></label>
+          <input type="text" id="rec-cl-bbox" placeholder="x0,x1,y0,y1,z0,z1 (m)" value="${(cl.bbox || []).join(', ')}"></div>
+        <label class="cfg-row"><span>Subtract calibrated background</span>
+          <input type="checkbox" id="rec-cl-bg" ${cl.bgSubtract !== false ? 'checked' : ''}></label>
+        <div class="hint">drops points matching the empty-scene depth from the preset — lighter cloud, cleaner segmentation. Needs "Grab background depth" on the calibration preset.</div>
         <div id="rec-cloud-progress" class="perc-queue"></div>
       </section>
     </aside>
@@ -126,8 +128,12 @@ function updateHint() {
   if (!hint) return;
   const anyRunning = Object.values(state).some(s => s.running);
   const ds = view.querySelector('#rec-dataset')?.value;
-  view.querySelector('#rec-go').disabled = recording || !anyRunning || !ds;
-  hint.textContent = recording ? 'Recording…'
+  const go = view.querySelector('#rec-go');
+  // while recording the button becomes Stop (always clickable)
+  go.disabled = recording ? false : (!anyRunning || !ds);
+  go.textContent = recording ? '■ Stop' : '● Record';
+  go.classList.toggle('danger', recording);
+  hint.textContent = recording ? 'Recording… (stops at max seconds or Stop)'
     : !anyRunning ? 'Start ≥1 camera first.'
       : !ds ? 'Pick or create a dataset.'
         : 'Ready.';
@@ -198,6 +204,12 @@ function esc(s) {
   return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
+// "2026-08-31_13-06-43" → "2026-08-31 · 13:06:43"; anything else passes through.
+function prettyId(id) {
+  const m = /^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})$/.exec(String(id || ''));
+  return m ? `${m[1]} · ${m[2]}:${m[3]}:${m[4]}` : id;
+}
+
 function rowHTML(ep) {
   const chips = STAGES.map(([key, label, tip]) =>
     `<span class="badge ${ep.has?.[key] ? 'ok' : ''}" title="${tip}${ep.has?.[key] ? '' : ' (not done)'}">${label}</span>`
@@ -206,7 +218,7 @@ function rowHTML(ep) {
   if (editingPath === ep.path) {
     const hand = (ep.hand || 'right').toLowerCase();
     return `<div class="episode-row editing" data-path="${ep.path}">
-      <span class="ep-id" title="capture id (not editable)">${ep.id}</span>
+      <span class="ep-when" title="${ep.id}">${prettyId(ep.id)}</span>
       <input class="ep-edit-name" data-role="ep-name" placeholder="name / task"
              value="${esc(ep.task)}">
       <input class="ep-edit-demo" data-role="ep-demo" placeholder="demonstrator"
@@ -215,8 +227,10 @@ function rowHTML(ep) {
         <option value="right"${hand === 'right' ? ' selected' : ''}>right</option>
         <option value="left"${hand === 'left' ? ' selected' : ''}>left</option>
       </select>
-      <button data-role="ep-edit-save">save</button>
-      <button data-role="ep-edit-cancel">cancel</button>
+      <div class="ep-edit-acts">
+        <button data-role="ep-edit-save">save</button>
+        <button data-role="ep-edit-cancel">cancel</button>
+      </div>
     </div>`;
   }
 
@@ -233,13 +247,15 @@ function rowHTML(ep) {
     ep.fps ? `${ep.fps} fps` : '',
   ].filter(Boolean).join(' · ');
   return `<div class="episode-row" data-path="${ep.path}">
-    <span class="ep-id" title="capture id">${ep.id}</span>
-    <span class="ep-task">
+    <div class="ep-row-top">
+      <span class="ep-when" title="${ep.id}">${prettyId(ep.id)}</span>
+      <span class="ep-badges">${chips}</span>
+    </div>
+    <div class="ep-row-bot">
       <span class="ep-name">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}</span>
       ${meta ? `<span class="ep-meta">${esc(meta)}</span>` : ''}
-    </span>
-    <span class="ep-badges">${chips}</span>
-    ${actions}
+      <span class="ep-acts">${actions}</span>
+    </div>
   </div>`;
 }
 
@@ -263,6 +279,11 @@ async function doDelete(path) {
 }
 
 // ── record ───────────────────────────────────────────────────────────────
+
+async function stopRecording() {
+  try { await api('POST', '/api/record/stop'); log('Stopping recording…'); }
+  catch (e) { log('Stop failed: ' + e, 'error'); }
+}
 
 async function record() {
   const body = {
@@ -318,7 +339,7 @@ function onClick(e) {
     case 'stop': cameras.stopCamera(id); break;
     case 'rec-ds-create': createDataset(); break;
     case 'rec-eps-refresh': loadEpisodes(); break;
-    case 'rec-go': record(); break;
+    case 'rec-go': recording ? stopRecording() : record(); break;
     case 'ep-edit': editingPath = path; confirmDeletePath = null; loadEpisodes(); break;
     case 'ep-edit-cancel': editingPath = null; loadEpisodes(); break;
     case 'ep-edit-save':
@@ -348,7 +369,7 @@ function onKeydown(e) {
 function onChange(e) {
   if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
   else if (e.target.id === 'rec-seconds' || e.target.id === 'rec-fps') persistRec();
-  else if (['rec-cl-stride', 'rec-cl-voxel', 'rec-cl-max', 'rec-cl-bbox'].includes(e.target.id)) persistCloud();
+  else if (['rec-cl-stride', 'rec-cl-voxel', 'rec-cl-max', 'rec-cl-bbox', 'rec-cl-bg'].includes(e.target.id)) persistCloud();
   else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
     cameras.noteCardChange(view, e.target.dataset.id);  // fold into session config
     renderCards();  // refresh the "running as X" mismatch warning
@@ -373,6 +394,7 @@ function cloudOpts() {
     voxel: Math.max(0, +view.querySelector('#rec-cl-voxel').value || 0),
     max_points: Math.max(0, +view.querySelector('#rec-cl-max').value || 0),
     bbox: bbox.length === 6 ? bbox : null,
+    bg_subtract: view.querySelector('#rec-cl-bg').checked,
   };
 }
 
@@ -380,7 +402,7 @@ function persistCloud() {
   const o = cloudOpts();
   sessionPatch('cloud', {
     stride: o.stride, voxel: o.voxel, maxPoints: o.max_points,
-    bbox: o.bbox || [],
+    bbox: o.bbox || [], bgSubtract: o.bg_subtract,
   });
 }
 

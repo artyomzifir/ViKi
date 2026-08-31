@@ -210,11 +210,18 @@ header h1 {
 
 /* ── calibration tab ──────────────────────────────────────────────────── */
 
-.calib-tab { height: 100%; display: flex; gap: 16px; align-items: stretch; padding: 16px 20px; }
-.calib-cards { flex: 1; min-width: 0; overflow-y: auto; align-content: start;
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+.calib-tab, .record-tab {
+  height: 100%; min-height: 0; display: grid; gap: 16px; padding: 16px 20px;
+  grid-template-columns: clamp(220px, 19vw, 300px) minmax(0, 1fr) clamp(230px, 20vw, 310px);
+  align-items: stretch;
+}
+.calib-leftcol, .record-leftcol {
+  display: flex; flex-direction: column; gap: 12px; min-height: 0;
+}
+.calib-cards, .record-cards { min-width: 0; overflow-y: auto; align-content: start;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 14px; }
 
-.calib-sets { width: clamp(200px, 16vw, 260px); flex-shrink: 0; display: flex; flex-direction: column;
+.calib-sets { flex: 1; min-height: 0; display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .calib-sets-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--accent); }
 .calib-sets-head button { padding: 3px 8px; font-size: 11px; }
@@ -229,10 +236,14 @@ header h1 {
 .set-thumb { width: 100%; max-height: 120px; object-fit: cover; border-radius: 4px; cursor: zoom-in; display: block; background: #000; }
 
 .calib-side, .record-side {
-  width: clamp(230px, 20vw, 300px); flex-shrink: 0;
   display: flex; flex-direction: column; gap: 10px;
   overflow-y: auto; min-height: 0;
 }
+/* stacked field (label over full-width input) — used for the cloud params so
+   nothing overflows the narrow side panel */
+.rec-field { display: flex; flex-direction: column; gap: 3px; }
+.rec-field > label { font-size: 10px; color: var(--muted); }
+.rec-field > input { width: 100%; }
 .calib-sec { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
 .calib-side .calib-sec { padding: 9px 10px; gap: 6px; }
 .calib-side .hint { font-size: 10px; line-height: 1.35; }
@@ -251,9 +262,6 @@ header h1 {
 
 /* ── record tab ───────────────────────────────────────────────────────── */
 
-.record-tab { height: 100%; display: flex; gap: 20px; align-items: stretch; padding: 16px 20px; }
-.record-main { flex: 1; display: flex; flex-direction: column; gap: 16px; min-width: 0; overflow-y: auto; }
-.record-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
 .cam-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .cam-card .card-header { flex-wrap: wrap; }
 .cam-card .card-header .name { flex: 1; }
@@ -265,28 +273,25 @@ header h1 {
 .stream-panel img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .stream-divider { background: var(--border); }
 
-.record-episodes { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.record-episodes { flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .record-episodes-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
-.episode-list { max-height: 340px; overflow-y: auto; }
-.episode-row { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.episode-list { flex: 1; min-height: 0; overflow-y: auto; }
+.episode-row { display: flex; flex-direction: column; gap: 3px; padding: 7px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .episode-row:hover { background: var(--bg); }
-.episode-row .ep-id { font-family: inherit; color: var(--muted); }
-.episode-row .ep-task { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
-.episode-row .ep-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.episode-row .ep-meta { color: var(--muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
-.episode-row .ep-badges { display: flex; gap: 3px; }
-.episode-row button { padding: 3px 8px; font-size: 11px; }
+.ep-row-top { display: flex; align-items: center; justify-content: space-between; gap: 6px 8px; flex-wrap: wrap; }
+.ep-row-bot { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.episode-row .ep-when { color: var(--text); font-size: 11px; white-space: nowrap; }
+.episode-row .ep-name { flex: 1; min-width: 60px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.episode-row .ep-meta { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.episode-row .ep-badges { display: flex; gap: 3px; flex-shrink: 0; }
+.episode-row .ep-acts { display: flex; gap: 5px; margin-left: auto; }
+.episode-row button { padding: 2px 7px; font-size: 10px; }
+.episode-row.editing { gap: 5px; }
+.episode-row.editing input, .episode-row.editing select { width: 100%; padding: 3px 6px; font-size: 11px; }
+.episode-row.editing .ep-edit-acts { display: flex; gap: 6px; }
 .badge { padding: 1px 4px; border-radius: 3px; font-size: 9px; letter-spacing: 0.04em; background: var(--border); color: var(--muted); cursor: default; }
 .badge.ok { background: var(--accent); color: #fff; }
-/* inline edit form — compact, fixed widths so it stays inside the panel */
-.episode-row.editing { gap: 6px; }
-.episode-row.editing .ep-edit-name,
-.episode-row.editing .ep-edit-demo,
-.episode-row.editing .ep-edit-hand { flex: 0 0 auto; padding: 3px 6px; font-size: 11px; }
-.episode-row.editing .ep-edit-name { width: 190px; }
-.episode-row.editing .ep-edit-demo { width: 130px; }
-.episode-row.editing .ep-edit-hand { width: 70px; }
-.episode-row.editing [data-role="ep-edit-save"] { margin-left: auto; }
 
 /* inline "create / save as" input + button row (datasets, calib presets) */
 .inline-add { display: flex; gap: 6px; }
@@ -336,29 +341,65 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .perception-tab {
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 360px);
+  grid-template-columns: clamp(190px, 17vw, 250px) minmax(0, 1fr) clamp(280px, 24vw, 360px);
   gap: 1px;
   background: var(--border);
 }
-.perc-viewer {
-  display: grid; grid-template-rows: minmax(0, 1fr) auto auto;
-  background: #0b0d10; min-width: 0; min-height: 0;
+
+/* far-left column: "4 · Run" — dataset + episode list + Process */
+.perc-runcol {
+  background: var(--surface); padding: 10px; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
 }
-.perc-viewer .viewer-canvas { position: relative; overflow: hidden; }
-.perc-layers {
-  display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px;
-  background: var(--surface); font-size: 11px;
+.perc-runcol .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.perc-runcol .cfg-row select { width: 130px; }
+
+/* middle: full-bleed canvas with the controls floating on top */
+.perc-viewer { position: relative; background: #0b0d10; min-width: 0; min-height: 0; }
+.perc-viewer .viewer-canvas { position: absolute; inset: 0; overflow: hidden; }
+.perc-overlay {
+  position: absolute; z-index: 2;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
 }
-.perc-layers label { display: flex; align-items: center; gap: 4px; }
+.perc-overlay-transport {
+  left: 12px; right: 12px; bottom: 12px;
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+}
+.perc-overlay-transport button { padding: 3px 7px; font-size: 11px; }
+.perc-overlay-transport input[type="range"] { flex: 1; }
+.perc-overlay-transport span { font-size: 11px; color: var(--muted); min-width: 62px; text-align: right; }
+.perc-overlay-layers {
+  left: 12px; top: 12px; max-width: 46%;
+  display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 7px 10px; font-size: 11px;
+}
+.perc-overlay-layers label { display: flex; align-items: center; gap: 4px; }
+
 .perc-side { background: var(--surface); padding: 10px; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .perc-side .calib-sec { padding: 9px 10px; gap: 6px; }
 .perc-side .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .perc-side .cfg-row select, .perc-side .cfg-row input[type="number"] { width: 150px; }
-.perc-track { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 8px; font-size: 10px; max-height: 160px; overflow-y: auto; }
-.perc-track label { display: flex; align-items: center; gap: 4px; }
-.perc-eps { max-height: 120px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
-.perc-ep { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 11px; cursor: pointer; }
+.perc-side > section > select[data-role="model"] { width: 100%; }
+.perc-side [data-role="model-meta"] { line-height: 1.35; }
+/* clickable hand diagram in "Track landmarks" */
+.perc-hand { width: 100%; max-width: 190px; align-self: center; display: block; }
+.perc-hand .hand-edges line { stroke: var(--border); stroke-width: 1.6; }
+.perc-hand .hand-dots circle {
+  fill: var(--surface); stroke: var(--muted); stroke-width: 1.2; cursor: pointer;
+  transition: fill .1s;
+}
+.perc-hand .hand-dots circle:hover { stroke: var(--text); }
+.perc-hand .hand-dots circle.on { fill: var(--accent); stroke: var(--accent); }
+.perc-hand .hand-dots circle.req { stroke: var(--yellow); cursor: not-allowed; }
+.perc-hand .hand-dots circle.req.on { fill: var(--yellow); }
+.perc-eps { flex: 1; min-height: 80px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+.perc-ep { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 11px; }
+.perc-ep label { flex: 1; display: flex; align-items: center; gap: 5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .perc-ep:hover { background: var(--bg); }
+.perc-ep.active { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.perc-ep button { padding: 1px 6px; font-size: 10px; }
 .perc-all { font-size: 11px; color: var(--muted); display: flex; gap: 6px; }
 .perc-queue { display: flex; flex-direction: column; gap: 4px; }
 .perc-job { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; font-size: 10px; }

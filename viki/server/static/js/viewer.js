@@ -41,8 +41,8 @@ export function mount(view) {
       <button data-role="prev" title="prev frame">◄</button>
       <button data-role="play" title="play / pause">▶</button>
       <button data-role="next" title="next frame">►</button>
-      <button data-role="back5" title="-5s">⏮</button>
-      <button data-role="fwd5" title="+5s">⏭</button>
+      <button data-role="back5" title="back 5 seconds">«5s</button>
+      <button data-role="fwd5" title="forward 5 seconds">5s»</button>
       <input type="range" data-role="time" min="0" max="0" value="0" step="1">
       <span data-role="frame-lbl">0 / 0</span>
       <button data-role="prevep" title="previous episode">‹ ep</button>

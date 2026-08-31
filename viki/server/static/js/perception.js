@@ -13,48 +13,74 @@ const LM_NAMES = [
   'pinky_mcp', 'pinky_pip', 'pinky_dip', 'pinky_tip',
 ];
 const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need these
-const DEFAULT_LM = [0, 1, 3, 4, 5, 8, 9, 13, 17];
+// wrist + the whole thumb + the whole index (to read the action) + M/R/P MCP
+const DEFAULT_LM = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 17];
 const LAYER_LABELS = {
   cloud: 'cloud', perCamera: 'per-camera', fused: 'fused', trajectory: 'traj',
   palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox',
 };
 
+// 21-point hand diagram, palm toward you, fingers up. [x, y] in a 0..100 box.
+const HAND_XY = [
+  [50, 94],                                  // 0 wrist
+  [33, 79], [23, 66], [16, 55], [10, 45],    // 1-4 thumb
+  [42, 56], [40, 41], [39, 30], [38, 19],    // 5-8 index
+  [51, 53], [51, 37], [51, 24], [51, 12],    // 9-12 middle
+  [61, 55], [63, 40], [64, 29], [65, 19],    // 13-16 ring
+  [70, 61], [74, 49], [77, 40], [79, 32],    // 17-20 pinky
+];
+const HAND_EDGES = [
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  [5, 9], [9, 10], [10, 11], [11, 12],
+  [9, 13], [13, 14], [14, 15], [15, 16],
+  [13, 17], [17, 18], [18, 19], [19, 20], [0, 17],
+];
+
 const DEFAULT_OPTS = {
-  backend: 'mediapipe', model: '', hand: 'right', flip: false,
+  model: 'mediapipe', hand: 'right', flip: false,
   track_lm: DEFAULT_LM, min_confidence: 0.5, interp_max_gap: 0,
-  sg_window: 7, sg_polyorder: 2, build_cloud: true, cloud_stride: 6, dataset: '',
+  sg_window: 7, sg_polyorder: 2, build_cloud: true, cloud_stride: 1, dataset: '',
 };
 
-let root = null, ctl = null, models = {}, episodes = [], poll = 0;
+let root = null, ctl = null, models = {}, episodes = [], poll = 0, viewedEp = null;
 
 export function mount(view) {
   const S = { ...DEFAULT_OPTS, ...sessionGet('perceive', {}) };
   root = document.createElement('div');
   root.className = 'perception-tab';
   root.innerHTML = `
+    <aside class="perc-runcol">
+      <div class="calib-sec-title">4 · Run</div>
+      <div class="cfg-row"><label>Dataset</label><select data-role="dataset"></select></div>
+      <div class="perc-eps" data-role="eps"></div>
+      <label class="perc-all"><input type="checkbox" data-role="all"> select all</label>
+      <button class="primary" data-role="process">Process</button>
+    </aside>
+
     <div class="perc-viewer">
       <div class="viewer-canvas" data-role="canvas"></div>
-      <div class="viewer-timeline">
+      <div class="perc-overlay perc-overlay-layers" data-role="layers"></div>
+      <div class="perc-overlay perc-overlay-transport">
         <button data-role="stop" title="stop">■</button>
         <button data-role="prev" title="prev frame">◄</button>
         <button data-role="play" title="play / pause">▶</button>
         <button data-role="next" title="next frame">►</button>
-        <button data-role="back5" title="-5s">⏮</button>
-        <button data-role="fwd5" title="+5s">⏭</button>
+        <button data-role="back5" title="back 5 seconds">«5s</button>
+        <button data-role="fwd5" title="forward 5 seconds">5s»</button>
         <input type="range" data-role="time" min="0" max="0" value="0" step="1">
         <span data-role="frame-lbl">0 / 0</span>
         <button data-role="prevep" title="previous episode">‹</button>
         <button data-role="nextep" title="next episode">›</button>
       </div>
-      <div class="perc-layers" data-role="layers"></div>
     </div>
 
     <aside class="perc-side">
       <section class="calib-sec">
         <div class="calib-sec-title">1 · Model</div>
-        <div class="cfg-row"><label>Backend</label><select data-role="backend"></select></div>
-        <div class="cfg-row"><label>Model</label><select data-role="model"></select></div>
-        <button data-role="download" hidden>Download model</button>
+        <select data-role="model"></select>
+        <div class="hint" data-role="model-meta">—</div>
+        <button data-role="download" hidden>Download weights</button>
         <div class="cfg-row"><label>Hand</label>
           <select data-role="hand"><option>right</option><option>left</option></select></div>
         <div class="cfg-row"><label>Flip for handedness</label>
@@ -63,9 +89,9 @@ export function mount(view) {
 
       <section class="calib-sec">
         <div class="calib-sec-title">2 · Track landmarks</div>
-        <details><summary data-role="track-sum">9 / 21</summary>
-          <div class="perc-track" data-role="track"></div>
-        </details>
+        <div class="hint">click a joint to include / drop it (locked = needed for EE pose + gripper)</div>
+        <svg class="perc-hand" data-role="handmap" viewBox="0 0 100 105"></svg>
+        <div class="hint" data-role="track-sum">12 / 21</div>
       </section>
 
       <section class="calib-sec">
@@ -85,14 +111,6 @@ export function mount(view) {
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">4 · Run</div>
-        <div class="cfg-row"><label>Dataset</label><select data-role="dataset"></select></div>
-        <div class="perc-eps" data-role="eps"></div>
-        <label class="perc-all"><input type="checkbox" data-role="all"> select all</label>
-        <button class="primary" data-role="process">Process</button>
-      </section>
-
-      <section class="calib-sec">
         <div class="calib-sec-title">Queue</div>
         <div class="perc-queue" data-role="queue"></div>
       </section>
@@ -108,7 +126,7 @@ export function mount(view) {
     root.querySelector('[data-role="frame-lbl"]').textContent = `${n ? f + 1 : 0} / ${n}`;
   });
 
-  renderTrack(S.track_lm);
+  renderHand(S.track_lm);
   renderLayers();
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
@@ -129,49 +147,72 @@ export function unmount() {
 // ── model + track UI ──────────────────────────────────────────────────
 
 async function loadModels(S) {
-  try { models = await api('GET', '/api/pipeline/models'); }
+  try { models = await api('GET', '/api/pipeline/models'); }   // flat list
   catch (e) { log('models: ' + e, 'error'); return; }
-  const bsel = root.querySelector('[data-role="backend"]');
-  bsel.innerHTML = Object.keys(models).map(b => `<option>${b}</option>`).join('');
-  if (S && models[S.backend]) bsel.value = S.backend;
+  const sel = root.querySelector('[data-role="model"]');
+  sel.innerHTML = models.map(m =>
+    `<option value="${m.id}">${m.label}${m.present ? '' : ' — not downloaded'}</option>`).join('');
+  const want = (S && S.model) || 'mediapipe';
+  if (models.some(m => m.id === want)) sel.value = want;
   root.querySelector('[data-role="hand"]').value = S?.hand || 'right';
-  syncModelSelect(S && S.model);
+  syncModel();
 }
 
-function syncModelSelect(want) {
-  const b = root.querySelector('[data-role="backend"]').value;
-  const msel = root.querySelector('[data-role="model"]');
-  const list = models[b] || [];
-  msel.innerHTML = list.map(m =>
-    `<option value="${m.id}">${m.tier} — ${m.id}${m.present ? '' : ' (not downloaded)'}</option>`).join('');
-  if (want && list.some(m => m.id === want)) msel.value = want;
-  syncDownloadBtn();
+function syncModel() {
+  const id = root.querySelector('[data-role="model"]').value;
+  const m = models.find(x => x.id === id) || {};
+  const bits = [
+    m.pck != null ? `PCK@0.2 ${m.pck}` : null,
+    m.auc != null ? `AUC ${m.auc}` : null,
+    m.epe != null ? `EPE ${m.epe}px` : null,
+    m.gflops != null ? `${m.gflops} GFLOPs` : null,
+    m.license,
+  ].filter(Boolean).join(' · ');
+  root.querySelector('[data-role="model-meta"]').textContent =
+    (m.note ? m.note + ' — ' : '') + bits;
+  const dl = root.querySelector('[data-role="download"]');
+  if (m.present) { dl.hidden = true; }
+  else {
+    dl.hidden = false;
+    dl.disabled = !m.downloadable;
+    dl.textContent = m.downloadable ? 'Download weights'
+      : 'ONNX not published — convert with mmdeploy → models/';
+  }
   persist();
 }
 
-function syncDownloadBtn() {
-  const b = root.querySelector('[data-role="backend"]').value;
-  const id = root.querySelector('[data-role="model"]').value;
-  const m = (models[b] || []).find(x => x.id === id);
-  root.querySelector('[data-role="download"]').hidden = !!(m && m.present);
-}
-
-function renderTrack(sel) {
-  const set = new Set(sel);
-  root.querySelector('[data-role="track"]').innerHTML = LM_NAMES.map((nm, i) =>
-    `<label><input type="checkbox" data-lm="${i}" ${set.has(i) || REQUIRED_LM.has(i) ? 'checked' : ''}
-      ${REQUIRED_LM.has(i) ? 'disabled' : ''}> ${i} ${nm}</label>`).join('');
+function renderHand(sel) {
+  const set = new Set([...(sel || []), ...REQUIRED_LM]);
+  const line = ([a, b]) =>
+    `<line x1="${HAND_XY[a][0]}" y1="${HAND_XY[a][1]}" x2="${HAND_XY[b][0]}" y2="${HAND_XY[b][1]}"/>`;
+  const dot = (i) => {
+    const req = REQUIRED_LM.has(i);
+    const cls = `${set.has(i) ? 'on' : ''} ${req ? 'req' : ''}`.trim();
+    return `<circle data-lm="${i}" class="${cls}" cx="${HAND_XY[i][0]}" cy="${HAND_XY[i][1]}" r="3.6">
+      <title>${i} ${LM_NAMES[i]}${req ? ' (locked)' : ''}</title></circle>`;
+  };
+  root.querySelector('[data-role="handmap"]').innerHTML =
+    `<g class="hand-edges">${HAND_EDGES.map(line).join('')}</g>` +
+    `<g class="hand-dots">${HAND_XY.map((_, i) => dot(i)).join('')}</g>`;
+  _trackSel = [...set].sort((a, b) => a - b);
   updateTrackSummary();
 }
 
-function trackSelection() {
-  return [...root.querySelectorAll('[data-lm]')]
-    .filter(c => c.checked || REQUIRED_LM.has(+c.dataset.lm))
-    .map(c => +c.dataset.lm).sort((a, b) => a - b);
+let _trackSel = DEFAULT_LM.slice();
+
+function toggleLm(i) {
+  if (REQUIRED_LM.has(i)) return;
+  const s = new Set(_trackSel);
+  s.has(i) ? s.delete(i) : s.add(i);
+  renderHand([...s]);
+  persist();
 }
 
+function trackSelection() { return _trackSel.slice(); }
+
 function updateTrackSummary() {
-  root.querySelector('[data-role="track-sum"]').textContent = `${trackSelection().length} / 21`;
+  root.querySelector('[data-role="track-sum"]').textContent =
+    `${_trackSel.length} / 21 tracked`;
 }
 
 function renderLayers() {
@@ -211,10 +252,19 @@ async function loadEpisodes() {
     ({ episodes } = await api('GET', `/api/datasets/${encodeURIComponent(ds)}/episodes`));
   } catch (e) { log('episodes: ' + e, 'error'); return; }
   root.querySelector('[data-role="eps"]').innerHTML = episodes.map(e =>
-    `<label class="perc-ep"><input type="checkbox" data-ep="${e.id}">
-      ${e.id}${e.task ? ' · ' + e.task : ''}
-      <span class="badge ${e.has?.cln ? 'ok' : ''}">CLN</span></label>`).join('')
+    `<div class="perc-ep${e.id === viewedEp ? ' active' : ''}">
+      <label><input type="checkbox" data-ep="${e.id}">
+        ${e.id}${e.task ? ' · ' + e.task : ''}</label>
+      <span class="badge ${e.has?.cln ? 'ok' : ''}">CLN</span>
+      <button data-view="${e.id}" title="open in viewer">view</button>
+    </div>`).join('')
     || '<div class="hint">no episodes</div>';
+}
+
+function markViewed(id) {
+  viewedEp = id;
+  root?.querySelectorAll('.perc-ep').forEach(r =>
+    r.classList.toggle('active', r.querySelector('[data-ep]')?.dataset.ep === id));
 }
 
 function selectedEpisodes() {
@@ -225,8 +275,7 @@ function selectedEpisodes() {
 
 function opts() {
   return {
-    backend: root.querySelector('[data-role="backend"]').value,
-    model: root.querySelector('[data-role="model"]').value || null,
+    model: root.querySelector('[data-role="model"]').value || 'mediapipe',
     hand: root.querySelector('[data-role="hand"]').value,
     flip: root.querySelector('[data-role="flip"]').checked,
     track_lm: trackSelection(),
@@ -250,11 +299,10 @@ async function process() {
 }
 
 async function downloadModel() {
-  const backend = root.querySelector('[data-role="backend"]').value;
   const model = root.querySelector('[data-role="model"]').value;
   try {
-    await api('POST', '/api/pipeline/models/download', { backend, model });
-    log(`Downloading ${backend}/${model}…`, 'ok');
+    await api('POST', '/api/pipeline/models/download', { model });
+    log(`Downloading ${model}…`, 'ok');
     refreshQueue();
   } catch (e) { log('download: ' + e, 'error'); }
 }
@@ -284,13 +332,15 @@ async function refreshQueue() {
 
 function onClick(e) {
   if (!ctl) return;
-  const epLab = e.target.closest('.perc-ep');
-  if (epLab && e.target.tagName !== 'INPUT') {
-    ctl.loadEpisode(epLab.querySelector('[data-ep]').dataset.ep, episodes);
-    return;
-  }
+  const dot = e.target.closest('[data-lm]');
+  if (dot) { toggleLm(+dot.dataset.lm); return; }
   const b = e.target.closest('button');
   if (!b) return;
+  if (b.dataset.view) {
+    ctl.loadEpisode(b.dataset.view, episodes);
+    markViewed(b.dataset.view);
+    return;
+  }
   if (b.dataset.cancel) {
     api('DELETE', `/api/pipeline/jobs/${b.dataset.cancel}`).then(refreshQueue)
       .catch(err => log('cancel: ' + err, 'error'));
@@ -317,10 +367,8 @@ function setPlayIcon(playing) {
 
 function onChange(e) {
   const el = e.target;
-  if (el.dataset.role === 'backend') syncModelSelect();
-  else if (el.dataset.role === 'model') { syncDownloadBtn(); persist(); }
+  if (el.dataset.role === 'model') syncModel();
   else if (el.dataset.role === 'dataset') { persist(); loadEpisodes(); }
-  else if (el.dataset.lm !== undefined) { updateTrackSummary(); persist(); }
   else if (el.dataset.layer) {
     ctl.setLayer(el.dataset.layer, el.checked);
     sessionPatch('viewerLayers', { [el.dataset.layer]: el.checked });

@@ -36,17 +36,7 @@ function template() {
     `<option ${n === b.dict ? 'selected' : ''}>${n}</option>`).join('');
   return `
   <div class="calib-tab">
-    <div class="calib-cards" id="calib-cards"></div>
-
-    <div class="calib-sets">
-      <div class="calib-sets-head">
-        <span id="calib-sets-title">Captured sets</span>
-        <button id="calib-sets-live" hidden>← live</button>
-      </div>
-      <div id="calib-sets-list"></div>
-    </div>
-
-    <aside class="calib-side">
+    <aside class="calib-leftcol">
       <section class="calib-sec">
         <details ${s ? '' : 'open'}>
           <summary class="calib-sec-title">Board &nbsp;<span class="hint">${b.type === 'chess' ? 'chess' : 'ChArUco'} ${b.cols}×${b.rows} · ${b.square} m</span></summary>
@@ -72,11 +62,33 @@ function template() {
         </details>
       </section>
 
+      <div class="calib-sets">
+        <div class="calib-sets-head">
+          <span id="calib-sets-title">Captured sets</span>
+          <button id="calib-sets-live" hidden>← live</button>
+        </div>
+        <div id="calib-sets-list"></div>
+      </div>
+    </aside>
+
+    <div class="calib-cards" id="calib-cards"></div>
+
+    <aside class="calib-side">
+      <section class="calib-sec">
+        <div class="calib-sec-title">Load a saved preset</div>
+        <select id="calib-preset"></select>
+        <div class="hint" id="calib-preset-info">—</div>
+        <button id="calib-preset-open" hidden>Open sets</button>
+        <button id="calib-preset-k4a" hidden title="attach the running Kinects' raw depth↔colour calibration to this preset">Grab k4a calibration for this preset</button>
+        <button id="calib-preset-bg" hidden title="snapshot the empty scene's depth so recordings can subtract the static background from the point cloud">Grab background depth (empty scene)</button>
+      </section>
+
       <section class="calib-sec">
         <div class="calib-sec-title">Calibrate</div>
         <div class="hint">Start every camera (top bar) so each one sees the board.</div>
         <button id="calib-start-session" class="primary">1 · Start session</button>
-        <button id="calib-capture-all" class="primary">2 · Capture all <span class="hint">(3–10×, board static)</span></button>
+        <button id="calib-capture-all" class="primary">2 · Capture all</button>
+        <div class="hint">3–10×, keep the board still between captures.</div>
         <button id="calib-solve" class="primary">3 · Calibrate extrinsics</button>
         <div class="inline-add">
           <input type="text" id="calib-preset-name" placeholder="preset name">
@@ -85,14 +97,6 @@ function template() {
         <div class="hint">Save also grabs the Kinects' depth↔colour calibration.
           Delete bad sets on the left before step 3.</div>
         <button id="calib-clear" class="danger">Clear samples</button>
-      </section>
-
-      <section class="calib-sec">
-        <div class="calib-sec-title">Load a saved preset</div>
-        <select id="calib-preset"></select>
-        <div class="hint" id="calib-preset-info">—</div>
-        <button id="calib-preset-open" hidden>Open sets</button>
-        <button id="calib-preset-k4a" hidden title="attach the running Kinects' raw depth↔colour calibration to this preset">Grab k4a calibration for this preset</button>
       </section>
     </aside>
   </div>`;
@@ -108,7 +112,7 @@ function renderCards() {
   if (key !== builtIds) {
     builtIds = key;
     box.innerHTML = ids.length
-      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running, { depth: false })).join('')
+      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running, { depth: true })).join('')
       : `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
   }
   for (const id of ids) {
@@ -244,7 +248,8 @@ async function refreshSets() {
     const sig = JSON.stringify(rows.map(r => [r.index, Object.values(r.cameras).map(c => c.corners)]));
     if (sig === _setsSig) return;
     _setsSig = sig;
-    box.innerHTML = rows.length ? rows.map(r => setRow(r, true)).join('')
+    // newest set on top so the running count is obvious after each capture
+    box.innerHTML = rows.length ? [...rows].reverse().map(r => setRow(r, true)).join('')
       : '<div class="hint" style="padding:8px">no sets yet — Start session, then Capture all</div>';
   } catch (e) { box.innerHTML = `<div class="hint" style="padding:8px">${e}</div>`; }
 }
@@ -269,7 +274,7 @@ function renderPresetSets() {
     }
     rows.push(setRow({ index: i, cameras: camObj }, true));
   }
-  box.innerHTML = rows.join('');
+  box.innerHTML = rows.reverse().join('');   // newest on top
 }
 
 async function deleteLiveSet(i) {
@@ -301,11 +306,14 @@ async function refreshPresets() {
     const sel_p = presets.find(p => p.name === sel.value);
     const k4a = sel_p && sel_p.k4a && sel_p.k4a.length
       ? ` · k4a ✓ (${sel_p.k4a.length})` : ' · k4a ✗';
+    const bg = sel_p && sel_p.background && sel_p.background.length
+      ? ` · bg ✓ (${sel_p.background.length})` : ' · bg ✗';
     info.textContent = (active
       ? `active: ${active.cameras.length} cam · ${active.sets} sets · ${new Date(active.solved_at * 1000).toLocaleString()}`
-      : `${presets.length} saved preset(s)`) + (sel_p ? k4a : '');
+      : `${presets.length} saved preset(s)`) + (sel_p ? k4a + bg : '');
     view.querySelector('#calib-preset-open').hidden = !(sel_p && sel_p.sets > 0);
     view.querySelector('#calib-preset-k4a').hidden = !sel_p;
+    view.querySelector('#calib-preset-bg').hidden = !sel_p;
   } catch (e) {
     info.textContent = 'presets unavailable';
     log('Failed to load calibration presets: ' + e, 'error');
@@ -351,6 +359,19 @@ async function grabPresetK4a() {
     log(`Preset "${name}": k4a calibration attached for ${r.devices.join(', ')}`, 'ok');
     refreshPresets();
   } catch (e) { log('Grab k4a failed: ' + e, 'error'); }
+}
+
+async function grabPresetBackground() {
+  const name = view.querySelector('#calib-preset').value;
+  if (!name) { log('Pick a preset first', 'error'); return; }
+  const btn = view.querySelector('#calib-preset-bg');
+  btn.disabled = true; btn.textContent = 'Capturing empty scene…';
+  try {
+    const r = await api('POST', `/api/calibration/presets/${encodeURIComponent(name)}/grab-background`);
+    log(`Preset "${name}": background depth captured for ${r.devices.join(', ')}`, 'ok');
+    refreshPresets();
+  } catch (e) { log('Grab background failed: ' + e, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Grab background depth (empty scene)'; }
 }
 
 // ── mount / unmount ───────────────────────────────────────────────────────
@@ -403,6 +424,7 @@ function onClick(e) {
     case 'calib-preset-save': savePreset(); break;
     case 'calib-preset-open': openPreset(); break;
     case 'calib-preset-k4a': grabPresetK4a(); break;
+    case 'calib-preset-bg': grabPresetBackground(); break;
     case 'calib-sets-live': backToLive(); break;
     case 'set-del':
       openedPreset ? deletePresetSet(+btn.dataset.i) : deleteLiveSet(+btn.dataset.i);
