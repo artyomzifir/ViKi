@@ -4,9 +4,10 @@ viki.cameras.record
 Record synchronised RGB-D scenes into an episode directory.
 
 Pipeline stage 1. Writes ``<dataset>/<id>/raw/`` — one colour ``.mp4`` and one
-folder of raw ``uint16`` depth ``.npy`` per camera, plus ``timestamps.json`` and
-the SDK-reported intrinsics + active extrinsics in force at capture time — then
-marks ``status.json``. ``raw/`` is written once and never touched again; every
+folder of raw ``uint16`` depth ``.npy`` per camera, plus ``timestamps.json``, the
+SDK-reported intrinsics + active extrinsics in force at capture time, and (Kinect
+only) the raw calibration blob ``<dev>_k4a_calib.bin`` for offline depth↔colour
+projection — then marks ``status.json``. ``raw/`` is written once and never touched again; every
 later stage writes new artifacts alongside it, so re-processing can never
 corrupt the recording.
 
@@ -113,6 +114,26 @@ class SceneRecorder:
             "dist_coeffs": np.asarray(intr.dist_coeffs).tolist(),
         }
 
+    def _stamp_k4a_calibration(self, dev_id: str, backend, cam_entry: dict) -> None:
+        """Save the k4a raw calibration blob + the enum ints an offline
+        ``k4a_calibration_get_from_raw`` rebuild needs. No-op for backends that
+        don't expose one (RealSense, or a Kinect that failed the size query)."""
+        blob = getattr(backend, "get_raw_calibration", lambda: None)() if backend else None
+        if not blob:
+            return
+        (self._raw() / f"{dev_id}_k4a_calib.bin").write_bytes(blob)
+        cam_entry["k4a_calib"] = f"{dev_id}_k4a_calib.bin"
+        try:
+            from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
+
+            cfg = backend.config or {}
+            cam_entry["k4a_depth_mode_int"] = _DEPTH_MODE_MAP.get(cfg.get("depth_mode"))
+            cam_entry["k4a_color_res_int"] = _COLOR_RES_MAP.get(
+                (int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     def _write_sensor_meta(self) -> None:
         """Snapshot everything an offline run needs: SDK intrinsics, the active
         extrinsics, and each camera's capture config. Written once, before the
@@ -151,6 +172,7 @@ class SceneRecorder:
                 "color_shape": list(frame.color.shape) if frame is not None else None,
                 "depth_shape": list(frame.depth.shape) if frame is not None and frame.has_depth() else None,
             }
+            self._stamp_k4a_calibration(dev_id, backend, cams[dev_id])
 
         (self._raw() / "intrinsics.json").write_text(json.dumps(intr, indent=2))
         (self._raw() / "extrinsics.json").write_text(json.dumps(extr, indent=2))

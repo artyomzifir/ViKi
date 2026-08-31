@@ -84,6 +84,14 @@ class CameraBackend(ABC):
     ) -> tuple[float, float, float] | None:
         return None
 
+    def get_raw_calibration(self) -> bytes | None:
+        """Device-independent raw calibration blob, if the SDK exposes one.
+
+        Used offline to rebuild the projection model without hardware. Default:
+        unavailable (e.g. RealSense, whose depth is already colour-aligned).
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Context manager — implemented here, no need to override
     # ------------------------------------------------------------------

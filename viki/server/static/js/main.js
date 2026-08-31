@@ -4,6 +4,7 @@ import { api, log, mountLog, initializeFrontendConfig } from './core.js';
 import * as cameras from './cameras.js';
 import * as calibration from './calibration.js';
 import * as record from './record.js';
+import * as viewer from './viewer.js';
 import * as configModal from './config.js';
 import { makeStub } from './tabs_stub.js';
 
@@ -15,7 +16,7 @@ const TABS = {
   retarget: { label: 'Retarget', mod: makeStub('Retarget') },
   replay: { label: 'Replay', mod: makeStub('Replay') },
   export: { label: 'Export', mod: makeStub('Export') },
-  viewer: { label: 'Viewer', mod: makeStub('Viewer') },
+  viewer: { label: 'Viewer', mod: viewer },
 };
 const DEFAULT_TAB = 'calibration';
 

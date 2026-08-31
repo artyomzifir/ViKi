@@ -8,8 +8,11 @@ backend per camera per frame, lifts to 3-D with measured depth, transforms into
 the workspace frame with the recorded extrinsics, and writes per-camera landmark
 trajectories in the ``rec.npz`` schema.
 
-Assumption: recorded depth is aligned to colour (identity colour→depth pixel
-map). A backend-specific projector can be plugged in later via ``DepthProjector``.
+Colour→depth pixel mapping: if the episode carries a Kinect raw calibration blob
+(``raw/<dev>_k4a_calib.bin``, written by the recorder) it is rebuilt offline and
+used as the projector. Otherwise we fall back to the identity map
+(``_IdentityProjector``) — correct only when depth is already aligned to colour
+(RealSense, whose depth is colour-aligned at capture).
 """
 
 from __future__ import annotations
@@ -63,6 +66,17 @@ def _depth_K(entry: dict) -> np.ndarray | None:
     )
 
 
+def _load_projector(raw: Path, dev_id: str, meta: dict):
+    """Real SDK colour→depth projector if the episode has a k4a calib blob, else ``None``."""
+    try:
+        from viki.perception.k4a_offline import K4ACalibration
+
+        return K4ACalibration.from_episode(raw, dev_id, meta)
+    except Exception as exc:  # noqa: BLE001 — never let calib issues abort extract
+        logger.warning("extract %s: k4a projector unavailable (%s)", dev_id, exc)
+        return None
+
+
 def _extrinsics(raw_extr: dict, dev_id: str) -> CalibrationExtrinsics | None:
     e = raw_extr.get(dev_id)
     if not e:
@@ -89,7 +103,8 @@ def extract_episode(
     backend_name = backend or getattr(_cfg, "POSE_BACKEND", "mediapipe")
     intr_all = _read_json(raw / "intrinsics.json")
     extr_all = _read_json(raw / "extrinsics.json")
-    projector = _IdentityProjector()
+    meta_all = _read_json(ep.meta_path)
+    identity = _IdentityProjector()
 
     records: list[tuple[str, SkeletonFrame, dict]] = []
 
@@ -99,6 +114,12 @@ def extract_episode(
         depth_files = sorted(depth_dir.glob("*.npy")) if depth_dir.is_dir() else []
         K = _depth_K(intr_all.get(dev_id, {}))
         extr = _extrinsics(extr_all, dev_id)
+        projector = _load_projector(raw, dev_id, meta_all) or identity
+        if projector is identity:
+            logger.warning(
+                "extract %s/%s: no k4a calibration blob — assuming depth is "
+                "colour-aligned (identity colour→depth map)", ep.id, dev_id,
+            )
         det_backend = load_backend(backend_name, mode="video")
 
         cap = cv2.VideoCapture(str(mp4))

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from viki import config, datasets
@@ -72,6 +73,18 @@ async def extract(req: _EpReq):
         return extract_episode(ep, backend=req.backend)
 
     return {"job_id": jobs.submit("extract", _job)}
+
+
+@_ep.post("/cloud")
+async def cloud(req: _EpReq):
+    ep = _episode(req.episode)
+
+    def _job():
+        from viki.perception.cloud import build_cloud
+
+        return build_cloud(ep)
+
+    return {"job_id": jobs.submit("cloud", _job)}
 
 
 @_ep.post("/prepare")
@@ -157,6 +170,27 @@ async def geometry(ep_id: str, include_raw: int = 0):
             out["raw_points"] = raw
 
     return out
+
+
+# ── coloured point cloud (Viewer tab) ────────────────────────────────
+
+
+@_ep.get("/episode/{ep_id}/cloud")
+async def cloud_meta(ep_id: str):
+    ep = _episode(ep_id)
+    p = ep.cloud_dir / "meta.json"
+    if not p.exists():
+        raise HTTPException(404, "no cloud; run the 'cloud' stage first")
+    return json.loads(p.read_text())
+
+
+@_ep.get("/episode/{ep_id}/cloud/{frame}")
+async def cloud_frame(ep_id: str, frame: int):
+    ep = _episode(ep_id)
+    p = ep.cloud_dir / f"{frame:06d}.bin"
+    if not p.exists():
+        raise HTTPException(404, f"no cloud frame {frame}")
+    return FileResponse(p, media_type="application/octet-stream")
 
 
 router.include_router(_ep)

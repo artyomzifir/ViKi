@@ -6,6 +6,7 @@ server calls — the CLI just parses args and prints results.
 
     viki record  --task "pick cube" --seconds 10
     viki extract  <episode>
+    viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
     viki prepare  <episode>
     viki retarget <episode> --robot ur3
     viki replay   <episode> [--driver dryrun|ur3]
@@ -53,6 +54,12 @@ def _cmd_extract(a) -> None:
     from viki.perception.extract import extract_episode
 
     print(extract_episode(_episode(a.episode), backend=a.backend, hand=a.hand))
+
+
+def _cmd_cloud(a) -> None:
+    from viki.perception.cloud import build_cloud
+
+    print(build_cloud(_episode(a.episode)))
 
 
 def _cmd_prepare(a) -> None:
@@ -151,6 +158,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--backend", default=None, help="pose backend (default: config)")
     pe.add_argument("--hand", default="right", choices=["left", "right"])
     pe.set_defaults(func=_cmd_extract)
+
+    pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
+    pc.add_argument("episode")
+    pc.set_defaults(func=_cmd_cloud)
 
     pp = sub.add_parser("prepare", help="rec.npz -> cln.npz")
     pp.add_argument("episode")

@@ -19,7 +19,7 @@ from typing import Any
 
 from viki.contracts import Episode
 
-_STAGES = ("record", "extract", "prepare", "retarget", "replay", "label", "export")
+_STAGES = ("record", "extract", "cloud", "prepare", "retarget", "replay", "label", "export")
 
 
 def new_episode(episodes_dir: str | Path, meta: dict | None = None) -> Episode:

@@ -25,6 +25,10 @@ const CURATED = [
   ['Calibration', 'CALIB_CHESS_SQUARE_SIZE', 'Chess square (m)', 'number'],
   ['Recording', 'RECORDING_DURATION', 'Default duration (s)', 'int'],
   ['Recording', 'RECORDING_FPS', 'Recording FPS', 'int'],
+  ['Cloud', 'CLOUD_STRIDE', 'Depth pixel stride', 'int'],
+  ['Cloud', 'CLOUD_VOXEL_M', 'Voxel leaf size (m)', 'number'],
+  ['Cloud', 'CLOUD_WORKSPACE_BBOX', 'Workspace AABB [x0,x1,y0,y1,z0,z1]', 'csvFloat'],
+  ['Cloud', 'CLOUD_MAX_POINTS_PER_FRAME', 'Max points / frame', 'int'],
 ];
 
 function widgetHTML([group, key, label, widget, opt]) {
@@ -38,8 +42,8 @@ function widgetHTML([group, key, label, widget, opt]) {
     control = `<select data-key="${key}" data-w="select">${
       opts.map(o => `<option ${String(o) === String(v) ? 'selected' : ''}>${o}</option>`).join('')
     }</select>`;
-  } else if (widget === 'csvInt') {
-    control = `<input type="text" data-key="${key}" data-w="csvInt" value="${(v || []).join(', ')}">`;
+  } else if (widget === 'csvInt' || widget === 'csvFloat') {
+    control = `<input type="text" data-key="${key}" data-w="${widget}" value="${(v || []).join(', ')}">`;
   } else if (widget === 'number' || widget === 'int') {
     control = `<input type="number" data-key="${key}" data-w="${widget}"
       ${widget === 'number' ? 'step="0.001"' : ''} value="${v}">`;
@@ -81,6 +85,7 @@ function onWidgetChange(e) {
   else if (w === 'int') val = parseInt(el.value, 10);
   else if (w === 'number') val = parseFloat(el.value);
   else if (w === 'csvInt') val = el.value.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !Number.isNaN(n));
+  else if (w === 'csvFloat') val = el.value.split(',').map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
   else val = el.value;
   CFG[key] = val;
   const ta = document.getElementById('cfg-json');
