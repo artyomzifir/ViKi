@@ -23,7 +23,7 @@ const DEFAULT_LAYERS = {
   palm: true, frusta: true, board: true, bbox: false, confidence: false,
 };
 
-export function create(canvasEl, { api, log }) {
+export function create(canvasEl, { api, log, layers: initLayers, colorMode: initColor, stride: initStride }) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b0d10);
 
@@ -89,8 +89,8 @@ export function create(canvasEl, { api, log }) {
   // ── state ─────────────────────────────────────────────────────────────
   let geo = null, cmeta = null, epId = null, episodes = [], epIndex = -1;
   let frame = 0, playing = false, playTimer = 0;
-  let colorMode = 'rgb', stride = 1;
-  let layers = { ...DEFAULT_LAYERS };
+  let colorMode = initColor || 'rgb', stride = initStride || 1;
+  let layers = { ...DEFAULT_LAYERS, ...(initLayers || {}) };
   let frameCb = null;
   const cloudCache = new Map();     // frame -> Promise<{xyz, rgb}>
   const fgCache = new Map();        // frame -> Promise<geometry?frame= payload>

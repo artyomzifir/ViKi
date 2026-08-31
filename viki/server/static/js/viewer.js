@@ -1,7 +1,7 @@
 // Viewer tab — a thin shell around the shared scene3d controller: episode
 // picker, layer toggles, cloud colour + stride, a timeline and transport.
 // The Extract tab reuses the same scene3d module.
-import { api, log } from './core.js';
+import { api, log, sessionGet, sessionSet, sessionPatch } from './core.js';
 import * as scene3d from './scene3d.js';
 
 let root = null, ctl = null, episodes = [];
@@ -13,6 +13,7 @@ const LAYER_LABELS = {
 };
 
 export function mount(view) {
+  const vs = sessionGet('viewer', { color: 'rgb', stride: 1 });
   root = document.createElement('div');
   root.className = 'viewer-tab';
   root.innerHTML = `
@@ -25,12 +26,12 @@ export function mount(view) {
       <button class="viewer-build" data-role="build" hidden>Run perception</button>
       <div class="viewer-field">Cloud colour
         <select data-role="color">
-          <option value="rgb">real colour</option>
-          <option value="height">by height</option>
+          <option value="rgb" ${vs.color === 'rgb' ? 'selected' : ''}>real colour</option>
+          <option value="height" ${vs.color === 'height' ? 'selected' : ''}>by height</option>
         </select>
       </div>
       <label class="viewer-field">Cloud stride
-        <input type="number" data-role="stride" min="1" max="12" value="1">
+        <input type="number" data-role="stride" min="1" max="12" value="${vs.stride || 1}">
       </label>
       <div class="viewer-layers" data-role="layers"></div>
       <p class="viewer-help">drag orbit · wheel zoom · right-drag pan</p>
@@ -50,7 +51,10 @@ export function mount(view) {
   view.appendChild(root);
 
   const $ = s => root.querySelector(s);
-  ctl = scene3d.create($('[data-role="canvas"]'), { api, log });
+  ctl = scene3d.create($('[data-role="canvas"]'), {
+    api, log, layers: sessionGet('viewerLayers', null),
+    colorMode: vs.color, stride: vs.stride,
+  });
 
   ctl.onFrame((f, n) => {
     $('[data-role="time"]').max = Math.max(0, n - 1);
@@ -143,12 +147,18 @@ function syncPicker(id) {
 function onChange(e) {
   const el = e.target;
   if (el.dataset.role === 'picker') openEpisode(el.value);
-  else if (el.dataset.role === 'color') ctl.setColorMode(el.value);
-  else if (el.dataset.layer) ctl.setLayer(el.dataset.layer, el.checked);
+  else if (el.dataset.role === 'color') {
+    ctl.setColorMode(el.value); sessionPatch('viewer', { color: el.value });
+  } else if (el.dataset.layer) {
+    ctl.setLayer(el.dataset.layer, el.checked);
+    sessionPatch('viewerLayers', { [el.dataset.layer]: el.checked });
+  }
 }
 
 function onInput(e) {
   const el = e.target;
   if (el.dataset.role === 'time') ctl.setFrame(+el.value);
-  else if (el.dataset.role === 'stride') ctl.setStride(+el.value);
+  else if (el.dataset.role === 'stride') {
+    ctl.setStride(+el.value); sessionPatch('viewer', { stride: +el.value });
+  }
 }

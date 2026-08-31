@@ -3,7 +3,7 @@
 // preset picker + board params. Captures are rig-wide only ("Capture all"), so
 // set N is index-aligned across cameras and can be deleted as a unit. A saved
 // preset carries its sets, so it can be reopened, pruned, and re-solved.
-import { api, log, state, FRONTEND_CONFIG } from './core.js';
+import { api, log, state, FRONTEND_CONFIG, sessionGet, sessionSet } from './core.js';
 import * as cameras from './cameras.js';
 
 const ARUCO_DICTS = [
@@ -24,8 +24,16 @@ let openedPreset = null;   // name of the preset whose sets are shown, or null (
 
 function template() {
   const c = FRONTEND_CONFIG.calibration || { chess: {}, aruco: {} };
+  // session board params win over the config defaults (survive tab switches)
+  const s = sessionGet('calibBoard', null);
+  const b = s || {
+    type: 'aruco',
+    cols: c.aruco.boardSize?.[0] ?? 8, rows: c.aruco.boardSize?.[1] ?? 10,
+    square: c.aruco.squareSize ?? 0.05, marker: c.aruco.markerSize ?? 0.035,
+    dict: c.aruco.defaultDict,
+  };
   const arucoOpts = ARUCO_DICTS.map(n =>
-    `<option ${n === c.aruco.defaultDict ? 'selected' : ''}>${n}</option>`).join('');
+    `<option ${n === b.dict ? 'selected' : ''}>${n}</option>`).join('');
   return `
   <div class="calib-tab">
     <div class="calib-cards" id="calib-cards"></div>
@@ -55,18 +63,18 @@ function template() {
         <div class="calib-sec-title">Board</div>
         <div class="cfg-row"><label>Type</label>
           <select id="board-type">
-            <option value="chess">Chessboard</option>
-            <option value="aruco" selected>ChArUco</option>
+            <option value="chess" ${b.type === 'chess' ? 'selected' : ''}>Chessboard</option>
+            <option value="aruco" ${b.type !== 'chess' ? 'selected' : ''}>ChArUco</option>
           </select></div>
         <div class="cfg-row"><label>Cols</label>
-          <input type="number" id="board-width" min="1" value="${c.aruco.boardSize?.[0] ?? 8}"></div>
+          <input type="number" id="board-width" min="1" value="${b.cols}"></div>
         <div class="cfg-row"><label>Rows</label>
-          <input type="number" id="board-height" min="1" value="${c.aruco.boardSize?.[1] ?? 10}"></div>
+          <input type="number" id="board-height" min="1" value="${b.rows}"></div>
         <div class="cfg-row"><label>Square (m)</label>
-          <input type="number" id="square-size" step="0.001" min="0.001" value="${c.aruco.squareSize ?? 0.05}"></div>
+          <input type="number" id="square-size" step="0.001" min="0.001" value="${b.square}"></div>
         <div id="aruco-fields">
           <div class="cfg-row"><label>Marker (m)</label>
-            <input type="number" id="marker-size" step="0.001" min="0.001" value="${c.aruco.markerSize ?? 0.035}"></div>
+            <input type="number" id="marker-size" step="0.001" min="0.001" value="${b.marker}"></div>
           <div class="cfg-row"><label>Dictionary</label>
             <select id="aruco-dict">${arucoOpts}</select></div>
         </div>
@@ -139,7 +147,17 @@ function syncBoardFieldVisibility() {
   view.querySelector('#aruco-fields').style.display = boardType() === 'aruco' ? '' : 'none';
 }
 
+function persistBoard() {
+  const p = boardParams();
+  sessionSet('calibBoard', {
+    type: boardType(),
+    cols: p.board_size[0], rows: p.board_size[1], square: p.square_size,
+    marker: p.marker_size ?? 0.035, dict: p.aruco_dict ?? view.querySelector('#aruco-dict').value,
+  });
+}
+
 async function syncParams() {
+  persistBoard();
   try { await api('POST', `/api/calibration/sync?board_type=${boardType()}`, boardParams()); }
   catch (e) { log('Board param sync failed: ' + e, 'error'); }
 }
@@ -338,6 +356,7 @@ export function mount(container) {
   openedPreset = null;
   view.innerHTML = template();
   syncBoardFieldVisibility();
+  syncParams();          // push the (session-remembered) board params to the server
   renderCards();
   refreshPresets();
   refreshSets();

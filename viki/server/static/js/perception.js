@@ -2,7 +2,7 @@
 // several / a whole dataset of episodes to a background queue, and inspect the
 // result (per-camera + fused hand skeletons, cloud, trajectory) in the shared
 // scene3d viewer on the left.
-import { api, log } from './core.js';
+import { api, log, sessionGet, sessionSet, sessionPatch } from './core.js';
 import * as scene3d from './scene3d.js';
 
 const LM_NAMES = [
@@ -19,9 +19,16 @@ const LAYER_LABELS = {
   palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox',
 };
 
+const DEFAULT_OPTS = {
+  backend: 'mediapipe', model: '', hand: 'right', flip: false,
+  track_lm: DEFAULT_LM, min_confidence: 0.5, interp_max_gap: 0,
+  sg_window: 7, sg_polyorder: 2, build_cloud: true, cloud_stride: 6, dataset: '',
+};
+
 let root = null, ctl = null, models = {}, episodes = [], poll = 0;
 
 export function mount(view) {
+  const S = { ...DEFAULT_OPTS, ...sessionGet('perceive', {}) };
   root = document.createElement('div');
   root.className = 'perception-tab';
   root.innerHTML = `
@@ -51,7 +58,7 @@ export function mount(view) {
         <div class="cfg-row"><label>Hand</label>
           <select data-role="hand"><option>right</option><option>left</option></select></div>
         <div class="cfg-row"><label>Flip for handedness</label>
-          <input type="checkbox" data-role="flip"></div>
+          <input type="checkbox" data-role="flip" ${S.flip ? 'checked' : ''}></div>
       </section>
 
       <section class="calib-sec">
@@ -64,17 +71,17 @@ export function mount(view) {
       <section class="calib-sec">
         <div class="calib-sec-title">Parameters</div>
         <div class="cfg-row"><label>Min confidence</label>
-          <input type="number" data-role="minconf" min="0" max="1" step="0.05" value="0.5"></div>
+          <input type="number" data-role="minconf" min="0" max="1" step="0.05" value="${S.min_confidence}"></div>
         <div class="cfg-row"><label>Interp max gap</label>
-          <input type="number" data-role="gap" min="0" value="0"></div>
+          <input type="number" data-role="gap" min="0" value="${S.interp_max_gap}"></div>
         <div class="cfg-row"><label>SG window</label>
-          <input type="number" data-role="sgwin" min="3" step="2" value="7"></div>
+          <input type="number" data-role="sgwin" min="3" step="2" value="${S.sg_window}"></div>
         <div class="cfg-row"><label>SG polyorder</label>
-          <input type="number" data-role="sgpoly" min="1" value="2"></div>
+          <input type="number" data-role="sgpoly" min="1" value="${S.sg_polyorder}"></div>
         <div class="cfg-row"><label>Build cloud</label>
-          <input type="checkbox" data-role="cloud" checked></div>
+          <input type="checkbox" data-role="cloud" ${S.build_cloud ? 'checked' : ''}></div>
         <div class="cfg-row"><label>Cloud stride</label>
-          <input type="number" data-role="stride" min="1" max="12" value="6"></div>
+          <input type="number" data-role="stride" min="1" max="12" value="${S.cloud_stride}"></div>
       </section>
 
       <section class="calib-sec">
@@ -92,21 +99,23 @@ export function mount(view) {
     </aside>`;
   view.appendChild(root);
 
-  ctl = scene3d.create(root.querySelector('[data-role="canvas"]'), { api, log });
+  ctl = scene3d.create(root.querySelector('[data-role="canvas"]'), {
+    api, log, layers: sessionGet('viewerLayers', null),
+  });
   ctl.onFrame((f, n) => {
     root.querySelector('[data-role="time"]').max = Math.max(0, n - 1);
     root.querySelector('[data-role="time"]').value = f;
     root.querySelector('[data-role="frame-lbl"]').textContent = `${n ? f + 1 : 0} / ${n}`;
   });
 
-  renderTrack(DEFAULT_LM);
+  renderTrack(S.track_lm);
   renderLayers();
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
   root.addEventListener('input', onInput);
 
-  loadModels();
-  loadDatasets();
+  loadModels(S);
+  loadDatasets(S.dataset);
   refreshQueue();
   poll = setInterval(refreshQueue, 1500);
 }
@@ -119,21 +128,25 @@ export function unmount() {
 
 // ── model + track UI ──────────────────────────────────────────────────
 
-async function loadModels() {
+async function loadModels(S) {
   try { models = await api('GET', '/api/pipeline/models'); }
   catch (e) { log('models: ' + e, 'error'); return; }
   const bsel = root.querySelector('[data-role="backend"]');
   bsel.innerHTML = Object.keys(models).map(b => `<option>${b}</option>`).join('');
-  syncModelSelect();
+  if (S && models[S.backend]) bsel.value = S.backend;
+  root.querySelector('[data-role="hand"]').value = S?.hand || 'right';
+  syncModelSelect(S && S.model);
 }
 
-function syncModelSelect() {
+function syncModelSelect(want) {
   const b = root.querySelector('[data-role="backend"]').value;
   const msel = root.querySelector('[data-role="model"]');
   const list = models[b] || [];
   msel.innerHTML = list.map(m =>
     `<option value="${m.id}">${m.tier} — ${m.id}${m.present ? '' : ' (not downloaded)'}</option>`).join('');
+  if (want && list.some(m => m.id === want)) msel.value = want;
   syncDownloadBtn();
+  persist();
 }
 
 function syncDownloadBtn() {
@@ -167,13 +180,26 @@ function renderLayers() {
     `<label><input type="checkbox" data-layer="${k}" ${st[k] ? 'checked' : ''}> ${l}</label>`).join('');
 }
 
+// mirror the current form into the session store so leaving the tab and coming
+// back keeps every setting.
+function persist() {
+  if (!root) return;
+  sessionSet('perceive', {
+    ...opts(),
+    model: root.querySelector('[data-role="model"]').value || '',
+    dataset: root.querySelector('[data-role="dataset"]').value || '',
+  });
+}
+
 // ── datasets + episodes ───────────────────────────────────────────────
 
-async function loadDatasets() {
+async function loadDatasets(wantDs) {
   try {
     const { datasets } = await api('GET', '/api/datasets');
     const sel = root.querySelector('[data-role="dataset"]');
     sel.innerHTML = datasets.map(d => `<option value="${d.name}">${d.name} (${d.episodes})</option>`).join('');
+    if (wantDs && datasets.some(d => d.name === wantDs)) sel.value = wantDs;
+    persist();
     loadEpisodes();
   } catch (e) { log('datasets: ' + e, 'error'); }
 }
@@ -292,16 +318,21 @@ function setPlayIcon(playing) {
 function onChange(e) {
   const el = e.target;
   if (el.dataset.role === 'backend') syncModelSelect();
-  else if (el.dataset.role === 'model') syncDownloadBtn();
-  else if (el.dataset.role === 'dataset') loadEpisodes();
-  else if (el.dataset.lm !== undefined) updateTrackSummary();
-  else if (el.dataset.layer) ctl.setLayer(el.dataset.layer, el.checked);
+  else if (el.dataset.role === 'model') { syncDownloadBtn(); persist(); }
+  else if (el.dataset.role === 'dataset') { persist(); loadEpisodes(); }
+  else if (el.dataset.lm !== undefined) { updateTrackSummary(); persist(); }
+  else if (el.dataset.layer) {
+    ctl.setLayer(el.dataset.layer, el.checked);
+    sessionPatch('viewerLayers', { [el.dataset.layer]: el.checked });
+  }
   else if (el.dataset.role === 'all') {
     root.querySelectorAll('[data-ep]').forEach(c => { c.checked = el.checked; });
   }
+  else if (el.dataset.role) persist();   // any other param widget
 }
 
 function onInput(e) {
   const el = e.target;
   if (el.dataset.role === 'time') ctl.setFrame(+el.value);
+  else if (el.dataset.role) persist();   // number fields fire input while typing
 }

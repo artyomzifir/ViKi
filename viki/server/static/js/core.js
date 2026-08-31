@@ -7,6 +7,25 @@ export let CAMERA_CONFIG = {};
 
 export const state = {}; // device_id -> { running, type, infoInterval }
 
+// Per-page-session settings that survive tab switches (a tab reads its widgets
+// from here on mount and writes back on change). NOT persisted to the server —
+// that's the Config modal's job; this just stops params snapping back to
+// defaults every time you leave and re-enter a tab.
+export const session = {};
+
+export function sessionGet(key, fallback) {
+  return key in session ? session[key] : fallback;
+}
+export function sessionSet(key, value) {
+  session[key] = value;
+  return value;
+}
+// merge a partial into an object-valued session key
+export function sessionPatch(key, partial) {
+  session[key] = { ...(session[key] || {}), ...partial };
+  return session[key];
+}
+
 // ── Logging ────────────────────────────────────────────────────────────────
 // One rolling buffer. The newest entry shows in the header's one-line slot
 // (#log-line); the full list renders into the popover (#log-popover .log-list).

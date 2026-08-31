@@ -1,7 +1,7 @@
 // Record tab: pick/create a dataset, give the take an initial label, capture a
 // synced RGB-D scene into data/datasets/<dataset>/<id>/, and browse + manage the
 // episodes already in that dataset. All input is on-page — no browser dialogs.
-import { api, log, state, FRONTEND_CONFIG } from './core.js';
+import { api, log, state, FRONTEND_CONFIG, sessionGet, sessionPatch } from './core.js';
 import * as cameras from './cameras.js';
 
 let view = null;
@@ -14,7 +14,8 @@ let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 // ── template ──────────────────────────────────────────────────────────────
 
 function template() {
-  const rec = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
+  const cfg = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
+  const rec = { duration: cfg.duration ?? 10, fps: cfg.fps ?? 15, ...sessionGet('record', {}) };
   return `
   <div class="record-tab">
     <div class="record-main">
@@ -48,9 +49,9 @@ function template() {
       <section class="calib-sec">
         <div class="calib-sec-title">Capture</div>
         <div class="cfg-row"><label>Seconds</label>
-          <input type="number" id="rec-seconds" min="1" value="${rec.duration ?? 10}"></div>
+          <input type="number" id="rec-seconds" min="1" value="${rec.duration}"></div>
         <div class="cfg-row"><label>FPS</label>
-          <input type="number" id="rec-fps" min="1" value="${rec.fps ?? 15}"></div>
+          <input type="number" id="rec-fps" min="1" value="${rec.fps}"></div>
         <button id="rec-go" class="primary">● Record</button>
         <div class="hint" id="rec-hint">Start ≥1 camera, pick a dataset.</div>
       </section>
@@ -123,7 +124,7 @@ async function loadDatasets(select) {
   let list = [];
   try { ({ datasets: list } = await api('GET', '/api/datasets')); }
   catch (e) { log('Failed to load datasets: ' + e, 'error'); }
-  const keep = select || sel.value;
+  const keep = select || sel.value || sessionGet('record', {}).dataset;
   sel.innerHTML = '<option value="">＋ new dataset…</option>' +
     list.map(d => `<option value="${d.name}">${d.name} (${d.episodes})</option>`).join('');
   if (keep && list.some(d => d.name === keep)) sel.value = keep;
@@ -323,11 +324,20 @@ function onKeydown(e) {
 }
 
 function onChange(e) {
-  if (e.target.id === 'rec-dataset') onDatasetChange();
+  if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
+  else if (e.target.id === 'rec-seconds' || e.target.id === 'rec-fps') persistRec();
   else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
     cameras.noteCardChange(view, e.target.dataset.id);  // fold into session config
     renderCards();  // refresh the "running as X" mismatch warning
   }
+}
+
+function persistRec() {
+  sessionPatch('record', {
+    duration: +view.querySelector('#rec-seconds').value || 10,
+    fps: +view.querySelector('#rec-fps').value || 15,
+    dataset: view.querySelector('#rec-dataset').value || '',
+  });
 }
 
 // ── mount / unmount ──────────────────────────────────────────────────────
