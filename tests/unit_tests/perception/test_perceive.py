@@ -94,6 +94,8 @@ def test_perceive_end_to_end(tmp_path, monkeypatch):
 
 def test_perceive_opts_from_dict_defaults():
     o = PerceiveOpts.from_dict({})
-    assert o.backend and isinstance(o.track_lm, list) and len(o.track_lm) >= 6
+    assert o.model and isinstance(o.track_lm, list) and len(o.track_lm) >= 6
+    # legacy 'backend' key still maps to model
+    assert PerceiveOpts.from_dict({"backend": "rtmpose-m-hand5"}).model == "rtmpose-m-hand5"
     o2 = PerceiveOpts.from_dict({"hand": "left", "sg_window": 9, "track_lm": [0, 4, 8]})
     assert o2.hand == "left" and o2.sg_window == 9 and o2.track_lm == [0, 4, 8]

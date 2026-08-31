@@ -63,6 +63,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN mkdir -p viki && touch viki/__init__.py
 RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps -e .
 
+# ── Perception backend: RTMPose-Hand via rtmlib on ONNX Runtime ───────────────
+# rtmlib hard-depends on opencv-python, which would fight the
+# opencv-python-headless pinned in pyproject.toml — install it without deps and
+# bring its real needs (onnxruntime, tqdm; cv2 comes from headless) explicitly.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install "onnxruntime>=1.17" "tqdm>=4.66" && \
+    pip install --no-deps rtmlib
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 RUN chmod +x /app/docker/entrypoint.sh

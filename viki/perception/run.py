@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PerceiveOpts:
-    backend: str = "mediapipe"
-    model: str | None = None
+    model: str = "mediapipe"          # registry.MODELS id
     hand: str = "right"
     track_lm: list[int] | None = None
     min_confidence: float = 0.5
@@ -40,8 +39,8 @@ class PerceiveOpts:
 
         d = dict(d or {})
         return cls(
-            backend=d.get("backend") or getattr(cfg, "POSE_BACKEND", "mediapipe"),
-            model=d.get("model") or None,
+            model=(d.get("model") or d.get("backend")            # 'backend' = legacy
+                   or getattr(cfg, "POSE_BACKEND", None) or "mediapipe"),
             hand=d.get("hand") or "right",
             track_lm=(
                 list(d["track_lm"]) if d.get("track_lm")
@@ -74,7 +73,6 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
     report(stage="extract", frame=0, total=0)
     extract_episode(
         ep,
-        backend=opts.backend,
         model=opts.model,
         hand=opts.hand,
         track_lm=opts.track_lm,
