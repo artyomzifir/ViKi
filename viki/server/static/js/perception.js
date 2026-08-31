@@ -51,7 +51,7 @@ export function mount(view) {
 
     <aside class="perc-side">
       <section class="calib-sec">
-        <div class="calib-sec-title">Model</div>
+        <div class="calib-sec-title">1 · Model</div>
         <div class="cfg-row"><label>Backend</label><select data-role="backend"></select></div>
         <div class="cfg-row"><label>Model</label><select data-role="model"></select></div>
         <button data-role="download" hidden>Download model</button>
@@ -62,14 +62,14 @@ export function mount(view) {
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">Track landmarks</div>
+        <div class="calib-sec-title">2 · Track landmarks</div>
         <details><summary data-role="track-sum">9 / 21</summary>
           <div class="perc-track" data-role="track"></div>
         </details>
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">Parameters</div>
+        <div class="calib-sec-title">3 · Parameters</div>
         <div class="cfg-row"><label>Min confidence</label>
           <input type="number" data-role="minconf" min="0" max="1" step="0.05" value="${S.min_confidence}"></div>
         <div class="cfg-row"><label>Interp max gap</label>
@@ -85,7 +85,7 @@ export function mount(view) {
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">Run</div>
+        <div class="calib-sec-title">4 · Run</div>
         <div class="cfg-row"><label>Dataset</label><select data-role="dataset"></select></div>
         <div class="perc-eps" data-role="eps"></div>
         <label class="perc-all"><input type="checkbox" data-role="all"> select all</label>

@@ -31,7 +31,7 @@ function template() {
 
     <aside class="record-side">
       <section class="calib-sec">
-        <div class="calib-sec-title">Dataset</div>
+        <div class="calib-sec-title">1 · Dataset</div>
         <select id="rec-dataset"></select>
         <div class="inline-add" id="rec-ds-add" hidden>
           <input type="text" id="rec-ds-name" placeholder="new dataset name">
@@ -40,14 +40,14 @@ function template() {
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">Label</div>
+        <div class="calib-sec-title">2 · Label <span class="hint">(optional)</span></div>
         <div class="cfg-row"><label>Task</label><input type="text" id="rec-task" placeholder="pick the cube"></div>
         <div class="cfg-row"><label>Demonstrator</label><input type="text" id="rec-demo"></div>
         <div class="hint">hand is chosen per-run in the Extract tab</div>
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">Capture</div>
+        <div class="calib-sec-title">3 · Capture</div>
         <div class="cfg-row"><label>Seconds</label>
           <input type="number" id="rec-seconds" min="1" value="${rec.duration}"></div>
         <div class="cfg-row"><label>FPS</label>

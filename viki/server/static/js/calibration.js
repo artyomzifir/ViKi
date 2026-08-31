@@ -48,19 +48,9 @@ function template() {
 
     <aside class="calib-side">
       <section class="calib-sec">
-        <div class="calib-sec-title">Active preset</div>
-        <select id="calib-preset"></select>
-        <div class="hint" id="calib-preset-info">—</div>
-        <button id="calib-preset-open" hidden>Open sets</button>
-        <button id="calib-preset-k4a" title="attach the running Kinects' raw depth↔colour calibration to this preset">Grab k4a calibration</button>
-        <div class="inline-add">
-          <input type="text" id="calib-preset-name" placeholder="save current as…">
-          <button id="calib-preset-save">Save</button>
-        </div>
-      </section>
-
-      <section class="calib-sec">
         <div class="calib-sec-title">Board</div>
+        <div class="hint">Match the printed board. Lay it <b>flat on the table,
+          face up</b>, where the work happens — it defines the world origin.</div>
         <div class="cfg-row"><label>Type</label>
           <select id="board-type">
             <option value="chess" ${b.type === 'chess' ? 'selected' : ''}>Chessboard</option>
@@ -81,12 +71,26 @@ function template() {
       </section>
 
       <section class="calib-sec">
-        <button id="calib-start-session" class="primary">Start session</button>
-        <button id="calib-capture-all" class="primary">Capture all</button>
-        <button id="calib-solve" class="primary">Calibrate extrinsics</button>
+        <div class="calib-sec-title">Calibrate</div>
+        <div class="hint">Start every camera (top bar) so each one sees the board.</div>
+        <button id="calib-start-session" class="primary">1 · Start session</button>
+        <button id="calib-capture-all" class="primary">2 · Capture all <span class="hint">(3–10×, board static)</span></button>
+        <button id="calib-solve" class="primary">3 · Calibrate extrinsics</button>
+        <div class="inline-add">
+          <input type="text" id="calib-preset-name" placeholder="preset name">
+          <button id="calib-preset-save" class="primary">4 · Save</button>
+        </div>
+        <div class="hint">Save also grabs the Kinects' depth↔colour calibration.
+          Delete bad sets on the left before step 3.</div>
         <button id="calib-clear" class="danger">Clear samples</button>
-        <div class="hint">Capture the whole rig at once, with the board visible to
-          every camera. Delete bad sets on the left before calibrating.</div>
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">Load a saved preset</div>
+        <select id="calib-preset"></select>
+        <div class="hint" id="calib-preset-info">—</div>
+        <button id="calib-preset-open" hidden>Open sets</button>
+        <button id="calib-preset-k4a" hidden title="attach the running Kinects' raw depth↔colour calibration to this preset">Grab k4a calibration for this preset</button>
       </section>
     </aside>
   </div>`;
