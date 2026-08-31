@@ -62,13 +62,16 @@ class SceneRecorder:
         self._timestamps: list[dict] = []
         self._n = 0
 
-    def record(self, seconds: float, fps: int = 15) -> Episode:
-        """Block for ``seconds``, writing every synced group. Returns the episode."""
+    def record(self, seconds: float, fps: int = 15, stop_event=None) -> Episode:
+        """Write every synced group until ``seconds`` elapse or ``stop_event``
+        is set (the Stop button). ``seconds`` is the safety cap. Returns the episode."""
         sync = MultiCameraSync(self._mgr, sync_fps=fps)
         self._write_sensor_meta()
         period = 1.0 / fps
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                break
             t0 = time.monotonic()
             group = sync.get_synced_frame()
             if group is not None:
