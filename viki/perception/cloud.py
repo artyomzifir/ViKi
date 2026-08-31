@@ -65,8 +65,16 @@ def _fps_from_timestamps(raw: Path) -> float:
 def _voxel_downsample(xyz: np.ndarray, rgb: np.ndarray, leaf: float) -> tuple[np.ndarray, np.ndarray]:
     if leaf <= 0 or len(xyz) == 0:
         return xyz, rgb
-    keys = np.floor(xyz / leaf).astype(np.int64)
-    _, idx = np.unique(keys, axis=0, return_index=True)
+    # Pack the 3 voxel indices into one int64 and de-dup on that — a single 1-D
+    # sort, ~10x faster than np.unique(axis=0)'s structured lexsort (this is the
+    # per-frame hot path of the whole cloud build).
+    keys = np.floor((xyz - xyz.min(axis=0)) / leaf).astype(np.int64)
+    span = keys.max(axis=0) + 1
+    if span[0] * span[1] * span[2] < (1 << 62):
+        code = keys[:, 0] + span[0] * (keys[:, 1] + span[1] * keys[:, 2])
+        _, idx = np.unique(code, return_index=True)
+    else:  # workspace too large to pack — fall back
+        _, idx = np.unique(keys, axis=0, return_index=True)
     idx.sort()
     return xyz[idx], rgb[idx]
 
@@ -91,7 +99,13 @@ def _camera_cloud(
     cal,
     T_world_cam: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """One camera, one frame → (xyz_world Nx3 metres, rgb Nx3 uint8)."""
+    """One camera, one frame → (xyz_world Nx3 metres, rgb Nx3 uint8).
+
+    Fully vectorised. When a k4a calibration is available the depth→colour-3D
+    deprojection uses a precomputed ``(A, B)`` ray map (exact SDK lens model,
+    built once and cached) so every frame is pure NumPy — no per-pixel ctypes
+    loop.
+    """
     dh, dw = depth_mm.shape[:2]
     vs, us = np.mgrid[0:dh:stride, 0:dw:stride]
     us = us.ravel()
@@ -105,14 +119,11 @@ def _camera_cloud(
     ch, cw = color_bgr.shape[:2]
 
     if cal is not None:
-        pts = np.empty((us.size, 3), np.float64)
-        ok = np.zeros(us.size, bool)
-        for i in range(us.size):
-            p = cal.deproject_depth_px_to_color3d(float(us[i]), float(vs[i]), float(z[i]))
-            if p is not None:
-                pts[i] = p
-                ok[i] = True
-        pts = pts[ok] / 1000.0  # mm → m, in the colour camera frame
+        A, B = cal.color_deproject_maps(dh, dw)  # (dh, dw, 3) each, mm; cached
+        pts = z[:, None] * A[vs, us] + B[vs, us]  # mm, colour camera frame
+        finite = np.isfinite(pts).all(axis=1)
+        pts = pts[finite] / 1000.0  # mm → m
+        us, vs = us[finite], vs[finite]
         if pts.size == 0:
             return np.empty((0, 3), np.float32), np.empty((0, 3), np.uint8)
         uu = pts[:, 0] / pts[:, 2] * K_color[0, 0] + K_color[0, 2]
@@ -131,7 +142,7 @@ def _camera_cloud(
     vi = np.clip(np.round(vv), 0, ch - 1).astype(np.int64)
     rgb = color_bgr[vi, ui][:, ::-1].copy()  # BGR → RGB
 
-    world = (T_world_cam @ np.c_[pts, np.ones(len(pts))].T).T[:, :3]
+    world = pts @ T_world_cam[:3, :3].T + T_world_cam[:3, 3]
     return world.astype(np.float32), rgb.astype(np.uint8)
 
 
@@ -144,17 +155,30 @@ def _pack(xyz: np.ndarray, rgb: np.ndarray) -> bytes:
     )
 
 
-def build_cloud(ep, stride: int | None = None) -> str:
-    """Write ``cloud/<i>.bin`` + ``cloud/meta.json`` for the episode. Returns the dir."""
+def build_cloud(
+    ep,
+    stride: int | None = None,
+    *,
+    voxel: float | None = None,
+    bbox: list[float] | None = None,
+    max_points: int | None = None,
+    report=None,
+) -> str:
+    """Write ``cloud/<i>.bin`` + ``cloud/meta.json`` for the episode. Returns the dir.
+
+    ``stride`` / ``voxel`` / ``bbox`` / ``max_points`` default to the ``CLOUD_*``
+    config keys. ``report(stage="cloud", frame=i, total=N)`` is called ~every 15
+    frames so a queue job can show a progress bar.
+    """
     raw = ep.raw_dir
     intr_all = _read_json(raw / "intrinsics.json")
     extr_all = _read_json(raw / "extrinsics.json")
     meta_all = _read_json(ep.meta_path)
 
     stride = max(1, int(stride if stride is not None else getattr(config, "CLOUD_STRIDE", 6)))
-    voxel = float(getattr(config, "CLOUD_VOXEL_M", 0.005))
-    bbox = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
-    cap = int(getattr(config, "CLOUD_MAX_POINTS_PER_FRAME", 40000))
+    voxel = float(voxel if voxel is not None else getattr(config, "CLOUD_VOXEL_M", 0.005))
+    bbox = list(bbox if bbox is not None else (getattr(config, "CLOUD_WORKSPACE_BBOX", []) or []))
+    cap = int(max_points if max_points is not None else getattr(config, "CLOUD_MAX_POINTS_PER_FRAME", 40000))
 
     from viki.perception.k4a_offline import K4ACalibration
 
@@ -192,6 +216,14 @@ def build_cloud(ep, stride: int | None = None) -> str:
     for old in out_dir.glob("*.bin"):
         old.unlink()
 
+    total = 0
+    if cams:
+        total = int(cams[0]["cap"].get(cv2.CAP_PROP_FRAME_COUNT)) or len(
+            list(cams[0]["depth_dir"].glob("*.npy"))
+        )
+    if report:
+        report(stage="cloud", frame=0, total=total)
+
     per_frame: list[int] = []
     lo = np.array([np.inf] * 3)
     hi = np.array([-np.inf] * 3)
@@ -225,7 +257,9 @@ def build_cloud(ep, stride: int | None = None) -> str:
             xyz, rgb = _crop_bbox(xyz, rgb, bbox)
             xyz, rgb = _voxel_downsample(xyz, rgb, voxel)
             if cap and len(xyz) > cap:
-                sel = np.random.default_rng(0).choice(len(xyz), cap, replace=False)
+                # even stride to the budget — deterministic and O(1) to pick,
+                # and the cloud is already voxel-uniform so it stays uniform
+                sel = np.linspace(0, len(xyz) - 1, cap).astype(np.int64)
                 xyz, rgb = xyz[sel], rgb[sel]
             if len(xyz):
                 lo = np.minimum(lo, xyz.min(axis=0))
@@ -237,9 +271,14 @@ def build_cloud(ep, stride: int | None = None) -> str:
         (out_dir / f"{i:06d}.bin").write_bytes(_pack(xyz, rgb))
         per_frame.append(int(len(xyz)))
         i += 1
+        if report and i % 15 == 0:
+            report(stage="cloud", frame=i, total=max(total, i))
 
     for c in cams:
         c["cap"].release()
+
+    if report:
+        report(stage="cloud", frame=i, total=i)
 
     bounds = (
         [float(v) for v in (*lo, *hi)]

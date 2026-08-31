@@ -44,6 +44,7 @@ class K4ACalibration:
         self._calib = ctypes.cast(buf, ctypes.c_void_p)
         self._k = kinect_mod
         self._lib = kinect_mod._lib
+        self._deproj_cache: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
 
     # ------------------------------------------------------------------
 
@@ -150,6 +151,39 @@ class K4ACalibration:
         if res == k.K4A_RESULT_SUCCEEDED and valid.value:
             return np.array([dst.x, dst.y, dst.z], dtype=np.float64)
         return None
+
+    def color_deproject_maps(self, dh: int, dw: int) -> tuple[np.ndarray, np.ndarray]:
+        """Vectorised equivalent of :meth:`deproject_depth_px_to_color3d` over a
+        whole ``dh × dw`` depth image.
+
+        ``k4a_calibration_2d_to_3d(DEPTH→COLOR)`` is *affine* in the input depth:
+        it undistorts the depth pixel to a ray, scales the ray by ``z``, then
+        applies the fixed depth→colour rigid transform ``(R, t)`` — i.e.
+        ``p_color(u, v, z) = z · A[v, u] + B[v, u]`` with ``A = R · ray(u, v)``
+        and ``B = t`` (a constant, the ~32 mm sensor offset). So we call the SDK
+        twice per pixel *once* to recover ``(A, B)`` (exact same lens model, no
+        pinhole approximation), cache it per image size, and every frame after
+        that is pure NumPy. Pixels the SDK rejects get NaN in both maps.
+
+        Returns ``(A, B)`` each shape ``(dh, dw, 3)``, millimetres.
+        """
+        key = (int(dh), int(dw))
+        hit = self._deproj_cache.get(key)
+        if hit is not None:
+            return hit
+        A = np.full((dh, dw, 3), np.nan, dtype=np.float64)
+        B = np.full((dh, dw, 3), np.nan, dtype=np.float64)
+        for v in range(dh):
+            for u in range(dw):
+                p1 = self.deproject_depth_px_to_color3d(u, v, 1000.0)
+                p2 = self.deproject_depth_px_to_color3d(u, v, 2000.0)
+                if p1 is not None and p2 is not None:
+                    a = (p2 - p1) / 1000.0
+                    A[v, u] = a
+                    B[v, u] = p1 - a * 1000.0
+        self._deproj_cache[key] = (A, B)
+        logger.info("k4a_offline: built %dx%d colour-deprojection maps", dw, dh)
+        return A, B
 
     def depth3d_to_color3d(self, xyz_m) -> np.ndarray | None:
         """3-D point (metres) in the depth camera frame → the colour camera frame
