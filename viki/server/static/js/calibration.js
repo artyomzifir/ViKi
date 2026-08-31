@@ -391,5 +391,8 @@ function onChange(e) {
   else if (['board-width', 'board-height', 'square-size', 'marker-size'].includes(el.id)
     || el.id === 'aruco-dict') { syncParams(); }
   else if (el.id === 'calib-preset') { activatePreset(el.value); refreshPresets(); }
-  else if (el.dataset.role === 'depthmode') cameras.updateFpsForDepthMode(view, el.dataset.id);
+  else if (['res', 'fps', 'depthmode'].includes(el.dataset.role)) {
+    cameras.noteCardChange(view, el.dataset.id);   // session-wide camera config
+    renderCards();
+  }
 }

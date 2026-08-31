@@ -325,7 +325,7 @@ function onKeydown(e) {
 function onChange(e) {
   if (e.target.id === 'rec-dataset') onDatasetChange();
   else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
-    if (e.target.dataset.role === 'depthmode') cameras.updateFpsForDepthMode(view, e.target.dataset.id);
+    cameras.noteCardChange(view, e.target.dataset.id);  // fold into session config
     renderCards();  // refresh the "running as X" mismatch warning
   }
 }
