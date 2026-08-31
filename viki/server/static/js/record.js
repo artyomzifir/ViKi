@@ -6,6 +6,7 @@ import * as cameras from './cameras.js';
 
 let view = null;
 let onCamerasChanged = null;
+let cloudPoll = null;            // interval id for the post-capture cloud-build bar
 let recording = false;
 let builtIds = '';               // csv of device ids currently rendered as cards
 let editingPath = null;          // episode row in inline metadata-edit mode
@@ -16,6 +17,7 @@ let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 function template() {
   const cfg = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
   const rec = { duration: cfg.duration ?? 10, fps: cfg.fps ?? 15, ...sessionGet('record', {}) };
+  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2] }), ...sessionGet('cloud', {}) };
   return `
   <div class="record-tab">
     <div class="record-main">
@@ -54,6 +56,20 @@ function template() {
           <input type="number" id="rec-fps" min="1" value="${rec.fps}"></div>
         <button id="rec-go" class="primary">● Record</button>
         <div class="hint" id="rec-hint">Start ≥1 camera, pick a dataset.</div>
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">4 · Point cloud <span class="hint">(built per episode after capture)</span></div>
+        <div class="cfg-row"><label>Depth px stride</label>
+          <input type="number" id="rec-cl-stride" min="1" step="1" value="${cl.stride}"></div>
+        <div class="cfg-row"><label>Voxel leaf (m)</label>
+          <input type="number" id="rec-cl-voxel" min="0" step="0.001" value="${cl.voxel}"></div>
+        <div class="cfg-row"><label>Max points / frame</label>
+          <input type="number" id="rec-cl-max" min="0" step="1000" value="${cl.maxPoints}"></div>
+        <div class="cfg-row"><label>Workspace AABB</label>
+          <input type="text" id="rec-cl-bbox" placeholder="x0,x1,y0,y1,z0,z1" value="${(cl.bbox || []).join(', ')}"></div>
+        <div class="hint">x0,x1,y0,y1,z0,z1 in metres — empty = no crop</div>
+        <div id="rec-cloud-progress" class="perc-queue"></div>
       </section>
     </aside>
   </div>`;
@@ -255,6 +271,7 @@ async function record() {
     demonstrator: view.querySelector('#rec-demo').value,
     seconds: +view.querySelector('#rec-seconds').value || 10,
     fps: +view.querySelector('#rec-fps').value || 15,
+    cloud: cloudOpts(),
   };
   if (!body.dataset) { log('Pick a dataset first', 'error'); return; }
   const box = view.querySelector('#record-cards');
@@ -278,7 +295,12 @@ async function record() {
     recording = false;
     cameras.setRecording(false);
     updateHint();
-    if (j.status === 'done') { log(`Recorded → ${j.result?.episode}`, 'ok'); loadEpisodes(); loadDatasets(); }
+    if (j.status === 'done') {
+      log(`Recorded → ${j.result?.episode}`, 'ok');
+      loadEpisodes(); loadDatasets();
+      const epId = (j.result?.episode || '').split('/').filter(Boolean).pop();
+      watchCloud(epId);
+    }
     else log(`Recording failed: ${j.error}`, 'error');
   }, 1000);
 }
@@ -326,6 +348,7 @@ function onKeydown(e) {
 function onChange(e) {
   if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
   else if (e.target.id === 'rec-seconds' || e.target.id === 'rec-fps') persistRec();
+  else if (['rec-cl-stride', 'rec-cl-voxel', 'rec-cl-max', 'rec-cl-bbox'].includes(e.target.id)) persistCloud();
   else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
     cameras.noteCardChange(view, e.target.dataset.id);  // fold into session config
     renderCards();  // refresh the "running as X" mismatch warning
@@ -338,6 +361,56 @@ function persistRec() {
     fps: +view.querySelector('#rec-fps').value || 15,
     dataset: view.querySelector('#rec-dataset').value || '',
   });
+}
+
+// ── point-cloud params + post-capture build progress ─────────────────────
+
+function cloudOpts() {
+  const bbox = (view.querySelector('#rec-cl-bbox').value || '')
+    .split(',').map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
+  return {
+    stride: Math.max(1, +view.querySelector('#rec-cl-stride').value || 1),
+    voxel: Math.max(0, +view.querySelector('#rec-cl-voxel').value || 0),
+    max_points: Math.max(0, +view.querySelector('#rec-cl-max').value || 0),
+    bbox: bbox.length === 6 ? bbox : null,
+  };
+}
+
+function persistCloud() {
+  const o = cloudOpts();
+  sessionPatch('cloud', {
+    stride: o.stride, voxel: o.voxel, maxPoints: o.max_points,
+    bbox: o.bbox || [],
+  });
+}
+
+// Poll the job queue for this episode's cloud build and draw a progress bar
+// (same look as the Extract-tab queue). Stops itself on done / error.
+function watchCloud(episodeId) {
+  const box = view?.querySelector('#rec-cloud-progress');
+  if (!box || !episodeId) return;
+  if (cloudPoll) clearInterval(cloudPoll);
+  box.innerHTML = `<div class="perc-job queued"><span class="perc-job-ep">${episodeId}</span>
+    <span class="perc-job-st">cloud queued…</span><span class="perc-bar"><i style="width:0%"></i></span></div>`;
+  cloudPoll = setInterval(async () => {
+    let jobs;
+    try { ({ jobs } = await api('GET', '/api/pipeline/jobs')); } catch { return; }
+    const j = jobs.find(x => x.kind === 'cloud' && x.episode === episodeId);
+    if (!j) return;
+    const p = j.progress || {};
+    const pct = p.total ? Math.round(100 * (p.frame || 0) / p.total) : 0;
+    const label = j.status === 'queued' ? `queued #${j.queue_pos ?? ''}`
+      : j.status === 'running' ? `cloud ${p.frame || 0}/${p.total || '?'}`
+        : j.status;
+    box.innerHTML = `<div class="perc-job ${j.status}"><span class="perc-job-ep">${episodeId}</span>
+      <span class="perc-job-st">${label}</span>
+      <span class="perc-bar"><i style="width:${j.status === 'done' ? 100 : (j.status === 'running' ? pct : 0)}%"></i></span></div>`;
+    if (j.status === 'done' || j.status === 'error') {
+      clearInterval(cloudPoll); cloudPoll = null;
+      if (j.status === 'done') { log(`Cloud built for ${episodeId}`, 'ok'); loadEpisodes(); }
+      else log(`Cloud build failed for ${episodeId}: ${j.error}`, 'error');
+    }
+  }, 1000);
 }
 
 // ── mount / unmount ──────────────────────────────────────────────────────
@@ -358,6 +431,7 @@ export function mount(container) {
 export function unmount() {
   if (onCamerasChanged) document.removeEventListener('cameras:changed', onCamerasChanged);
   onCamerasChanged = null;
+  if (cloudPoll) { clearInterval(cloudPoll); cloudPoll = null; }
   view?.querySelectorAll('.streams img').forEach(img => { img.src = ''; });
   recording = false;
   cameras.setRecording(false);

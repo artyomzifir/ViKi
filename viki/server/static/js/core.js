@@ -104,7 +104,13 @@ export async function initializeFrontendConfig(config) {
     recording: {
       duration: config.RECORDING_DURATION,
       fps: config.RECORDING_FPS,
-    }
+    },
+    cloud: {
+      stride: config.CLOUD_STRIDE ?? 1,
+      voxel: config.CLOUD_VOXEL_M ?? 0.005,
+      maxPoints: config.CLOUD_MAX_POINTS_PER_FRAME ?? 40000,
+      bbox: config.CLOUD_WORKSPACE_BBOX ?? [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2],
+    },
   };
 
   CAMERA_CONFIG = {
