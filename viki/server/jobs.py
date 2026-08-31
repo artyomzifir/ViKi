@@ -1,10 +1,19 @@
 """
 viki.server.jobs
 ----------------
-In-process background jobs for the offline stages. A single FIFO worker runs
-queued jobs one at a time (perception / cloud / retarget / export share the GPU
-and MediaPipe, so they must not overlap); ``queued=False`` jobs run immediately
-in their own thread (recording, which is interactive).
+In-process background jobs for the offline stages.
+
+Jobs run in **lanes**; each lane is one FIFO worker thread. Jobs in the same
+lane run one at a time, jobs in different lanes run concurrently:
+
+  * ``"main"`` (default) — perception / prepare / retarget / export / download.
+    These share the GPU + MediaPipe + PINK, so they must not overlap.
+  * ``"cloud"`` — point-cloud builds. Pure numpy/ctypes CPU work with no shared
+    state beyond a read-only ``raw/``, so it runs alongside a ``main`` job (a
+    perceive and its cloud for the same episode finish in parallel).
+
+``queued=False`` jobs skip the lanes and run immediately in their own thread
+(recording, which is interactive).
 
 Not durable — jobs are lost on restart, fine for a single-user research tool.
 Each job's ``fn`` is called as ``fn(report, log)``:
@@ -26,19 +35,27 @@ from typing import Any, Callable
 
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
-_q: "queue.Queue[str]" = queue.Queue()
-_worker: threading.Thread | None = None
+_lanes: dict[str, "queue.Queue[str]"] = {}
+_workers: dict[str, threading.Thread] = {}
 _worker_lock = threading.Lock()
 
 _LOG_CAP = 200
+DEFAULT_LANE = "main"
 
 
-def _ensure_worker() -> None:
-    global _worker
+def _ensure_worker(lane: str) -> "queue.Queue[str]":
     with _worker_lock:
-        if _worker is None or not _worker.is_alive():
-            _worker = threading.Thread(target=_run_worker, daemon=True, name="viki-jobs")
-            _worker.start()
+        q = _lanes.get(lane)
+        if q is None:
+            q = _lanes[lane] = queue.Queue()
+        w = _workers.get(lane)
+        if w is None or not w.is_alive():
+            w = threading.Thread(
+                target=_run_worker, args=(q,), daemon=True, name=f"viki-jobs-{lane}"
+            )
+            _workers[lane] = w
+            w.start()
+        return q
 
 
 def _adapt(fn: Callable) -> Callable[[Callable, Callable], Any]:
@@ -86,30 +103,34 @@ def _execute(job_id: str) -> None:
             )
 
 
-def _run_worker() -> None:
+def _run_worker(q: "queue.Queue[str]") -> None:
     while True:
-        job_id = _q.get()
+        job_id = q.get()
         try:
             _execute(job_id)
         finally:
-            _q.task_done()
+            q.task_done()
 
 
 def submit(
-    kind: str, fn: Callable, *, episode: str | None = None, queued: bool = True
+    kind: str,
+    fn: Callable,
+    *,
+    episode: str | None = None,
+    queued: bool = True,
+    lane: str = DEFAULT_LANE,
 ) -> str:
     job_id = uuid.uuid4().hex
     with _lock:
         _jobs[job_id] = {
-            "id": job_id, "kind": kind, "episode": episode,
+            "id": job_id, "kind": kind, "episode": episode, "lane": lane,
             "status": "queued" if queued else "running",
             "progress": {}, "log": deque(maxlen=_LOG_CAP),
             "at": time.time(), "started": None, "finished": None,
             "_fn": fn,
         }
     if queued:
-        _ensure_worker()
-        _q.put(job_id)
+        _ensure_worker(lane).put(job_id)
     else:
         threading.Thread(
             target=_execute, args=(job_id,), daemon=True, name=f"viki-job-{kind}"
@@ -130,18 +151,25 @@ def cancel(job_id: str) -> bool:
     return False
 
 
-def _queue_order() -> list[str]:
+def _queue_order() -> dict[str, list[str]]:
+    """Queued job ids per lane, oldest first."""
     with _lock:
-        return sorted(
-            (jid for jid, j in _jobs.items() if j["status"] == "queued"),
-            key=lambda jid: _jobs[jid]["at"],
-        )
+        queued = [
+            (jid, j["lane"], j["at"])
+            for jid, j in _jobs.items()
+            if j["status"] == "queued"
+        ]
+    order: dict[str, list[str]] = {}
+    for jid, lane, _ in sorted(queued, key=lambda t: t[2]):
+        order.setdefault(lane, []).append(jid)
+    return order
 
 
-def _public(j: dict, order: list[str]) -> dict:
+def _public(j: dict, order: dict[str, list[str]]) -> dict:
     out = {k: v for k, v in j.items() if k != "_fn"}
     out["log"] = list(j["log"])[-40:]
-    out["queue_pos"] = order.index(j["id"]) + 1 if j["id"] in order else None
+    lane_order = order.get(j["lane"], [])
+    out["queue_pos"] = lane_order.index(j["id"]) + 1 if j["id"] in lane_order else None
     return out
 
 

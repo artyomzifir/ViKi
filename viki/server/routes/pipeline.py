@@ -76,11 +76,15 @@ class _ModelReq(BaseModel):
 @_ep.post("/perceive")
 async def perceive(req: _PerceiveReq):
     """Queue the full perception stage (extract → fuse → smooth → EE → gripper
-    → cln.npz, + optional cloud) for one or more episodes."""
+    → cln.npz) for one or more episodes. When ``opts.build_cloud`` is set the
+    point cloud is queued as a **separate** job on the ``cloud`` lane so it
+    computes in parallel with the model run."""
     ids: list[str] = []
     for ep_ref in req.episodes:
         ep = _episode(ep_ref)
         opts = dict(req.opts)
+        want_cloud = bool(opts.pop("build_cloud", False))
+        cloud_stride = opts.get("cloud_stride")
 
         def _job(report, log, ep=ep, opts=opts):
             from viki.perception.run import perceive_episode
@@ -89,6 +93,15 @@ async def perceive(req: _PerceiveReq):
             return perceive_episode(ep, opts, report)
 
         ids.append(jobs.submit("perceive", _job, episode=ep.id))
+
+        if want_cloud:
+            def _cloud_job(report, log, ep=ep, stride=cloud_stride):
+                from viki.perception.cloud import build_cloud
+
+                log(f"cloud {ep.id}")
+                return build_cloud(ep, stride=stride, report=report)
+
+            ids.append(jobs.submit("cloud", _cloud_job, episode=ep.id, lane="cloud"))
     return {"job_ids": ids}
 
 
@@ -132,12 +145,12 @@ async def extract(req: _EpReq):
 async def cloud(req: _EpReq):
     ep = _episode(req.episode)
 
-    def _job():
+    def _job(report, log):
         from viki.perception.cloud import build_cloud
 
-        return build_cloud(ep)
+        return build_cloud(ep, report=report)
 
-    return {"job_id": jobs.submit("cloud", _job)}
+    return {"job_id": jobs.submit("cloud", _job, episode=ep.id, lane="cloud")}
 
 
 @_ep.post("/prepare")

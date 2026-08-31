@@ -19,6 +19,31 @@ from viki.server.deps import get_manager
 router = APIRouter(prefix="/record", tags=["recording"])
 
 
+def _build_cloud(ep, report, log, opts: dict | None = None) -> dict:
+    """Queue-worker entry: build the episode's point cloud, reporting progress."""
+    from viki.perception.cloud import build_cloud
+
+    o = opts or {}
+    log(f"building point cloud for {ep.id}")
+    out = build_cloud(
+        ep,
+        stride=o.get("stride"),
+        voxel=o.get("voxel"),
+        bbox=o.get("bbox"),
+        max_points=o.get("max_points"),
+        report=report,
+    )
+    log(f"cloud done -> {out}")
+    return {"cloud": out}
+
+
+class CloudOpts(BaseModel):
+    stride: int | None = None
+    voxel: float | None = None
+    max_points: int | None = None
+    bbox: list[float] | None = None
+
+
 class RecordRequest(BaseModel):
     seconds: float = 10.0
     fps: int = 15
@@ -26,6 +51,7 @@ class RecordRequest(BaseModel):
     demonstrator: str = ""
     hand: str = "right"
     dataset: str | None = None
+    cloud: CloudOpts | None = None
 
 
 @router.post("/start")
@@ -35,6 +61,7 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
 
     meta = {"task": req.task, "demonstrator": req.demonstrator, "hand": req.hand}
     episodes_dir = None if req.dataset else getattr(config, "EPISODES_DIR", "data/episodes")
+    cloud_opts = req.cloud.model_dump() if req.cloud is not None else {}
 
     def _job():
         from viki.cameras.record import SceneRecorder
@@ -43,7 +70,17 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
             mgr, dataset=req.dataset, episodes_dir=episodes_dir, meta=meta
         )
         ep = rec.record(req.seconds, fps=req.fps)
-        return {"episode": str(ep.root), "dataset": req.dataset}
+        # Build the coloured point cloud straight away (params from the request,
+        # else the CLOUD_* config keys) so the episode is viewer-ready without a
+        # manual step; on its own 'cloud' lane so it runs in parallel with any
+        # model run. The perception / model run stays a separate, explicit action.
+        cloud_job = jobs.submit(
+            "cloud",
+            lambda report, log: _build_cloud(ep, report, log, cloud_opts),
+            episode=ep.id,
+            lane="cloud",
+        )
+        return {"episode": str(ep.root), "dataset": req.dataset, "cloud_job": cloud_job}
 
     return {"job_id": jobs.submit("record", _job, queued=False)}
 

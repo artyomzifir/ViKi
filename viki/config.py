@@ -154,7 +154,7 @@ _DEFAULTS: dict[str, Any] = {
     "DATASETS_DIR": "data/datasets",
     "SKELETON_SAVE_JSON_DEBUG": False,
     "ACTIVE_CALIBRATION": "",
-    "CLOUD_STRIDE": 6,
+    "CLOUD_STRIDE": 1,
     "CLOUD_VOXEL_M": 0.005,
     "CLOUD_WORKSPACE_BBOX": [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2],
     "CLOUD_MAX_POINTS_PER_FRAME": 40000,
