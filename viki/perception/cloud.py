@@ -181,7 +181,7 @@ def build_cloud(ep, stride: int | None = None) -> str:
         cams.append({
             "dev": dev,
             "cap": cv2.VideoCapture(str(mp4)),
-            "depth": sorted((raw / f"{dev}_depth").glob("*.npy")),
+            "depth_dir": raw / f"{dev}_depth",
             "K": _color_K(intr_all.get(dev, {})),
             "cal": cal,
             "T": T,
@@ -208,9 +208,12 @@ def build_cloud(ep, stride: int | None = None) -> str:
         xyz_parts, rgb_parts = [], []
         for c in cams:
             bgr = frames_bgr.get(c["dev"])
-            if bgr is None or i >= len(c["depth"]):
+            dpath = c["depth_dir"] / f"{i:06d}.npy"
+            if bgr is None or not dpath.is_file():
                 continue
-            depth_mm = np.load(c["depth"][i])
+            depth_mm = np.load(dpath)
+            if not depth_mm.any():
+                continue
             x, r = _camera_cloud(bgr, depth_mm, stride, c["K"], c["cal"], c["T"])
             if len(x):
                 xyz_parts.append(x)

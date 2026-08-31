@@ -165,8 +165,8 @@ def extract_episode(
     for mp4 in mp4s:
         dev_id = mp4.stem
         depth_dir = raw / f"{dev_id}_depth"
-        depth_files = sorted(depth_dir.glob("*.npy")) if depth_dir.is_dir() else []
-        total = len(depth_files) or int(cv2.VideoCapture(str(mp4)).get(cv2.CAP_PROP_FRAME_COUNT))
+        total = int(cv2.VideoCapture(str(mp4)).get(cv2.CAP_PROP_FRAME_COUNT)) or \
+            (len(list(depth_dir.glob("*.npy"))) if depth_dir.is_dir() else 0)
         K = _depth_K(intr_all.get(dev_id, {}))
         extr = _extrinsics(extr_all, dev_id)
         projector = _load_projector(raw, dev_id, meta_all) or identity
@@ -186,8 +186,11 @@ def extract_episode(
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             h, w = rgb.shape[:2]
             det_rgb = rgb[:, ::-1].copy() if flip else rgb
-            if idx < len(depth_files):
-                depth_mm = np.load(depth_files[idx])
+            # match depth by frame index (a colour-only capture skips its .npy,
+            # so list position would desync)
+            dpath = depth_dir / f"{idx:06d}.npy"
+            if dpath.is_file():
+                depth_mm = np.load(dpath)
                 depth_m = depth_mm.astype(np.float32) / 1000.0
                 depth_m[depth_m == 0] = np.nan
             else:
@@ -213,6 +216,16 @@ def extract_episode(
             lms = lift_to_3d(det, prepared, projector)
             if lms is None:
                 continue
+            # lift_to_3d deprojects with the depth intrinsics → depth-camera
+            # frame; extrinsics are the colour camera's ChArUco pose, so move the
+            # points into the colour frame first (SDK depth↔colour extrinsic).
+            d2c = getattr(projector, "depth3d_to_color3d", None)
+            if d2c is not None:
+                for lm, p in list(lms.points.items()):
+                    if np.isfinite(p).all():
+                        cp = d2c(p)
+                        if cp is not None:
+                            lms.points[lm] = cp.astype(np.float32)
             world = camera_landmarks_to_world(lms, extr)
             if keep is not None:
                 world = {lm: p for lm, p in world.items() if int(lm) in keep}

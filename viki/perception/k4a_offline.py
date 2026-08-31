@@ -151,6 +151,25 @@ class K4ACalibration:
             return np.array([dst.x, dst.y, dst.z], dtype=np.float64)
         return None
 
+    def depth3d_to_color3d(self, xyz_m) -> np.ndarray | None:
+        """3-D point (metres) in the depth camera frame → the colour camera frame
+        (``k4a_calibration_3d_to_3d``). The offline lift deprojects with the depth
+        intrinsics but the recorded extrinsics are the colour camera's ChArUco
+        pose, so points must be moved into the colour frame before the world
+        transform."""
+        k = self._k
+        src = k.K4AFloat3(float(xyz_m[0]) * 1000.0, float(xyz_m[1]) * 1000.0,
+                          float(xyz_m[2]) * 1000.0)
+        dst = k.K4AFloat3()
+        res = self._lib.k4a_calibration_3d_to_3d(
+            self._calib, ctypes.byref(src),
+            k.K4A_CALIBRATION_TYPE_DEPTH, k.K4A_CALIBRATION_TYPE_COLOR,
+            ctypes.byref(dst),
+        )
+        if res == k.K4A_RESULT_SUCCEEDED:
+            return np.array([dst.x, dst.y, dst.z], dtype=np.float64) / 1000.0
+        return None
+
     def depth_xyz_to_color_px(self, xyz_mm) -> tuple[float, float] | None:
         """3-D point (mm, depth frame) → colour-image pixel, for colourising a cloud."""
         k = self._k
