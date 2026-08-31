@@ -25,6 +25,7 @@ class RecordRequest(BaseModel):
     task: str = ""
     demonstrator: str = ""
     hand: str = "right"
+    dataset: str | None = None
 
 
 @router.post("/start")
@@ -32,15 +33,17 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
     if not mgr.active_device_ids():
         raise HTTPException(400, "no cameras are active — start cameras first")
 
-    episodes_dir = getattr(config, "EPISODES_DIR", "data/episodes")
     meta = {"task": req.task, "demonstrator": req.demonstrator, "hand": req.hand}
+    episodes_dir = None if req.dataset else getattr(config, "EPISODES_DIR", "data/episodes")
 
     def _job():
         from viki.cameras.record import SceneRecorder
 
-        rec = SceneRecorder(mgr, episodes_dir=episodes_dir, meta=meta)
+        rec = SceneRecorder(
+            mgr, dataset=req.dataset, episodes_dir=episodes_dir, meta=meta
+        )
         ep = rec.record(req.seconds, fps=req.fps)
-        return {"episode": str(ep.root)}
+        return {"episode": str(ep.root), "dataset": req.dataset}
 
     return {"job_id": jobs.submit("record", _job)}
 

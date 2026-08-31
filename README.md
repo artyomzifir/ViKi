@@ -66,9 +66,17 @@ by the FastAPI capture server at `http://localhost:8000/`.
 ## Development
 
 ### Running Tests
-Unit tests are executed in a dedicated test container to ensure all system dependencies (RealSense/Kinect SDKs) are present:
+Tests run in the container so the system dependencies (RealSense/Kinect SDKs, Pinocchio) are present:
 ```bash
-docker compose -f docker-compose.test.yml run --rm tests
+docker compose run --rm test                          # full suite
+docker compose run --rm test tests/unit_tests/gripper # a subset (args append to pytest)
+```
+
+### Other services
+```bash
+docker compose up                        # web UI + API on :8000
+docker compose run --rm cli <verb> ...   # `viki <verb> ...` (record/extract/prepare/retarget/replay/label/export/run)
+docker compose run --rm terminal         # bash shell in the container
 ```
 
 ### Project Architecture

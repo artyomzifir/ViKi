@@ -7,13 +7,43 @@ export let CAMERA_CONFIG = {};
 
 export const state = {}; // device_id -> { running, type, infoInterval }
 
+// ── Logging ────────────────────────────────────────────────────────────────
+// One rolling buffer. The newest entry shows in the header's one-line slot
+// (#log-line); the full list renders into the popover (#log-popover .log-list).
+// log(msg, cls) keeps its old signature so every call site is untouched.
+
+const LOG = [];
+const LOG_CAP = 200;
+
+function fmt(entry) {
+  return `[${entry.time}] ${entry.msg}`;
+}
+
+function renderLog() {
+  const line = document.getElementById('log-line');
+  if (line) {
+    const last = LOG[LOG.length - 1];
+    line.textContent = last ? fmt(last) : '';
+    line.className = 'log-line ' + (last ? last.cls : '');
+  }
+  const list = document.querySelector('#log-popover .log-list');
+  if (list) {
+    list.innerHTML = LOG.slice().reverse()
+      .map(e => `<div class="entry ${e.cls}">${fmt(e)}</div>`)
+      .join('');
+  }
+}
+
 export function log(msg, cls = '') {
-  const el = document.getElementById('log');
-  const e = document.createElement('div');
-  e.className = 'entry ' + cls;
-  e.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  el.prepend(e);
-  while (el.children.length > 40) el.removeChild(el.lastChild);
+  LOG.push({ time: new Date().toLocaleTimeString(), msg: String(msg), cls });
+  if (LOG.length > LOG_CAP) LOG.shift();
+  renderLog();
+}
+
+// Called once by main.js after the shell DOM exists, so the first paint of the
+// header/popover reflects whatever was logged during boot.
+export function mountLog() {
+  renderLog();
 }
 
 export async function api(method, path, body) {

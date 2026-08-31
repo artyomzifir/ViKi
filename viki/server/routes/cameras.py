@@ -79,7 +79,7 @@ async def start_camera(
         If the backend fails to start.
     """
     try:
-        mgr.start(
+        outcome = mgr.start(
             device_id,
             fps=req.fps,
             color_width=req.color_width,
@@ -92,7 +92,8 @@ async def start_camera(
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-    return {"status": "started", "device_id": device_id}
+    # outcome: "started" | "restarted" (config changed) | "unchanged"
+    return {"status": outcome or "started", "device_id": device_id}
 
 
 @router.post("/{device_id}/stop")

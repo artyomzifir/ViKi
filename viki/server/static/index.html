@@ -4,390 +4,75 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ViKi — Capture</title>
+  <title>ViKi</title>
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 
 <body>
 
   <header>
-    <div class="dot" id="server-dot"></div>
+    <div class="dot grey" id="server-dot"></div>
     <h1>ViKi</h1>
-    <span class="subtitle">capture server</span>
+
+    <div class="cam-cluster">
+      <button data-action="scanDevices">⟳ Scan</button>
+      <button data-action="startAll">▶ Start all</button>
+      <button class="danger" data-action="stopAll">■ Stop all</button>
+      <div id="camera-pills" class="camera-pills"></div>
+    </div>
+
+    <div class="header-right">
+      <button class="log-toggle" data-action="toggleLog" title="Show log">▸</button>
+      <div class="log-line" id="log-line"></div>
+      <button class="gear" data-action="toggleConfig" title="Configuration">⚙</button>
+    </div>
   </header>
 
-  <div class="toolbar">
-    <button class="primary" data-action="scanDevices">⟳ Scan devices</button>
-    <button data-action="startAll">▶ Start all</button>
-    <button class="danger" data-action="stopAll">■ Stop all</button>
-    <div class="sep"></div>
-    <button id="btn-calib-toggle" data-action="toggleCalibration">⚙ Calibration</button>
-    <button id="btn-skeleton-toggle" data-action="toggleSkeleton">🦴 Skeleton</button>
-    <button id="btn-process-toggle" data-action="toggleProcess">📊 Process</button>
-    <div class="sep"></div>
-    <button id="btn-record-rgbd" class="primary" data-action="startRGBDRecording">Record</button>
-    <button style="margin-left: auto" data-action="toggleConfig">⚙ Config</button>
+  <nav id="tabbar">
+    <button data-action="showTab" data-tab="calibration">Calibration</button>
+    <button data-action="showTab" data-tab="record">Record</button>
+    <button data-action="showTab" data-tab="extract">Extract</button>
+    <button data-action="showTab" data-tab="prepare">Prepare</button>
+    <button data-action="showTab" data-tab="retarget">Retarget</button>
+    <button data-action="showTab" data-tab="replay">Replay</button>
+    <button data-action="showTab" data-tab="export">Export</button>
+    <button data-action="showTab" data-tab="viewer">Viewer</button>
+  </nav>
+
+  <main id="view"></main>
+
+  <div id="log-popover" hidden>
+    <div class="log-popover-head">
+      <span>Log</span>
+      <button data-action="toggleLog">✕</button>
+    </div>
+    <div class="log-list"></div>
   </div>
 
-  <div class="config-panel" id="config-panel">
-    <div class="config-header">
-      <span class="title">Server Configuration</span>
-      <button class="danger" data-action="toggleConfig">✕ Close</button>
-    </div>
-    <div class="config-body">
-      <textarea id="config-editor" spellcheck="false"></textarea>
-      <div class="config-help" id="config-help">
-        <div><b>INTRINSICS_FILENAME</b>: Path to intrinsics calibration</div>
-        <div><b>EXTRINSICS_FILENAME</b>: Path to extrinsics calibration</div>
-        <div><b>DEFAULT_FPS</b>: Default frames per second for camera start</div>
-        <div><b>DEFAULT_COLOR_WIDTH</b>: Default color image width</div>
-        <div><b>DEFAULT_COLOR_HEIGHT</b>: Default color image height</div>
-        <div><b>DEFAULT_DEPTH_MODE</b>: Default depth mode (NFOV_UNBINNED recommended)</div>
-        <div><b>JPEG_QUALITY</b>: Quality of JPEG encoding (0-100)</div>
-        <div><b>STREAM_IDLE_SLEEP</b>: Sleep duration for MJPEG stream generators (default value works well)</div>
-        <div><b>PLACEHOLDER_SIZE</b>: Dimensions of the placeholder image when camera not started</div>
-        <div><b>DEFAULT_SYNCHRONIZED_IMAGES_ONLY</b>: Only use synchronized frames (not tested with true)</div>
-        <div><b>FRAME_BUFFER_SIZE</b>: Number of frames kept in ring buffer per camera</div>
-        <div><b>RECORD_DEPTH</b>: Save depth frames as .npy files alongside the rgb-d videos (heavy on the disk)</div>
-        <div><b>DEPTH_PROJECTION_DEBUG</b>: Enable debug plotting for depth projection (slows down live skeleton
-          estimation)</div>
-        <div><b>SKELETON_DEPTH_SAMP_RADIUS</b>: Radius for depth sampling during fusion (default worked well in testing)
-        </div>
-        <div><b>SKELETON_DEPTH_BASE_DIR</b>: Directory for background depth frames</div>
-        <div><b>SKELETON_ENABLE_DEPTH_VALIDATION</b>: Toggle depth-based outlier rejection (disabling WILL lead to great
-          instability)</div>
-        <div><b>SKELETON_DEPTH_SUBTRACT_THRESHOLD</b>: Min depth diff for object detection (untested outside default
-          value)</div>
-        <div><b>HAND_TO_DETECT</b>: Hand side to estimate ('left' or 'right')</div>
-        <div><b>CALIB_MODE</b>: Calibration mode ('manual' or 'auto') (auto is deprecated)</div>
-        <div><b>CALIB_BOARD_TYPE</b>: Board type ('chess' or 'aruco')</div>
-        <div><b>BONE_LENGTHS</b>: Manual bone length overrides {(Parent, Child): length_m} (default uses a moving mean,
-          use this if you're sure you know what you're doing)</div>
-        <div><b>BONE_TOLERANCE</b>: Tolerance for kinematic constraints (0.0-1.0) (default works well with mean for
-          lenghts)</div>
-        <div><b>CALIB_CHESS_BOARD_SIZE</b>: Default chessboard dimensions [cols, rows]</div>
-        <div><b>CALIB_CHESS_SQUARE_SIZE</b>: Default chessboard square size in meters</div>
-        <div><b>CALIB_ARUCO_BOARD_SIZE</b>: Default aruco board dimensions [cols, rows]</div>
-        <div><b>CALIB_ARUCO_SQUARE_SIZE</b>: Default aruco square size in meters</div>
-        <div><b>CALIB_ARUCO_MARKER_SIZE</b>: Default aruco marker size in meters</div>
-        <div><b>CALIB_ARUCO_DICT</b>: OpenCV Aruco dictionary ID (our main board has 40 markers total, each 5x5, so
-          DICT_5X5_50 is good)<br>=============================================<br></div>
-        <div>Load: pulls the user configuration from backend</div>
-        <div>Reset to Defaults: loads the default parameters for the system</div>
-        <div>Save: save the current configuratiuon to the server</div>
-        <div>Restart Server: restarts docker to apply all the configuration changes</div>
-
+  <div id="config-modal" hidden>
+    <div class="cfg-dialog">
+      <div class="cfg-head">
+        <span class="title">Server Configuration</span>
+        <button data-action="cfgClose">✕</button>
       </div>
-      <div class="config-footer">
-        <span class="hint">Restart is required for changes to take effect</span>
-        <button data-action="toggleConfigHelp">❔ Help</button>
-        <button data-action="loadConfig">Load</button>
-        <button data-action="resetConfig">Reset to Defaults</button>
-        <button class="primary" data-action="saveConfig">Save</button>
-        <button class="danger" data-action="restartServer">Restart Server</button>
-      </div>
-    </div>
-
-  </div>
-  </div>
-
-  <div class="calib-panel" id="calib-panel">
-
-    <div class="calib-header">
-      <span class="title">Camera Calibration</span>
-      <button class="danger" data-action="toggleCalibration">✕ Close</button>
-    </div>
-    <div class="calib-body">
-      <div id="calib-streams" class="calib-streams">
-        <!-- streams -->
-      </div>
-      <div class="calib-controls">
-        <div class="board-params">
-          <!-- Board type selector -->
-          <div class="field-row">
-            <label for="board-type">Board type</label>
-            <select id="board-type" data-change="toggleBoardFields">
-              <option value="chess">Chessboard</option>
-              <option value="aruco">ChArUco</option>
-            </select>
-          </div>
-
-          <!-- Common fields (always visible) -->
-          <div class="field-row">
-            <label>Board width</label>
-            <input type="number" id="board-width" value="8" min="1" data-change="syncBoardParameters" />
-          </div>
-          <div class="field-row">
-            <label>Board height</label>
-            <input type="number" id="board-height" value="6" min="1" data-change="syncBoardParameters" />
-          </div>
-          <div class="field-row">
-            <label>Square size (m)</label>
-            <input type="number" id="square-size" value="0.05" step="0.001" min="0.01"
-              data-change="syncBoardParameters" />
-          </div>
-
-          <!-- Aruco‑specific fields (hidden by default) -->
-          <div id="aruco-fields" style="display: none;">
-            <div class="field-row">
-              <label>Marker size (m)</label>
-              <input type="number" id="marker-size" value="0.035" step="0.001" min="0.01"
-                data-change="syncBoardParameters" />
-            </div>
-            <div class="field-row">
-              <label>Dictionary</label>
-              <select id="aruco-dict" data-change="syncBoardParameters"></select>
-            </div>
-          </div>
-        </div>
-        <button id="btn-capture-sample" class="primary" data-action="captureSample">Capture Sample</button>
-        <div style="height: 1px; background: var(--border); margin: 4px 0;"></div>
-        <button class="primary" data-action="extrinsicsCalibration">Calibrate Extrinsics</button>
-        <div style="height: 1px; background: var(--border); margin: 4px 0;"></div>
-        <button class="danger" data-action="clearCalibration">Clear Samples</button>
-        <div
-          style="font-size: 11px; color: var(--muted); margin-top: 12px; white-space: pre-line; text-align: center; line-height: 1.4;">
-          Extrinsic calibration requires 1 sample per camera</div>
-
+      <div class="cfg-body"></div>
+      <div class="cfg-banner" hidden>Restart required to apply changes.</div>
+      <div class="cfg-foot">
+        <button data-action="cfgReset">Reset to defaults</button>
+        <button class="primary" data-action="cfgSave">Save</button>
+        <button class="danger" data-action="cfgRestart">Restart server</button>
       </div>
     </div>
   </div>
 
-  <div class="skeleton-panel" id="skeleton-panel">
-    <div class="skeleton-header">
-      <span class="title">3D Skeleton Estimation</span>
-      <button class="danger" data-action="toggleSkeleton">✕ Close</button>
-    </div>
-    <div class="skeleton-body">
-      <div class="skeleton-viz" id="skeleton-viz" style="display:flex; align-items:center; justify-content:center;">
-        <canvas id="skel-canvas-3d"></canvas>
-      </div>
-      <div class="skeleton-controls">
-        <div class="skeleton-stats" id="skeleton-status">Status: Idle</div>
-        <div id="skeleton-detections" style="font-size: 11px; color: var(--muted); margin-bottom: 10px;"></div>
-        <div style="margin-bottom: 10px; display: flex; gap: 8px;">
-          <button id="btn-skel-view" data-action="toggleSkelView"
-            style="font-size: 11px; padding: 4px 8px; cursor: pointer;">View: Projections</button>
-        </div>
-        <div class="field-row" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
-          <label for="skel-follow-ee">Follow</label>
-          <select id="skel-follow-ee" data-change="toggleFollowEE">
-            <option value="off" selected>Static (origin)</option>
-            <option value="ee">End effector</option>
-          </select>
-        </div>
-        <div class="field-row" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px;">
-          <label for="skel-viz-cam">Visualize Camera</label>
-          <select id="skel-viz-cam" data-change="updateSkelVizCam"></select>
-        </div>
-        <button id="btn-skel-start" class="primary" data-action="toggleEstimation" data-enable="true">▶ Start
-          Estimation</button>
-        <button id="btn-skel-stop" class="danger" data-action="toggleEstimation" data-enable="false" disabled>■ Stop
-          Estimation</button>
-        <div class="sep"></div>
-        <div class="sep"></div>
-        <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-          <input type="checkbox" id="btn-skel-calib-overlay" checked data-action="toggleCalibOverlay">
-          Show calib (board + cameras)
-        </label>
-        <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;">
-          <input type="checkbox" id="btn-skel-depth-debug" data-action="toggleDepthDebug">
-          Depth debug (red dots)
-        </label>
-        <div class="sep"></div>
-        <button id="btn-skel-rec-start" data-action="toggleRecording" data-enable="true">🔴 Record</button>
-        <button id="btn-skel-rec-stop" class="danger" data-action="toggleRecording" data-enable="false" disabled>⏹ Stop
-          Recording</button>
-
-        <div class="skeleton-table-container">
-          <table id="skel-table">
-            <thead>
-              <tr>
-                <th>Joint</th>
-                <th>X</th>
-                <th>Y</th>
-                <th>Z</th>
-              </tr>
-            </thead>
-            <tbody id="skel-table-body"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-  </div>
-
-  <div class="skeleton-panel" id="process-panel">
-    <div class="skeleton-header">
-      <span class="title">Process Recordings</span>
-      <button class="danger" data-action="toggleProcess">✕ Close</button>
-    </div>
-    <div class="process-body" id="process-body">
-
-      <!-- LEFT COLUMN -->
-      <div class="process-controls-left" id="process-controls-left">
-        <div style="display: flex; gap: 8px;">
-          <button id="btn-process-mode-smooth" class="primary" data-action="setProcessMode"
-            data-mode="smooth">Smoothing</button>
-          <button id="btn-process-mode-dataset" data-action="setProcessMode" data-mode="dataset">Robot Dataset</button>
-        </div>
-
-        <!-- SMOOTHING controls -->
-        <div id="process-smooth-controls">
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <button data-action="loadProcessRecordings" style="font-size: 11px;">⟳ Refresh</button>
-            <span id="process-page-info" style="font-size: 11px; color: var(--muted);"></span>
-            <button id="btn-process-prev" data-action="processPrevPage" style="font-size: 11px;" disabled>◀ Prev</button>
-            <button id="btn-process-next" data-action="processNextPage" style="font-size: 11px;">Next ▶</button>
-          </div>
-          <div id="process-rec-list"
-            style="font-size: 12px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px;">
-          </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <label for="process-win-len" style="font-size: 11px;">Window:</label>
-            <input type="number" id="process-win-len" value="7" min="3" max="31" step="2"
-              style="width: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 12px;">
-            <label for="process-poly" style="font-size: 11px;">Poly:</label>
-            <input type="number" id="process-poly" value="2" min="1" max="5"
-              style="width: 70px; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-size: 12px;">
-          </div>
-          <button id="btn-process-smooth" class="primary" data-action="processSmoothSelected" disabled style="width:100%;">Smooth Selected</button>
-          <div id="process-status" style="font-size: 11px; color: var(--muted);"></div>
-          <div id="process-conversion-status"
-            style="font-size: 11px; max-height: 120px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; padding: 4px; display: none;">
-          </div>
-        </div>
-
-        <!-- DATASET controls -->
-        <div id="process-dataset-controls" style="display:none;flex-direction:column;gap:8px;">
-          <div style="display:flex;gap:4px;align-items:center;">
-            <button data-action="loadPreparedRecordings" style="font-size:11px;">⟳ Refresh</button>
-            <span id="process-ds-page-info" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="process-ds-cln-list"
-            style="font-size:12px;max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <label for="process-ds-robot" style="font-size:11px;">Robot:</label>
-            <select id="process-ds-robot"
-              style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:12px;">
-              <option value="ur10">UR10</option>
-              <option value="iiwa14">KUKA iiwa14</option>
-            </select>
-          </div>
-          <div style="font-size:11px;">
-            <label>Base offset</label>
-            <div style="display:flex;gap:4px;align-items:center;">
-              X: <input type="number" id="process-ds-base-x" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Y: <input type="number" id="process-ds-base-y" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Z: <input type="number" id="process-ds-base-z" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-            </div>
-          </div>
-          <div style="font-size:11px;">
-            <label>Target offset</label>
-            <div style="display:flex;gap:4px;align-items:center;">
-              X: <input type="number" id="process-ds-target-x" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Y: <input type="number" id="process-ds-target-y" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-              Z: <input type="number" id="process-ds-target-z" value="0" step="0.1"
-                     style="width:65px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-            </div>
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <label for="process-ds-scale" style="font-size:11px;">Scale:</label>
-            <input type="number" id="process-ds-scale" value="1.0" min="0.1" max="10" step="0.1"
-              style="width:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:12px;">
-          </div>
-          <button id="btn-process-ds-convert" class="primary" disabled style="width:100%;" data-action="convertDataset">Convert to Dataset</button>
-          <div id="process-ds-status" style="font-size: 11px; color: var(--muted);"></div>
-        </div>
-      </div>
-
-      <!-- MIDDLE COLUMN -->
-      <div class="process-stream" id="process-stream">
-        <div style="color:var(--muted);padding:20px;text-align:center;">Select a recording to view</div>
-      </div>
-
-      <!-- RIGHT COLUMN -->
-      <div class="process-controls-right" id="process-controls-right">
-
-        <!-- SMOOTHING viz controls -->
-        <div id="process-smooth-viz-controls">
-          <div style="display:flex;gap:4px;align-items:center;">
-            <button data-action="loadPreparedRecordings" style="font-size:11px;">⟳ Refresh</button>
-            <span id="process-cln-info" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="process-cln-list"
-            style="font-size:12px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
-          </div>
-          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
-            <label style="font-size:11px;"><input type="checkbox" id="smooth-toggle-raw" checked data-change="applySmoothConfig"> Show Original</label>
-            <label style="font-size:11px;"><input type="checkbox" id="smooth-toggle-smooth" checked data-change="applySmoothConfig"> Show Smooth</label>
-            <label style="font-size:11px;">Axes length:
-              <input type="number" id="smooth-axes-length" value="1.0" min="0.1" max="10" step="0.1"
-                     data-change="applySmoothConfig" style="width:60px;">
-            </label>
-            <label style="font-size:11px;">Center on:</label>
-            <div style="display:flex;gap:10px;font-size:11px;">
-              <label><input type="radio" name="smooth-center" value="world" checked data-change="applySmoothConfig"> World</label>
-              <label><input type="radio" name="smooth-center" value="robot" data-change="applySmoothConfig"> Robot</label>
-            </div>
-          </div>
-        </div>
-
-        <!-- DATASET viz controls -->
-        <div id="process-dataset-viz-controls" style="display:none;flex-direction:column;gap:6px;">
-          <div style="display:flex;gap:4px;align-items:center;">
-            <button data-action="loadVizOutputs" style="font-size:11px;">⟳ Refresh</button>
-            <span id="process-viz-info" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="process-viz-output-list"
-            style="font-size:12px;max-height:140px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:4px;">
-          </div>
-          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;">
-            <label style="font-size:11px;">Center on:</label>
-            <div style="display:flex;gap:10px;font-size:11px;">
-              <label><input type="radio" name="viz-center" value="world" checked data-change="applyVizConfig"> World</label>
-              <label><input type="radio" name="viz-center" value="robot" data-change="applyVizConfig"> Robot</label>
-            </div>
-            <label style="font-size:11px;">Axes:
-              <input type="number" id="viz-axes-length" value="2.0" min="0.5" max="10" step="0.1"
-                     data-change="applyVizConfig" style="width:60px;">
-            </label>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px;">
-              <label><input type="checkbox" id="viz-toggle-board" checked data-change="applyVizConfig"> Board</label>
-              <label><input type="checkbox" id="viz-toggle-cameras" checked data-change="applyVizConfig"> Cameras</label>
-              <label><input type="checkbox" id="viz-toggle-neutral" checked data-change="applyVizConfig"> Neutral EE</label>
-              <label><input type="checkbox" id="viz-toggle-human-trail" checked data-change="applyVizConfig"> Human Trail</label>
-              <label><input type="checkbox" id="viz-toggle-robot-trail" checked data-change="applyVizConfig"> Robot Trail</label>
-              <label><input type="checkbox" id="viz-toggle-base-to-ee" checked data-change="applyVizConfig"> Base→EE</label>
-              <label><input type="checkbox" id="viz-toggle-debug" checked data-change="applyVizConfig"> Debug</label>
-              <label><input type="checkbox" id="viz-toggle-reach" checked data-change="applyVizConfig"> Reach Sphere</label>
-              <label><input type="checkbox" id="viz-toggle-fk" checked data-change="applyVizConfig"> FK Arm</label>
-              <label><input type="checkbox" id="viz-toggle-ee-target" checked data-change="applyVizConfig"> EE Targets</label>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </div>
-
-
-
-  <div class="grid" id="grid">
-    <div class="empty-state">
-      <h2>No cameras detected</h2>
-      <p>Click "Scan devices" to discover connected cameras</p>
-    </div>
-  </div>
-
-  <div id="log"></div>
-
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/static/js/vendor/three.module.js",
+        "three/addons/": "/static/js/vendor/"
+      }
+    }
+  </script>
   <script type="module" src="/static/js/main.js"></script>
 </body>
 

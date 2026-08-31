@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 
 from viki.contracts import LM
-from viki.prepare.processor import stable_palm_orientation_mask
+from viki.prepare.run import stable_palm_orientation_mask
 
 
 class ProcessorOrientationTests(unittest.TestCase):

@@ -39,14 +39,22 @@ K4A_RESULT_SUCCEEDED = 0
 K4A_WAIT_RESULT_SUCCEEDED = 0
 K4A_WAIT_RESULT_TIMEOUT = 1
 
+# k4a_buffer_result_t
+K4A_BUFFER_RESULT_SUCCEEDED = 0
+K4A_BUFFER_RESULT_FAILED = 1
+K4A_BUFFER_RESULT_TOO_SMALL = 2
+
 K4A_COLOR_RESOLUTION_720P = 1  # 1280x720
 K4A_COLOR_RESOLUTION_1080P = 2  # 1920x1080
 K4A_COLOR_RESOLUTION_1536P = 4  # 2048x1536
 
-K4A_DEPTH_MODE_NFOV_UNBINNED = 3  # 640x576
-K4A_DEPTH_MODE_NFOV_2X2BINNED = 2  # 320x288
-K4A_DEPTH_MODE_WFOV_UNBINNED = 5  # 1024x1024
-K4A_DEPTH_MODE_WFOV_2X2BINNED = 4  # 512x512
+# k4a_depth_mode_t (k4atypes.h) — OFF=0, then sequential. These were all +1 too
+# high, so e.g. NFOV_UNBINNED (must be 2) was sent as 3 = WFOV_2X2BINNED and the
+# camera silently captured 512x512 instead of 640x576.
+K4A_DEPTH_MODE_NFOV_2X2BINNED = 1  # 320x288
+K4A_DEPTH_MODE_NFOV_UNBINNED = 2  # 640x576
+K4A_DEPTH_MODE_WFOV_2X2BINNED = 3  # 512x512
+K4A_DEPTH_MODE_WFOV_UNBINNED = 4  # 1024x1024
 
 K4A_FRAMES_PER_SECOND_5 = 0
 K4A_FRAMES_PER_SECOND_15 = 1
@@ -209,6 +217,24 @@ _lib.k4a_device_get_calibration.argtypes = [
     ctypes.c_void_p,
 ]
 
+# Raw (device-independent) calibration blob — captured at record time so the
+# k4a_calibration_t can be rebuilt offline with k4a_calibration_get_from_raw.
+_lib.k4a_device_get_raw_calibration.restype = ctypes.c_int  # k4a_buffer_result_t
+_lib.k4a_device_get_raw_calibration.argtypes = [
+    K4ADevice,
+    ctypes.POINTER(ctypes.c_uint8),  # data (NULL to query the required size)
+    ctypes.POINTER(ctypes.c_size_t),  # data_size (in/out)
+]
+
+_lib.k4a_calibration_get_from_raw.restype = ctypes.c_int  # k4a_result_t
+_lib.k4a_calibration_get_from_raw.argtypes = [
+    ctypes.c_char_p,  # raw_calibration (NUL-terminated)
+    ctypes.c_size_t,  # raw_calibration_size (incl. the trailing NUL)
+    ctypes.c_int,  # target_depth_mode
+    ctypes.c_int,  # target_color_resolution
+    ctypes.c_void_p,  # k4a_calibration_t* out
+]
+
 _lib.k4a_transformation_create.restype = K4ATransformation
 _lib.k4a_transformation_create.argtypes = [ctypes.c_void_p]
 
@@ -288,7 +314,7 @@ class KinectBackend(CameraBackend):
         subordinate_delay_us: int = 0,
         synchronized_images_only: bool = True,
     ) -> None:
-        if color_resolution not in _COLOR_RES_MAP:
+        if tuple(color_resolution) not in _COLOR_RES_MAP:
             raise ValueError(
                 f"Unsupported color_resolution {color_resolution}. "
                 f"Supported: {list(_COLOR_RES_MAP)}"
@@ -322,6 +348,7 @@ class KinectBackend(CameraBackend):
         self._transform: K4ATransformation = K4ATransformation(None)
         self._calibration: K4ACalibration = K4ACalibration(None)
         self._calibration_buf: ctypes.Array[ctypes.c_char] | None = None
+        self._raw_calibration: bytes | None = None
         self._color_intrinsics: CameraIntrinsics | None = None
         self._depth_intrinsics: CameraIntrinsics | None = None
         self._serial_str: str = f"kinect_{device_index}"
@@ -382,6 +409,7 @@ class KinectBackend(CameraBackend):
             }.get(self._depth_mode, (640, 576))
             self._calibration = ctypes.cast(cal_buf, K4ACalibration)
             self._calibration_buf = cal_buf  # keep buffer alive
+            self._raw_calibration = self._read_raw_calibration()
             # Cache intrinsics once at startup
             self._color_intrinsics = self._get_intrinsics(K4A_CALIBRATION_TYPE_COLOR)
             self._depth_intrinsics = self._get_intrinsics(K4A_CALIBRATION_TYPE_DEPTH)
@@ -573,6 +601,33 @@ class KinectBackend(CameraBackend):
         return None
 
 
+    def _read_raw_calibration(self) -> bytes | None:
+        """Pull the device-independent raw calibration blob (two-call size dance).
+
+        The blob is NUL-terminated JSON; ``data_size`` includes the NUL and is
+        passed straight into ``k4a_calibration_get_from_raw`` offline.
+        """
+        size = ctypes.c_size_t(0)
+        res = _lib.k4a_device_get_raw_calibration(self._handle, None, ctypes.byref(size))
+        if res != K4A_BUFFER_RESULT_TOO_SMALL or size.value == 0:
+            logger.warning(
+                "[%s] k4a_device_get_raw_calibration size query failed (res=%s)",
+                self._serial_str, res,
+            )
+            return None
+        buf = (ctypes.c_uint8 * size.value)()
+        res = _lib.k4a_device_get_raw_calibration(self._handle, buf, ctypes.byref(size))
+        if res != K4A_BUFFER_RESULT_SUCCEEDED:
+            logger.warning(
+                "[%s] k4a_device_get_raw_calibration failed (res=%s)", self._serial_str, res
+            )
+            return None
+        return bytes(buf[: size.value])
+
+    def get_raw_calibration(self) -> bytes | None:
+        """Raw calibration blob captured at ``start()`` (``None`` if unavailable)."""
+        return self._raw_calibration
+
     def _get_intrinsics(self, cam_type: int) -> CameraIntrinsics:
         """Infer intrinsic parameters using SDK projection."""
         # SDK Projection Fallback
@@ -619,6 +674,15 @@ class KinectBackend(CameraBackend):
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def config(self) -> dict:
+        return {
+            "color_width": int(self._color_resolution[0]),
+            "color_height": int(self._color_resolution[1]),
+            "fps": int(self._fps),
+            "depth_mode": self._depth_mode,
+        }
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

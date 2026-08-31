@@ -6,6 +6,7 @@ server calls — the CLI just parses args and prints results.
 
     viki record  --task "pick cube" --seconds 10
     viki extract  <episode>
+    viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
     viki prepare  <episode>
     viki retarget <episode> --robot ur3
     viki replay   <episode> [--driver dryrun|ur3]
@@ -40,7 +41,8 @@ def _cmd_record(a) -> None:
         mgr.start(dev)
     rec = SceneRecorder(
         mgr,
-        episodes_dir=a.episodes_dir,
+        dataset=a.dataset,
+        episodes_dir=None if a.dataset else a.episodes_dir,
         meta={"task": a.task, "demonstrator": a.demonstrator, "hand": a.hand},
     )
     ep = rec.record(a.seconds, fps=a.fps)
@@ -52,6 +54,12 @@ def _cmd_extract(a) -> None:
     from viki.perception.extract import extract_episode
 
     print(extract_episode(_episode(a.episode), backend=a.backend, hand=a.hand))
+
+
+def _cmd_cloud(a) -> None:
+    from viki.perception.cloud import build_cloud
+
+    print(build_cloud(_episode(a.episode)))
 
 
 def _cmd_prepare(a) -> None:
@@ -94,6 +102,16 @@ def _cmd_export(a) -> None:
     print(export_dataset(a.episodes, a.out, fps=a.fps))
 
 
+def _cmd_viz(a) -> None:
+    from viki.render.skeleton3d import render_episode_figure
+
+    ep = _episode(a.episode)
+    fig = render_episode_figure(ep, stage=a.stage)
+    out = a.out or str(ep.root / f"viz-{a.stage}.png")
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print(out)
+
+
 def _cmd_run(a) -> None:
     from viki.episode import stage_done
     from viki.perception.extract import extract_episode
@@ -131,6 +149,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--demonstrator", default="")
     pr.add_argument("--hand", default="right", choices=["left", "right"])
     pr.add_argument("--cameras", nargs="*", help="device ids (default: all detected)")
+    pr.add_argument("--dataset", default=None, help="dataset folder under data/datasets/")
     pr.add_argument("--episodes-dir", default="data/episodes")
     pr.set_defaults(func=_cmd_record)
 
@@ -139,6 +158,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--backend", default=None, help="pose backend (default: config)")
     pe.add_argument("--hand", default="right", choices=["left", "right"])
     pe.set_defaults(func=_cmd_extract)
+
+    pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
+    pc.add_argument("episode")
+    pc.set_defaults(func=_cmd_cloud)
 
     pp = sub.add_parser("prepare", help="rec.npz -> cln.npz")
     pp.add_argument("episode")
@@ -169,6 +192,12 @@ def _build_parser() -> argparse.ArgumentParser:
     px.add_argument("--out", required=True)
     px.add_argument("--fps", type=int, default=15)
     px.set_defaults(func=_cmd_export)
+
+    pv = sub.add_parser("viz", help="headless 3-D figure of an episode (rec|cln)")
+    pv.add_argument("episode")
+    pv.add_argument("--stage", default="cln", choices=["rec", "cln"])
+    pv.add_argument("--out", default=None, help="PNG path (default: <episode>/viz-<stage>.png)")
+    pv.set_defaults(func=_cmd_viz)
 
     prn = sub.add_parser("run", help="extract -> prepare -> retarget -> replay")
     prn.add_argument("episode")

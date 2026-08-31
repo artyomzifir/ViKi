@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-from .smoothing import smooth_landmark_sequence, interpolate_nans
+from viki.dsp import smooth_landmark_sequence, interpolate_nans
 from viki.perception.hand_angles import compute_end_effector_pose
-from viki.perception.models import HAND_LM_COUNT, LM
+from viki.contracts import HAND_LM_COUNT, LM
 import viki.config as config
 
 
@@ -175,6 +175,11 @@ class PreparationPipeline:
                 timestamps = data["timestamps"]
                 points = data["points"]
                 landmark_ids = data["landmark_ids"]
+            conf_all = (
+                np.asarray(data["confidence"], dtype=np.float64)
+                if "confidence" in data
+                else np.ones((len(timestamps), points.shape[1]), dtype=np.float64)
+            )
 
         if points.size == 0:
             raise ValueError("Recording file is empty.")
@@ -195,6 +200,7 @@ class PreparationPipeline:
 
         trajectories: dict[str, np.ndarray] = {}
         ts_map: dict[str, np.ndarray] = {}
+        conf_map: dict[str, np.ndarray] = {}
         for dev, idxs in groups.items():
             trajectories[str(dev)] = np.array(
                 [points[i] for i in idxs], dtype=np.float32
@@ -202,20 +208,29 @@ class PreparationPipeline:
             ts_map[str(dev)] = np.array(
                 [int(timestamps[i]) for i in idxs], dtype=np.int64
             )
+            conf_map[str(dev)] = np.array([conf_all[i] for i in idxs], dtype=np.float64)
 
-        # 1. Interpolation part: per camera, independently fill NaN gaps.
+        # 1. Interpolation part: per camera, independently fill NaN gaps (linear).
         raw_filled: dict[str, np.ndarray] = {}
         for dev in trajectories:
             raw_filled[dev] = interpolate_nans(trajectories[dev])
 
-        # 2. Fusion part: fuse the interpolated per-camera trajectories onto a
-        #    common time grid (deferred from capture time).
-        from .fusion import fuse_trajectories
+        # 2. Fusion: confidence-weighted average across cameras onto a common
+        #    grid (paper §3.5, eq. 2 — weights from rec.npz["confidence"]).
+        from viki.prepare.fuse import fuse_trajectories
 
-        raw_fused, grid = fuse_trajectories(raw_filled, ts_map, landmark_ids)
+        raw_fused, grid = fuse_trajectories(
+            raw_filled, ts_map, landmark_ids, weights=conf_map
+        )
 
         if grid.size == 0:
             raise ValueError("Recording contains no valid trajectories.")
+
+        # 2b. Fill remaining gaps in the fused trajectory with a cubic spline
+        #     (paper §3.7) before smoothing.
+        from viki.prepare.interpolate import fill_se3_spline
+
+        raw_fused = fill_se3_spline(raw_fused)
 
         # 3. Smooth the fused trajectory.
         fused_points = smooth_landmark_sequence(
@@ -223,6 +238,23 @@ class PreparationPipeline:
             window_length=window_length,
             polyorder=polyorder,
         )
+
+        # 3b. Per-frame confidence weight ω_t: mean over the wrist-frame
+        #     landmarks of the max-over-cameras weight (paper §3.5, eq. 5).
+        _wf = [int(LM.WRIST), int(LM.INDEX_MCP), int(LM.MIDDLE_MCP), int(LM.PINKY_MCP)]
+        _cols = [np.where(landmark_ids == lm)[0][0] for lm in _wf if lm in landmark_ids]
+        grid_conf = np.zeros((len(grid), points.shape[1]), dtype=np.float64)
+        for dev, cam_conf in conf_map.items():
+            for k, t in enumerate(ts_map[dev]):
+                gi = int(np.argmin(np.abs(grid - t)))
+                grid_conf[gi] = np.maximum(grid_conf[gi], cam_conf[k])
+        omega = (
+            grid_conf[:, _cols].mean(axis=1)
+            if _cols
+            else np.ones(len(grid), dtype=np.float64)
+        )
+        _omax = float(omega.max()) or 1.0
+        omega = np.clip(omega / _omax, 0.0, 1.0).astype(np.float32)
 
         # 4. Compute end-effector poses on the smoothed fused trajectory.
         T = fused_points.shape[0]
@@ -261,10 +293,9 @@ class PreparationPipeline:
             _g_prev = gripper_model.estimate(_pts, _g_prev)
             gripper[t] = _g_prev.closed
 
-        # 4c. Per-frame confidence weight ω_t for the retarget cost functional
-        #     (paper §3.5, eq. 5). STUB: pose validity only until per-landmark
-        #     fusion weights are carried through from rec.npz.
-        omega = valid.astype(np.float32)
+        # ω_t computed at step 3b from the fused per-landmark weights; keep only
+        # frames whose EE pose survived validation.
+        omega = np.where(valid, omega, 0.0).astype(np.float32)
 
         # 4d. Object-relative representation (paper §3.6). STUB: no object-pose
         #     tracker → returns None, cln.npz stays workspace-anchored.

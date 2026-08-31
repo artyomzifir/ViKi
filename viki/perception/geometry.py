@@ -25,13 +25,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from viki.perception.models import (
+from viki.contracts import (
     HandDetection,
     Landmarks3D,
     LM,
     PreparedFrame,
 )
-from viki.calibration.models import CalibrationExtrinsics
+from viki.contracts import CalibrationExtrinsics
 import viki.config as config
 
 # Palm/knuckle landmarks used to estimate the hand position when not using the
@@ -242,11 +242,65 @@ def lift_to_3d(
             "lift_to_3d: %d/21 landmarks are NaN for %s", nan_count, detection.device_id
         )
 
+    # Per-landmark fusion weight (paper §3.5, eq. 2):
+    #   w = visibility · sensor_validity · d^-2 · max(0, cosθ)
+    visibility = float(getattr(detection, "confidence", 1.0) or 1.0)
+    weights: dict[LM, float] = {}
+    for lm, p in points.items():
+        cam_xyz = raw3d.get(lm)
+        measured = cam_xyz is not None
+        d = float(cam_xyz[2]) if measured else float(p[2] if np.isfinite(p[2]) else zd)
+        d = max(d, 0.05)
+        sensor = 1.0 if measured else 0.1
+        cos_incidence = 1.0
+        if measured:
+            ud, vd = proj_uv[lm]
+            cos_incidence = _incidence_cos(
+                depth_m, int(round(ud)), int(round(vd)), fx, fy, cx, cy, cam_xyz
+            )
+        weights[lm] = visibility * sensor * (1.0 / (d * d)) * max(0.0, cos_incidence)
+
     return Landmarks3D(
         points=points,
         device_id=detection.device_id,
         timestamp_us=detection.timestamp_us,
+        weights=weights,
     )
+
+
+def _incidence_cos(
+    depth_m: np.ndarray,
+    ui: int,
+    vi: int,
+    fx: float,
+    fy: float,
+    cx: float,
+    cy: float,
+    xyz: np.ndarray,
+) -> float:
+    """
+    |cos| of the angle between the local depth-surface normal and the view ray,
+    from a 3-pixel finite-difference at (ui, vi). Returns 1.0 on a degenerate
+    or out-of-range patch (i.e. the incidence term drops out).
+    """
+    h, w = depth_m.shape[:2]
+    if not (1 <= ui < w - 1 and 1 <= vi < h - 1):
+        return 1.0
+    z = depth_m[vi, ui]
+    zx1, zx0 = depth_m[vi, ui + 1], depth_m[vi, ui - 1]
+    zy1, zy0 = depth_m[vi + 1, ui], depth_m[vi - 1, ui]
+    if not np.all(np.isfinite([z, zx1, zx0, zy1, zy0])):
+        return 1.0
+    # dX/du ≈ z/fx, so surface tangents in camera frame:
+    tx = np.array([z / fx, 0.0, (zx1 - zx0) * 0.5], dtype=np.float64)
+    ty = np.array([0.0, z / fy, (zy1 - zy0) * 0.5], dtype=np.float64)
+    n = np.cross(tx, ty)
+    nn = np.linalg.norm(n)
+    ray = np.asarray(xyz, dtype=np.float64)
+    rn = np.linalg.norm(ray)
+    if nn < 1e-9 or rn < 1e-9:
+        return 1.0
+    return float(abs(np.dot(n / nn, ray / rn)))
 
 
 def _smart_median(

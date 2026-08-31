@@ -20,7 +20,7 @@ from typing import Mapping
 
 import numpy as np
 
-from viki.perception.models import LM, EndEffectorPose
+from viki.contracts import LM, EndEffectorPose
 
 _MIN_LEN = 1e-6  # zero-length vector threshold
 

@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from viki.calibration.models import ArucoBoardParameters
+from viki.contracts import ArucoBoardParameters
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,14 @@ async def capture_all(
             400,
             "Calibration session not started. Please click 'Sync Parameters' first.",
         )
-    cal.capture_all()
+    return cal.capture_all()
+
+
+@router.post("/clear")
+async def clear_all(cal: CalibrationManager = Depends(get_calibrator)):
+    """Drop every sample on every camera and wipe the live capture photos."""
+    cal.clear_all()
+    return {"status": "cleared"}
 
 
 @router.post("/start/{device_id}")
@@ -539,3 +546,136 @@ def marked_stream(
         media_type=_MJPEG_MEDIA,
         headers=_STREAM_HEADERS,
     )
+
+
+# ── extrinsics presets ──────────────────────────────────────────────────────
+# Named calibration sets under data/calibrations/. One is "active" (its name in
+# ACTIVE_CALIBRATION); activating copies it onto EXTRINSICS_FILENAME.
+
+import json as _json  # noqa: E402
+
+from pydantic import BaseModel  # noqa: E402
+
+from viki.calibration import presets as _presets  # noqa: E402
+from viki.config import EXTRINSICS_FILENAME as _EXTR_FILE  # noqa: E402
+
+
+class _PresetName(BaseModel):
+    name: str
+
+
+# ── live capture sets ───────────────────────────────────────────────────────
+
+
+@router.get("/samples")
+async def list_sample_sets(cal: CalibrationManager = Depends(get_calibrator)):
+    """One row per capture set: which cameras saw the board in it."""
+    return cal.list_sample_sets()
+
+
+@router.delete("/samples/{index}")
+async def delete_sample_set(
+    index: int, cal: CalibrationManager = Depends(get_calibrator)
+):
+    cal.delete_sample_set(index)
+    return {"status": "deleted", "index": index}
+
+
+def _capture_image(owner: str, index: int, device: str):
+    from fastapi.responses import FileResponse
+
+    from viki.calibration import captures
+
+    p = captures.image_path(owner, index, device)
+    if not p.is_file():
+        raise HTTPException(404, "no capture image")
+    return FileResponse(str(p), media_type="image/jpeg")
+
+
+@router.get("/samples/{index}/{device}.jpg")
+async def sample_image(index: int, device: str):
+    """Preview photo of a live capture set (annotated with the detected board)."""
+    from viki.calibration import captures
+
+    return _capture_image(captures.LIVE, index, device)
+
+
+@router.get("/presets/{name}/sets/{index}/{device}.jpg")
+async def preset_sample_image(name: str, index: int, device: str):
+    return _capture_image(name, index, device)
+
+
+# ── presets ─────────────────────────────────────────────────────────────────
+
+
+@router.get("/presets")
+async def list_presets():
+    """name, mtime, cameras, #sets, active flag."""
+    return _presets.list_presets()
+
+
+@router.get("/presets/{name}")
+async def get_preset(name: str):
+    try:
+        return _presets.read_detail(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/save-as")
+async def save_preset(body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)):
+    """Bundle the current solve + its capture sets + SDK intrinsics + board
+    params into a named preset so it can be reopened and re-solved later."""
+    try:
+        extr = _json.loads(open(_EXTR_FILE).read())
+    except (OSError, ValueError):
+        raise HTTPException(400, "no current extrinsics — run the solve first")
+    try:
+        path = _presets.save_as(
+            body.name,
+            extrinsics=extr,
+            sets=cal.sets_payload(),
+            intrinsics=cal.color_intrinsics_payload(),
+            board=cal.board_cfg(),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "success", "name": path.stem}
+
+
+@router.post("/activate")
+async def activate_preset(
+    body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)
+):
+    try:
+        _presets.activate(body.name)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    cal.load_all_extrinsics()
+    return {"status": "success", "name": body.name}
+
+
+@router.delete("/presets/{name}")
+async def delete_preset(name: str):
+    try:
+        _presets.delete(name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "deleted", "name": name}
+
+
+@router.delete("/presets/{name}/sets/{index}")
+async def delete_preset_set(
+    name: str, index: int, cal: CalibrationManager = Depends(get_calibrator)
+):
+    """Drop a capture set from a saved preset, re-solve, re-save. If the preset
+    is active, the new extrinsics are pushed live too."""
+    try:
+        detail = _presets.delete_set(name, index)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if _presets.current_active() == name:
+        cal.load_all_extrinsics()
+    return detail

@@ -16,12 +16,9 @@ chmod a+rw /dev/bus/usb/*/*  2>/dev/null || true
 # errno=12 (ENOMEM) fix
 echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb 2>/dev/null || true
 
-# Wrap the main command to catch signals and ensure graceful shutdown
+# Wrap the main command so signals reach it (the FastAPI lifespan stops the
+# cameras itself on shutdown).
 "$@" &
 PID=$!
-
-# Forward SIGINT and SIGTERM to the child process
-trap 'python3 /app/scripts/stop_cameras.py; kill -SIGINT $PID; wait $PID' SIGINT SIGTERM
-
-# Wait for the child process to finish
+trap 'kill -SIGINT $PID; wait $PID' SIGINT SIGTERM
 wait $PID

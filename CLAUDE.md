@@ -21,11 +21,16 @@ The app talks to hardware SDKs (`pyrealsense2`, `libk4a.so`) that are installed 
 not on the host. Run and test through Docker Compose.
 
 ```bash
-sudo ./scripts/host_setup.sh                              # once per host: Docker, udev rules, groups
-docker compose up --build                                 # first run; then: docker compose up
-docker compose run --rm terminal                          # debug shell inside the container
-docker compose -f docker-compose.test.yml run --rm tests  # full test suite (pytest tests/unit_tests)
+sudo ./scripts/host_setup.sh              # once per host: Docker, udev rules, groups
+docker compose up --build                 # web UI + API on :8000 (first run; then: docker compose up)
+docker compose run --rm terminal          # debug shell inside the container
+docker compose run --rm test              # full test suite (pytest tests/)
+docker compose run --rm cli <verb> ...    # run one pipeline stage (viki <verb> ...)
 ```
+
+One `docker-compose.yml`, one image (Dockerfile `test` target). Services: `web` (default,
+`up`), `test` / `cli` / `terminal` (behind the `tools` profile, meant for `run`). `test` and
+`cli` append args to `pytest` / `viki` respectively.
 
 Server serves the UI + API at `http://localhost:8000` (`network_mode: host`). `viki/` is bind-mounted,
 so code edits apply on container restart (no rebuild unless `pyproject.toml` changes).
@@ -37,13 +42,14 @@ separate 10 Gbps USB hubs per Kinect). See `SETUP_GUIDE.md` before touching came
 
 Two conventions coexist:
 
-- `tests/unit_tests/**` — pytest, hardware-independent, run in the test container.
-  Single test: `docker compose -f docker-compose.test.yml run --rm tests pytest tests/unit_tests/skeleton/test_geometry.py::test_name`
-- Package-local `test_*.py` (e.g. `viki/skeleton/`, `viki/optimization/preparation/`, `viki/optimization/retarget/`)
-  — `unittest`, logic-only: `python -m unittest discover viki/optimization/preparation`
+`tests/unit_tests/**` — pytest, hardware-independent, one dir per package. Run all with
+`docker compose run --rm test`; a subset with `docker compose run --rm test
+tests/unit_tests/perception/test_geometry.py::test_name` (args append to `pytest`).
 
-Full IK execution (PINK/Pinocchio) needs the separate `viki-fk` conda environment; the retarget
-*logic* tests do not.
+`tests/unit_tests/e2e/test_pipeline_smoke.py` walks a synthetic episode
+rec.npz → prepare → plan.h5 → replay(dryrun) → label → export.
+
+PINK/Pinocchio ships in the image, so the retarget leg runs in-container.
 
 ## Architecture
 
@@ -91,5 +97,16 @@ add it to both JSON files, declare its type annotation in `config.py`.
 ## Frontend
 
 `viki/server/static/` — plain HTML/CSS/JS, no build step. `index.html` + one JS module per UI panel
-(`cameras.js`, `skeleton.js`, `calibration.js`, `process.js`, `robotviz.js`, ...). Served directly
-by FastAPI.
+(`cameras.js`, `calibration.js`, `record.js`, …). Served directly by FastAPI.
+
+Exception: the **Viewer tab** (`viewer.js`) renders a per-frame coloured depth
+point cloud + skeleton with **three.js** (WebGL). three.js is the one vendored
+dep — `static/js/vendor/three.module.js` + `OrbitControls.js`, resolved by an
+importmap in `index.html`. A dense cloud (~10^5 points/frame) is not viable on a
+hand-rolled 2-D canvas. Everything else stays plain, no-build JS.
+
+**Pipeline viz artifact:** `viki cloud <episode>` (`viki/perception/cloud.py`)
+turns `raw/` into `cloud/<i:06d>.bin` (`int32 n` · `float32[n*3]` xyz m ·
+`uint8[n*3]` rgb) + `cloud/meta.json`, served by
+`GET /api/pipeline/episode/{id}/cloud[/{frame}]`. Nothing downstream reads it;
+it is not part of `viki run`.

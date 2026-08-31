@@ -142,9 +142,21 @@ class CameraManager:
         color_height: int = DEFAULT_COLOR_HEIGHT,
         depth_mode: str = DEFAULT_DEPTH_MODE,
         **kwargs,
-    ) -> None:
-        if device_id in self._workers:
-            return  # already running
+    ) -> str:
+        want = {
+            "color_width": int(color_width),
+            "color_height": int(color_height),
+            "fps": int(fps),
+            "depth_mode": depth_mode,
+        }
+        existing = self._workers.get(device_id)
+        if existing is not None:
+            have = existing.backend.config
+            # only the keys we set here — ignore backend extras
+            if all(have.get(k) == v for k, v in want.items() if k in have):
+                return "unchanged"
+            # config changed → restart so the request actually takes effect
+            self.stop(device_id)
 
         backend = self._make_backend(
             device_id, fps, color_width, color_height, depth_mode, **kwargs
@@ -152,6 +164,7 @@ class CameraManager:
         worker = _CameraWorker(backend)
         worker.start()
         self._workers[device_id] = worker
+        return "restarted" if existing is not None else "started"
 
     def start_kinect_sync(
         self,
@@ -239,6 +252,7 @@ class CameraManager:
             "device_id": device_id,
             "running": True,
             "has_frame": frame is not None,
+            "config": worker.backend.config,  # what it was actually started with
         }
         if frame:
             info["color_shape"] = list(frame.color.shape)

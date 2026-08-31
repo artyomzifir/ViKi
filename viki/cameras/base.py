@@ -66,6 +66,13 @@ class CameraBackend(ABC):
     def is_running(self) -> bool:
         """True if the stream is active."""
 
+    @property
+    def config(self) -> dict:
+        """The capture settings this backend was started with, so the manager
+        can tell whether a re-``start`` needs a restart. Keys are backend-
+        specific but always JSON-able. Default: empty (config unknown)."""
+        return {}
+
     @abstractmethod
     def project_color_to_depth(
         self, u: float, v: float, z: float
@@ -75,6 +82,14 @@ class CameraBackend(ABC):
     def deproject_2d_to_3d(
         self, u: float, v: float, z: float
     ) -> tuple[float, float, float] | None:
+        return None
+
+    def get_raw_calibration(self) -> bytes | None:
+        """Device-independent raw calibration blob, if the SDK exposes one.
+
+        Used offline to rebuild the projection model without hardware. Default:
+        unavailable (e.g. RealSense, whose depth is already colour-aligned).
+        """
         return None
 
     # ------------------------------------------------------------------

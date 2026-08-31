@@ -8,8 +8,11 @@ backend per camera per frame, lifts to 3-D with measured depth, transforms into
 the workspace frame with the recorded extrinsics, and writes per-camera landmark
 trajectories in the ``rec.npz`` schema.
 
-Assumption: recorded depth is aligned to colour (identity colour→depth pixel
-map). A backend-specific projector can be plugged in later via ``DepthProjector``.
+Colour→depth pixel mapping: if the episode carries a Kinect raw calibration blob
+(``raw/<dev>_k4a_calib.bin``, written by the recorder) it is rebuilt offline and
+used as the projector. Otherwise we fall back to the identity map
+(``_IdentityProjector``) — correct only when depth is already aligned to colour
+(RealSense, whose depth is colour-aligned at capture).
 """
 
 from __future__ import annotations
@@ -45,13 +48,33 @@ def _read_json(p: Path) -> dict:
     return json.loads(p.read_text()) if p.exists() else {}
 
 
-def _depth_K(intr: dict) -> np.ndarray | None:
-    if not intr:
+def _depth_K(entry: dict) -> np.ndarray | None:
+    """Depth camera matrix from one camera's ``raw/intrinsics.json`` entry.
+
+    Handles both layouts: the recorder's nested form
+    ``{"color": {...}, "depth": {...}, "source": ...}`` and the older flat form
+    ``{"fx": ..., "fy": ..., "cx": ..., "cy": ...}``.
+    """
+    if not entry:
+        return None
+    intr = entry.get("depth") or entry.get("color") or entry
+    if not intr or "fx" not in intr:
         return None
     return np.array(
         [[intr["fx"], 0, intr["cx"]], [0, intr["fy"], intr["cy"]], [0, 0, 1]],
         dtype=np.float32,
     )
+
+
+def _load_projector(raw: Path, dev_id: str, meta: dict):
+    """Real SDK colour→depth projector if the episode has a k4a calib blob, else ``None``."""
+    try:
+        from viki.perception.k4a_offline import K4ACalibration
+
+        return K4ACalibration.from_episode(raw, dev_id, meta)
+    except Exception as exc:  # noqa: BLE001 — never let calib issues abort extract
+        logger.warning("extract %s: k4a projector unavailable (%s)", dev_id, exc)
+        return None
 
 
 def _extrinsics(raw_extr: dict, dev_id: str) -> CalibrationExtrinsics | None:
@@ -73,17 +96,17 @@ def extract_episode(
     """Run perception over an episode's raw frames; write ``rec.npz``. Returns the path."""
     from viki import config as _cfg
 
+    from viki.contracts import SkeletonFrame
+    from viki.perception.recorder import write_rec
+
     raw = ep.raw_dir
     backend_name = backend or getattr(_cfg, "POSE_BACKEND", "mediapipe")
     intr_all = _read_json(raw / "intrinsics.json")
     extr_all = _read_json(raw / "extrinsics.json")
-    projector = _IdentityProjector()
+    meta_all = _read_json(ep.meta_path)
+    identity = _IdentityProjector()
 
-    device_ids: list[str] = []
-    timestamps: list[int] = []
-    points: list[np.ndarray] = []
-    confidence: list[np.ndarray] = []
-    nan3 = np.full(3, np.nan, dtype=np.float32)
+    records: list[tuple[str, SkeletonFrame, dict]] = []
 
     for mp4 in sorted(raw.glob("*.mp4")):
         dev_id = mp4.stem
@@ -91,6 +114,12 @@ def extract_episode(
         depth_files = sorted(depth_dir.glob("*.npy")) if depth_dir.is_dir() else []
         K = _depth_K(intr_all.get(dev_id, {}))
         extr = _extrinsics(extr_all, dev_id)
+        projector = _load_projector(raw, dev_id, meta_all) or identity
+        if projector is identity:
+            logger.warning(
+                "extract %s/%s: no k4a calibration blob — assuming depth is "
+                "colour-aligned (identity colour→depth map)", ep.id, dev_id,
+            )
         det_backend = load_backend(backend_name, mode="video")
 
         cap = cv2.VideoCapture(str(mp4))
@@ -122,32 +151,18 @@ def extract_episode(
             if not world:
                 continue
 
-            pts = np.array(
-                [world.get(LM(i), nan3) for i in range(HAND_LM_COUNT)], dtype=np.float32
+            w_cam = lms.weights or {}
+            records.append(
+                (
+                    dev_id,
+                    SkeletonFrame(device_id=dev_id, points=world, timestamp_us=int(idx)),
+                    {lm: w_cam.get(lm, 0.0) for lm in world},
+                )
             )
-            conf = np.full(HAND_LM_COUNT, det.confidence, dtype=np.float32)
-            device_ids.append(dev_id)
-            timestamps.append(int(idx))
-            points.append(pts)
-            confidence.append(conf)
         cap.release()
         det_backend.close()
 
-    pts_arr = (
-        np.stack(points) if points else np.empty((0, HAND_LM_COUNT, 3), dtype=np.float32)
-    )
-    np.savez_compressed(
-        ep.rec_npz,
-        device_ids=np.array(device_ids) if device_ids else np.empty((0,), dtype="<U1"),
-        timestamps=np.array(timestamps, dtype=np.int64),
-        points=pts_arr,
-        landmark_ids=np.arange(HAND_LM_COUNT, dtype=np.int32),
-        confidence=(
-            np.stack(confidence)
-            if confidence
-            else np.empty((0, HAND_LM_COUNT), dtype=np.float32)
-        ),
-    )
-    mark_stage(ep, "extract", frames=len(device_ids), backend=backend_name)
-    logger.info("extract %s: %d frames -> %s", ep.id, len(device_ids), ep.rec_npz)
+    write_rec(ep.rec_npz, records)
+    mark_stage(ep, "extract", frames=len(records), backend=backend_name)
+    logger.info("extract %s: %d frames -> %s", ep.id, len(records), ep.rec_npz)
     return str(ep.rec_npz)

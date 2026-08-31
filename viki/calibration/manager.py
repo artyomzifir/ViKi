@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Dict, List
 from viki.cameras.manager import CameraManager
-from viki.calibration.models import (
+from viki.contracts import (
     ArucoBoardParameters,
     BoardParameters,
     CalibrationSample,
@@ -473,10 +473,50 @@ class CalibrationManager:
             )
         return extrinsics
 
-    def capture_all(self) -> None:
-        """Manually trigger sample capture for all active workers."""
-        for device_id, worker in self._workers.items():
-            worker.capture()
+    def capture_all(self) -> dict:
+        """Capture one board set across the whole rig.
+
+        A set is kept only if **every** active camera detected the board (so the
+        per-worker sample lists stay index-aligned). On success the annotated
+        colour frame of each camera is saved to
+        ``data/calibrations/_live/set-NNN/<dev>.jpg``. Returns
+        ``{"captured": bool, "missing": [dev, ...], "index": int}``.
+        """
+        from viki.calibration import captures
+
+        devs = list(self._workers)
+        if not devs:
+            return {"captured": False, "missing": []}
+
+        before = {d: self._workers[d].samples_count for d in devs}
+        for d in devs:
+            self._workers[d].capture()
+        grew = [d for d in devs if self._workers[d].samples_count > before[d]]
+        missing = [d for d in devs if d not in grew]
+        if missing:
+            for d in grew:  # roll back the partial set
+                self._workers[d].pop_sample(self._workers[d].samples_count - 1)
+            return {"captured": False, "missing": missing}
+
+        idx = self._workers[devs[0]].samples_count - 1
+        images = {}
+        for d in devs:
+            w = self._workers[d]
+            frame = w.samples[-1].frame
+            try:
+                images[d] = w.mark_board(frame)
+            except Exception:  # noqa: BLE001
+                images[d] = frame.color
+        captures.save_set(captures.LIVE, idx, images)
+        return {"captured": True, "missing": [], "index": idx}
+
+    def clear_all(self) -> None:
+        """Drop every sample on every worker and wipe the live capture photos."""
+        from viki.calibration import captures
+
+        for worker in self._workers.values():
+            worker.clear()
+        captures.wipe(captures.LIVE)
 
     def capture(self, device_id: str) -> None:
         """Manually trigger sample capture for a specific device."""
@@ -497,6 +537,59 @@ class CalibrationManager:
             )
             return 0
         return worker.samples_count
+
+    # ── capture-sets (one ``capture_all`` == one set, index-aligned) ──────────
+
+    def list_sample_sets(self) -> list[dict]:
+        """One row per capture set: per-camera corner count + preview image URL."""
+        devs = list(self._workers)
+        n = max((self._workers[d].samples_count for d in devs), default=0)
+        rows = []
+        for i in range(n):
+            cams = {}
+            for d in devs:
+                s = self._workers[d].samples
+                cams[d] = {
+                    "detected": i < len(s),
+                    "corners": (len(s[i].corners) if i < len(s) and s[i].corners is not None else 0),
+                    "image": f"/api/calibration/samples/{i}/{d}.jpg",
+                }
+            rows.append({"index": i, "cameras": cams})
+        return rows
+
+    def delete_sample_set(self, index: int) -> None:
+        """Drop capture set ``index`` from every worker and from disk."""
+        from viki.calibration import captures
+
+        for worker in self._workers.values():
+            worker.pop_sample(index)
+        captures.delete_set(captures.LIVE, index)
+
+    def sets_payload(self) -> dict[str, list[dict]]:
+        """Serialize every worker's samples for storing in a preset."""
+        from viki.calibration.samples import sample_to_dict
+
+        return {
+            dev: [sample_to_dict(s) for s in worker.samples]
+            for dev, worker in self._workers.items()
+        }
+
+    def board_cfg(self) -> dict | None:
+        """The active board parameters as a plain dict, or None."""
+        from viki.calibration.samples import board_params_to_dict
+
+        bp = self.get_board_params()
+        return board_params_to_dict(bp) if bp is not None else None
+
+    def color_intrinsics_payload(self) -> dict[str, dict]:
+        """SDK-reported colour intrinsics for every active worker's camera."""
+        out: dict[str, dict] = {}
+        for dev in self._workers:
+            frame = self._mgr.latest_frame(dev)
+            ci = frame.color_intrinsics if frame else None
+            if ci is not None:
+                out[dev] = {"fx": ci.fx, "fy": ci.fy, "cx": ci.cx, "cy": ci.cy}
+        return out
 
     def get_board_params(self):
         """Return board parameters from the first active worker, or None."""
