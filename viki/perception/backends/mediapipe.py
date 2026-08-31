@@ -50,6 +50,7 @@ class MediaPipeHandBackend(HandPoseBackend):
         mode: str = "video",
         models_dir: str = "models",
         model_path: str | None = None,
+        model: str | None = None,  # tier id from the registry; MediaPipe has one
         min_confidence: float = 0.5,
     ) -> None:
         if mode not in ("image", "video"):

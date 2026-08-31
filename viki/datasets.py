@@ -97,13 +97,23 @@ def delete_dataset(name: str) -> None:
 def _episode_summary(d: Path, dataset: str | None) -> dict:
     ep = Episode(root=d)
     meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
+    labels = meta.get("labels") or {}
+    stages = read_status(ep).get("stages", {})
+    rec = stages.get("record", {})
+    fps, frames = rec.get("fps"), rec.get("frames")
+    duration_s = round(frames / fps, 1) if fps and frames else None
     return {
         "id": ep.id,
         "path": str(d),
         "dataset": dataset,
-        "task": (meta.get("labels") or {}).get("task", meta.get("task", "")),
+        "task": labels.get("task", meta.get("task", "")),
+        "demonstrator": labels.get("demonstrator", meta.get("demonstrator", "")),
+        "hand": labels.get("hand", meta.get("hand", "")),
         "created": meta.get("created", ""),
-        "stages": read_status(ep).get("stages", {}),
+        "fps": fps,
+        "frames": frames,
+        "duration_s": duration_s,
+        "stages": stages,
         "has": {
             "raw": ep.raw_dir.is_dir(),
             "rec": ep.rec_npz.exists(),
@@ -144,6 +154,8 @@ def delete_episode(path: str) -> None:
 
 
 def rename_episode(path: str, new_id: str) -> Path:
+    """Rename the episode *directory* (its capture-timestamp id). Rarely needed —
+    the human-readable name lives in meta.json, see :func:`update_episode_meta`."""
     p = _assert_inside(Path(path))
     if not p.is_dir():
         raise FileNotFoundError(f"no episode at {path}")
@@ -152,6 +164,38 @@ def rename_episode(path: str, new_id: str) -> Path:
         raise FileExistsError(f"{new_id!r} already exists in this dataset")
     p.rename(dst)
     return dst
+
+
+_VALID_HANDS = {"left", "right"}
+
+
+def update_episode_meta(
+    path: str,
+    task: str | None = None,
+    demonstrator: str | None = None,
+    hand: str | None = None,
+) -> Path:
+    """Edit an episode's human-readable metadata (name / author / hand) in
+    ``meta.json``. ``None`` leaves a field untouched. The directory id (the
+    capture timestamp) stays as the stable identifier."""
+    p = _assert_inside(Path(path))
+    if not p.is_dir():
+        raise FileNotFoundError(f"no episode at {path}")
+    if hand is not None:
+        hand = hand.strip().lower()
+        if hand not in _VALID_HANDS:
+            raise ValueError(f"hand must be 'left' or 'right', got {hand!r}")
+
+    ep = Episode(root=p)
+    meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
+    for key, value in (("task", task), ("demonstrator", demonstrator), ("hand", hand)):
+        if value is None:
+            continue
+        meta[key] = value
+        if isinstance(meta.get("labels"), dict):
+            meta["labels"][key] = value
+    ep.meta_path.write_text(json.dumps(meta, indent=2))
+    return p
 
 
 def move_episode(path: str, dataset: str) -> Path:

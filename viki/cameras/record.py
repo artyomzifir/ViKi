@@ -97,7 +97,9 @@ class SceneRecorder:
                 self._depth_dirs[dev_id] = self._raw() / f"{dev_id}_depth"
                 self._depth_dirs[dev_id].mkdir(exist_ok=True)
             self._writers[dev_id].write(frame.color)
-            if frame.has_depth():
+            # only write real depth — a colour-only capture leaves frame.depth a
+            # zeros placeholder, which downstream must not treat as measured
+            if frame.has_depth() and frame.depth.any():
                 np.save(self._depth_dirs[dev_id] / f"{self._n:06d}.npy", frame.depth)
         self._timestamps.append(
             {"sync_us": group.sync_timestamp_us, "offsets_us": group.offsets_us}

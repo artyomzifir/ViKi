@@ -17,6 +17,7 @@ x-common: &common
   image: viki
   network_mode: host
   privileged: true
+  gpus: all                      # host NVIDIA GPU for model inference (nvidia-container-toolkit)
   volumes:
     - /dev:/dev
     - /run/udev:/run/udev:ro

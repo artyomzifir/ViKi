@@ -101,7 +101,13 @@ class PreparationPipeline:
     def __init__(self) -> None:
         self.recs_dir = Path(config.SKELETON_RECS_DIR)
         self.smoothed_dir = Path(config.SKELETON_SMOOTHED_DIR)
-        
+        # >0 leaves interior gaps longer than this many frames unfilled
+        self.interp_max_gap = int(getattr(config, "PERCEPTION_INTERP_MAX_GAP", 0))
+        # optional explicit fused-output time grid (µs) — the raw synced-frame
+        # timestamps, so cln.npz shares one index with the point cloud. None →
+        # fuse onto the union of the per-camera detection timestamps.
+        self.grid_ts: np.ndarray | None = None
+
         self.recs_dir.mkdir(parents=True, exist_ok=True)
         self.smoothed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -213,14 +219,14 @@ class PreparationPipeline:
         # 1. Interpolation part: per camera, independently fill NaN gaps (linear).
         raw_filled: dict[str, np.ndarray] = {}
         for dev in trajectories:
-            raw_filled[dev] = interpolate_nans(trajectories[dev])
+            raw_filled[dev] = interpolate_nans(trajectories[dev], max_gap=self.interp_max_gap)
 
         # 2. Fusion: confidence-weighted average across cameras onto a common
         #    grid (paper §3.5, eq. 2 — weights from rec.npz["confidence"]).
         from viki.prepare.fuse import fuse_trajectories
 
         raw_fused, grid = fuse_trajectories(
-            raw_filled, ts_map, landmark_ids, weights=conf_map
+            raw_filled, ts_map, landmark_ids, weights=conf_map, grid=self.grid_ts
         )
 
         if grid.size == 0:
@@ -368,7 +374,9 @@ def estimate_fps(timestamps_us: np.ndarray) -> float:
     return float(1.0 / np.median(dt))
 
 
-def prepare_episode(ep, window_length: int = 7, polyorder: int = 2) -> str:
+def prepare_episode(
+    ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None
+) -> str:
     """
     Episode-aware wrapper around :meth:`PreparationPipeline.smooth_recording`:
     ``ep.rec_npz`` -> ``ep.cln_npz``. Returns the cln.npz path.
@@ -387,6 +395,19 @@ def prepare_episode(ep, window_length: int = 7, polyorder: int = 2) -> str:
         pp = PreparationPipeline()
         pp.recs_dir = stage_p
         pp.smoothed_dir = stage_p
+        if interp_max_gap is not None:
+            pp.interp_max_gap = int(interp_max_gap)
+        # Fuse onto the raw synced-frame grid so cln.npz has one row per
+        # recorded frame, index-aligned with cloud/<i>.bin and everything else.
+        ts_path = ep.raw_dir / "timestamps.json"
+        if ts_path.exists():
+            try:
+                _ts = json.loads(ts_path.read_text())
+                _sync = [int(e["sync_us"]) for e in _ts if "sync_us" in e]
+                if _sync:
+                    pp.grid_ts = np.asarray(sorted(_sync), dtype=np.int64)
+            except Exception:  # noqa: BLE001 — fall back to the union grid
+                pass
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
 

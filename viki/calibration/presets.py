@@ -15,6 +15,7 @@ File formats (both read):
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -80,6 +81,7 @@ def list_presets() -> list[dict]:
     active = current_active()
     out: list[dict] = []
     for f in sorted(PRESETS_DIR.glob("*.json")):
+        k4a: list[str] = []
         try:
             data = json.loads(f.read_text())
             extr = _extrinsics_of(data)
@@ -88,6 +90,8 @@ def list_presets() -> list[dict]:
                 max((len(v) for v in data.get("sets", {}).values()), default=0)
                 if isinstance(data, dict) else 0
             )
+            if isinstance(data, dict):
+                k4a = sorted((data.get("k4a_raw") or {}).keys())
         except (json.JSONDecodeError, OSError):
             cams, n_sets = [], 0
         out.append({
@@ -95,6 +99,7 @@ def list_presets() -> list[dict]:
             "solved_at": f.stat().st_mtime,
             "cameras": cams,
             "sets": n_sets,
+            "k4a": k4a,
             "active": f.stem == active,
         })
     return out
@@ -128,7 +133,56 @@ def read_detail(name: str) -> dict:
         "intrinsics": data.get("intrinsics", {}),
         "board": data.get("board"),
         "set_images": _set_images(name),
+        "k4a_devices": sorted((data.get("k4a_raw") or {}).keys()),
     }
+
+
+# ── k4a raw calibration (device colour↔depth model, for offline lifting) ───
+
+
+def attach_k4a(
+    name: str, blobs: dict[str, bytes], depth_mode_int: int | None, color_res_int: int | None
+) -> dict:
+    """Store each Kinect's raw calibration blob (base64) + the depth-mode /
+    colour-resolution enum ints on an existing v2 preset, without re-solving.
+    The blob is a device property, so it stays valid for any recording made
+    against this preset at the same depth mode / colour resolution."""
+    data = _read(name)
+    if isinstance(data, list):
+        raise ValueError("preset is v1 (legacy list) — re-solve to upgrade before attaching k4a")
+    if not blobs:
+        raise ValueError("no raw calibration blobs to attach")
+    data.setdefault("k4a_raw", {})
+    for dev, blob in blobs.items():
+        data["k4a_raw"][dev] = base64.b64encode(blob).decode("ascii")
+    if depth_mode_int is not None:
+        data["k4a_depth_mode_int"] = int(depth_mode_int)
+    if color_res_int is not None:
+        data["k4a_color_res_int"] = int(color_res_int)
+    preset_path(name).write_text(json.dumps(data, indent=2))
+    return read_detail(name)
+
+
+def k4a_calibration(name: str, dev_id: str):
+    """Rebuilt :class:`~viki.perception.k4a_offline.K4ACalibration` for ``dev_id``
+    from this preset's stored blob, or ``None``."""
+    try:
+        data = _read(name)
+    except FileNotFoundError:
+        return None
+    if isinstance(data, list):
+        return None
+    b64 = (data.get("k4a_raw") or {}).get(dev_id)
+    if not b64:
+        return None
+    from viki.perception.k4a_offline import K4ACalibration
+
+    return K4ACalibration.from_blob(
+        base64.b64decode(b64),
+        data.get("k4a_depth_mode_int"),
+        data.get("k4a_color_res_int"),
+        tag=f"{name}/{dev_id}",
+    )
 
 
 def save_as(

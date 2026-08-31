@@ -623,7 +623,11 @@ async def get_preset(name: str):
 
 
 @router.post("/save-as")
-async def save_preset(body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)):
+async def save_preset(
+    body: _PresetName,
+    cal: CalibrationManager = Depends(get_calibrator),
+    mgr: CameraManager = Depends(get_manager),
+):
     """Bundle the current solve + its capture sets + SDK intrinsics + board
     params into a named preset so it can be reopened and re-solved later."""
     try:
@@ -640,7 +644,59 @@ async def save_preset(body: _PresetName, cal: CalibrationManager = Depends(get_c
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    _grab_k4a_best_effort(path.stem, mgr)  # cameras are live during calibration
     return {"status": "success", "name": path.stem}
+
+
+def _collect_k4a_blobs(mgr: CameraManager) -> tuple[dict, int | None, int | None]:
+    """Raw k4a calibration blob + depth-mode / colour-res enum ints from every
+    running Kinect backend."""
+    from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
+
+    blobs: dict[str, bytes] = {}
+    depth_int = color_int = None
+    for dev in mgr.active_device_ids():
+        be = mgr.get_backend(dev)
+        blob = getattr(be, "get_raw_calibration", lambda: None)() if be else None
+        if not blob:
+            continue
+        blobs[dev] = blob
+        cfg = be.config or {}
+        depth_int = _DEPTH_MODE_MAP.get(cfg.get("depth_mode"))
+        color_int = _COLOR_RES_MAP.get(
+            (int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))
+        )
+    return blobs, depth_int, color_int
+
+
+def _grab_k4a_best_effort(name: str, mgr: CameraManager) -> None:
+    try:
+        blobs, di, ci = _collect_k4a_blobs(mgr)
+        if blobs:
+            _presets.attach_k4a(name, blobs, di, ci)
+    except Exception:  # noqa: BLE001 — never break save-as on this
+        logger.warning("grab k4a for preset %r failed", name, exc_info=True)
+
+
+@router.post("/presets/{name}/grab-k4a")
+async def grab_preset_k4a(
+    name: str, mgr: CameraManager = Depends(get_manager)
+):
+    """Attach the running Kinects' raw calibration blob to an existing preset,
+    so recordings made against it can do offline colour↔depth lifting without a
+    re-record. Requires the Kinect cameras to be running."""
+    try:
+        _presets.read_detail(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    blobs, di, ci = _collect_k4a_blobs(mgr)
+    if not blobs:
+        raise HTTPException(400, "no raw calibration from running cameras — start the Kinects first")
+    try:
+        detail = _presets.attach_k4a(name, blobs, di, ci)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "success", "devices": sorted(blobs), "detail": detail}
 
 
 @router.post("/activate")

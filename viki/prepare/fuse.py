@@ -59,6 +59,7 @@ def fuse_trajectories(
     timestamps: dict[str, np.ndarray],
     landmark_ids: np.ndarray,
     weights: dict[str, np.ndarray] | None = None,
+    grid: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Fuse per‑camera world‑frame trajectories into one trajectory.
@@ -77,13 +78,22 @@ def fuse_trajectories(
         When ``None`` every observation gets weight 1 (plain mean). STUB: the
         caller currently passes detector visibility only — the range and
         incidence factors are not computed yet.
+    grid : np.ndarray | None
+        Optional explicit output time grid (µs). When given, every camera is
+        resampled onto it and a step counts as "observed" by a camera if that
+        camera has a real sample within half a grid period of it. Pass the raw
+        synced-frame timestamps here so ``cln.npz`` shares one index with the
+        point cloud and every other per-frame artifact. When ``None`` the grid
+        is the sorted union of the input timestamps (irregular dt, ~2x frames
+        with two software-synced cameras).
 
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
         ``(fused_points, common_grid)`` where ``fused_points`` has shape
         ``(G, L, 3)`` (NaN where no camera observed a landmark at a step) and
-        ``common_grid`` is the sorted union of input timestamps, shape ``(G,)``.
+        ``common_grid`` is ``grid`` if given, else the sorted union of input
+        timestamps, shape ``(G,)``.
     """
     device_ids = list(trajectories.keys())
     if not device_ids:
@@ -92,10 +102,16 @@ def fuse_trajectories(
             np.empty((0,), dtype=np.int64),
         )
 
-    all_ts = np.unique(
-        np.concatenate([np.asarray(t, dtype=np.int64) for t in timestamps.values()])
-    )
-    all_ts = np.sort(all_ts)
+    if grid is not None and np.asarray(grid).size:
+        all_ts = np.sort(np.asarray(grid, dtype=np.int64))
+        _steps = np.diff(all_ts)
+        _tol = int(np.median(_steps) // 2) if _steps.size else 0
+    else:
+        all_ts = np.unique(
+            np.concatenate([np.asarray(t, dtype=np.int64) for t in timestamps.values()])
+        )
+        all_ts = np.sort(all_ts)
+        _tol = 0
     G = all_ts.shape[0]
     L = len(landmark_ids)
 
@@ -105,20 +121,30 @@ def fuse_trajectories(
         pts = np.asarray(trajectories[dev_id], dtype=np.float32)
         ts = np.asarray(timestamps[dev_id], dtype=np.int64)
         order = np.argsort(ts)
-        resampled[dev_id] = _resample_to_grid(pts[order], ts[order], all_ts)
-        # A camera only "observes" the grid steps that match its own sample
-        # timestamps. Mask everything else as NaN so the average below ignores
-        # frames it never actually captured (resampling would otherwise fabricate
-        # a vote at timestamps where only another camera saw the hand).
-        observed = np.isin(all_ts, ts[order])
+        ts_s = ts[order]
+        resampled[dev_id] = _resample_to_grid(pts[order], ts_s, all_ts)
+        # A camera only "observes" a grid step it actually captured near in
+        # time. Mask everything else as NaN so the average below ignores frames
+        # it never saw (resampling would otherwise fabricate a vote at
+        # timestamps where only another camera saw the hand). With an exact
+        # union grid that's an equality test; with an explicit grid it's
+        # "nearest real sample within half a grid period" and ``src`` picks the
+        # weight from that sample.
+        if _tol > 0 and ts_s.size:
+            pos = np.clip(np.searchsorted(ts_s, all_ts), 1, ts_s.size - 1)
+            dl = np.abs(all_ts - ts_s[pos - 1])
+            dr = np.abs(all_ts - ts_s[pos])
+            src = np.where(dl <= dr, pos - 1, pos)
+            observed = np.minimum(dl, dr) <= _tol
+        else:
+            observed = np.isin(all_ts, ts_s)
+            src = np.clip(np.searchsorted(ts_s, all_ts), 0, max(ts_s.size - 1, 0))
         resampled[dev_id][~observed] = np.nan
 
         if weights is not None and dev_id in weights:
             w = np.asarray(weights[dev_id], dtype=np.float64)[order]  # (Tc, L)
             w_grid = np.full((G, L), np.nan, dtype=np.float64)
-            w_grid[np.isin(all_ts, ts[order])] = w[
-                np.searchsorted(ts[order], all_ts[observed])
-            ]
+            w_grid[observed] = w[src[observed]]
             resampled_w[dev_id] = np.clip(w_grid, 0.0, None)
         else:
             resampled_w[dev_id] = np.ones((G, L), dtype=np.float64)

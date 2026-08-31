@@ -1,20 +1,23 @@
 // Record tab: pick/create a dataset, give the take an initial label, capture a
 // synced RGB-D scene into data/datasets/<dataset>/<id>/, and browse + manage the
 // episodes already in that dataset. All input is on-page — no browser dialogs.
-import { api, log, state, FRONTEND_CONFIG } from './core.js';
+import { api, log, state, FRONTEND_CONFIG, sessionGet, sessionPatch } from './core.js';
 import * as cameras from './cameras.js';
 
 let view = null;
 let onCamerasChanged = null;
+let cloudPoll = null;            // interval id for the post-capture cloud-build bar
 let recording = false;
 let builtIds = '';               // csv of device ids currently rendered as cards
-let renamingPath = null;         // episode row in inline-rename mode
+let editingPath = null;          // episode row in inline metadata-edit mode
 let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 
 // ── template ──────────────────────────────────────────────────────────────
 
 function template() {
-  const rec = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
+  const cfg = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
+  const rec = { duration: cfg.duration ?? 10, fps: cfg.fps ?? 15, ...sessionGet('record', {}) };
+  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2] }), ...sessionGet('cloud', {}) };
   return `
   <div class="record-tab">
     <div class="record-main">
@@ -30,7 +33,7 @@ function template() {
 
     <aside class="record-side">
       <section class="calib-sec">
-        <div class="calib-sec-title">Dataset</div>
+        <div class="calib-sec-title">1 · Dataset</div>
         <select id="rec-dataset"></select>
         <div class="inline-add" id="rec-ds-add" hidden>
           <input type="text" id="rec-ds-name" placeholder="new dataset name">
@@ -39,21 +42,34 @@ function template() {
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">Label</div>
+        <div class="calib-sec-title">2 · Label <span class="hint">(optional)</span></div>
         <div class="cfg-row"><label>Task</label><input type="text" id="rec-task" placeholder="pick the cube"></div>
-        <div class="cfg-row"><label>Hand</label>
-          <select id="rec-hand"><option>right</option><option>left</option></select></div>
         <div class="cfg-row"><label>Demonstrator</label><input type="text" id="rec-demo"></div>
+        <div class="hint">hand is chosen per-run in the Extract tab</div>
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">Capture</div>
+        <div class="calib-sec-title">3 · Capture</div>
         <div class="cfg-row"><label>Seconds</label>
-          <input type="number" id="rec-seconds" min="1" value="${rec.duration ?? 10}"></div>
+          <input type="number" id="rec-seconds" min="1" value="${rec.duration}"></div>
         <div class="cfg-row"><label>FPS</label>
-          <input type="number" id="rec-fps" min="1" value="${rec.fps ?? 15}"></div>
+          <input type="number" id="rec-fps" min="1" value="${rec.fps}"></div>
         <button id="rec-go" class="primary">● Record</button>
         <div class="hint" id="rec-hint">Start ≥1 camera, pick a dataset.</div>
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">4 · Point cloud <span class="hint">(built per episode after capture)</span></div>
+        <div class="cfg-row"><label>Depth px stride</label>
+          <input type="number" id="rec-cl-stride" min="1" step="1" value="${cl.stride}"></div>
+        <div class="cfg-row"><label>Voxel leaf (m)</label>
+          <input type="number" id="rec-cl-voxel" min="0" step="0.001" value="${cl.voxel}"></div>
+        <div class="cfg-row"><label>Max points / frame</label>
+          <input type="number" id="rec-cl-max" min="0" step="1000" value="${cl.maxPoints}"></div>
+        <div class="cfg-row"><label>Workspace AABB</label>
+          <input type="text" id="rec-cl-bbox" placeholder="x0,x1,y0,y1,z0,z1" value="${(cl.bbox || []).join(', ')}"></div>
+        <div class="hint">x0,x1,y0,y1,z0,z1 in metres — empty = no crop</div>
+        <div id="rec-cloud-progress" class="perc-queue"></div>
       </section>
     </aside>
   </div>`;
@@ -124,7 +140,7 @@ async function loadDatasets(select) {
   let list = [];
   try { ({ datasets: list } = await api('GET', '/api/datasets')); }
   catch (e) { log('Failed to load datasets: ' + e, 'error'); }
-  const keep = select || sel.value;
+  const keep = select || sel.value || sessionGet('record', {}).dataset;
   sel.innerHTML = '<option value="">＋ new dataset…</option>' +
     list.map(d => `<option value="${d.name}">${d.name} (${d.episodes})</option>`).join('');
   if (keep && list.some(d => d.name === keep)) sel.value = keep;
@@ -151,14 +167,20 @@ function onDatasetChange() {
   view.querySelector('#rec-ds-label').textContent = ds || '—';
   view.querySelector('#rec-ds-add').hidden = ds !== '';   // show only for "＋ new dataset…"
   if (ds === '') view.querySelector('#rec-ds-name').focus();
-  renamingPath = confirmDeletePath = null;
+  editingPath = confirmDeletePath = null;
   loadEpisodes();
   updateHint();
 }
 
 // ── episode file-manager ─────────────────────────────────────────────────
 
-const STAGES = ['raw', 'rec', 'cln', 'plan', 'replay'];
+const STAGES = [
+  ['raw', 'RAW', 'raw/ — recorded colour + depth frames'],
+  ['rec', 'REC', 'rec.npz — extracted 3-D hand landmarks'],
+  ['cln', 'CLN', 'cln.npz — fused + smoothed trajectory'],
+  ['plan', 'PLN', 'plan.h5 — retargeted robot joint plan'],
+  ['replay', 'RPL', 'replay.h5 — physical replay states'],
+];
 
 async function loadEpisodes() {
   const box = view?.querySelector('#rec-episode-list');
@@ -172,35 +194,61 @@ async function loadEpisodes() {
     : '<div class="hint" style="padding:10px">no episodes yet</div>';
 }
 
+function esc(s) {
+  return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
 function rowHTML(ep) {
-  const chips = STAGES.map(s =>
-    `<span class="badge ${ep.has?.[s] ? 'ok' : ''}">${s[0].toUpperCase()}</span>`).join('');
-  const id = renamingPath === ep.path
-    ? `<input class="ep-id-edit" data-role="ep-name" value="${ep.id}">
-       <button data-role="ep-rename-ok">save</button>
-       <button data-role="ep-rename-cancel">cancel</button>`
-    : `<span class="ep-id">${ep.id}</span>`;
+  const chips = STAGES.map(([key, label, tip]) =>
+    `<span class="badge ${ep.has?.[key] ? 'ok' : ''}" title="${tip}${ep.has?.[key] ? '' : ' (not done)'}">${label}</span>`
+  ).join('');
+
+  if (editingPath === ep.path) {
+    const hand = (ep.hand || 'right').toLowerCase();
+    return `<div class="episode-row editing" data-path="${ep.path}">
+      <span class="ep-id" title="capture id (not editable)">${ep.id}</span>
+      <input class="ep-edit-name" data-role="ep-name" placeholder="name / task"
+             value="${esc(ep.task)}">
+      <input class="ep-edit-demo" data-role="ep-demo" placeholder="demonstrator"
+             value="${esc(ep.demonstrator)}">
+      <select class="ep-edit-hand" data-role="ep-hand">
+        <option value="right"${hand === 'right' ? ' selected' : ''}>right</option>
+        <option value="left"${hand === 'left' ? ' selected' : ''}>left</option>
+      </select>
+      <button data-role="ep-edit-save">save</button>
+      <button data-role="ep-edit-cancel">cancel</button>
+    </div>`;
+  }
+
   const actions = confirmDeletePath === ep.path
     ? `<span class="hint">delete?</span>
        <button data-role="ep-delete-yes" class="danger">yes</button>
        <button data-role="ep-delete-no">no</button>`
-    : `<button data-role="ep-rename">rename</button>
+    : `<button data-role="ep-edit">edit</button>
        <button data-role="ep-delete" class="danger">del</button>`;
+  const meta = [
+    ep.demonstrator,
+    ep.hand,
+    ep.duration_s != null ? `${ep.duration_s}s` : '',
+    ep.fps ? `${ep.fps} fps` : '',
+  ].filter(Boolean).join(' · ');
   return `<div class="episode-row" data-path="${ep.path}">
-    ${id}
-    <span class="ep-task">${ep.task || '<i>unlabelled</i>'}</span>
+    <span class="ep-id" title="capture id">${ep.id}</span>
+    <span class="ep-task">
+      <span class="ep-name">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}</span>
+      ${meta ? `<span class="ep-meta">${esc(meta)}</span>` : ''}
+    </span>
     <span class="ep-badges">${chips}</span>
     ${actions}
   </div>`;
 }
 
-async function doRename(path, newId) {
-  if (!newId || newId === path.split('/').pop()) { renamingPath = null; loadEpisodes(); return; }
+async function doEditMeta(path, fields) {
   try {
-    await api('PATCH', '/api/episodes/rename', { path, new_id: newId });
-    log('Episode renamed', 'ok');
-  } catch (e) { log('Rename failed: ' + e, 'error'); }
-  renamingPath = null;
+    await api('PATCH', '/api/episodes/meta', { path, ...fields });
+    log('Episode updated', 'ok');
+  } catch (e) { log('Update failed: ' + e, 'error'); }
+  editingPath = null;
   loadEpisodes();
 }
 
@@ -220,10 +268,10 @@ async function record() {
   const body = {
     dataset: currentDataset(),
     task: view.querySelector('#rec-task').value,
-    hand: view.querySelector('#rec-hand').value,
     demonstrator: view.querySelector('#rec-demo').value,
     seconds: +view.querySelector('#rec-seconds').value || 10,
     fps: +view.querySelector('#rec-fps').value || 15,
+    cloud: cloudOpts(),
   };
   if (!body.dataset) { log('Pick a dataset first', 'error'); return; }
   const box = view.querySelector('#record-cards');
@@ -247,7 +295,12 @@ async function record() {
     recording = false;
     cameras.setRecording(false);
     updateHint();
-    if (j.status === 'done') { log(`Recorded → ${j.result?.episode}`, 'ok'); loadEpisodes(); loadDatasets(); }
+    if (j.status === 'done') {
+      log(`Recorded → ${j.result?.episode}`, 'ok');
+      loadEpisodes(); loadDatasets();
+      const epId = (j.result?.episode || '').split('/').filter(Boolean).pop();
+      watchCloud(epId);
+    }
     else log(`Recording failed: ${j.error}`, 'error');
   }, 1000);
 }
@@ -266,11 +319,15 @@ function onClick(e) {
     case 'rec-ds-create': createDataset(); break;
     case 'rec-eps-refresh': loadEpisodes(); break;
     case 'rec-go': record(); break;
-    case 'ep-rename': renamingPath = path; confirmDeletePath = null; loadEpisodes(); break;
-    case 'ep-rename-cancel': renamingPath = null; loadEpisodes(); break;
-    case 'ep-rename-ok':
-      doRename(path, row.querySelector('[data-role="ep-name"]').value.trim()); break;
-    case 'ep-delete': confirmDeletePath = path; renamingPath = null; loadEpisodes(); break;
+    case 'ep-edit': editingPath = path; confirmDeletePath = null; loadEpisodes(); break;
+    case 'ep-edit-cancel': editingPath = null; loadEpisodes(); break;
+    case 'ep-edit-save':
+      doEditMeta(path, {
+        task: row.querySelector('[data-role="ep-name"]').value.trim(),
+        demonstrator: row.querySelector('[data-role="ep-demo"]').value.trim(),
+        hand: row.querySelector('[data-role="ep-hand"]').value,
+      }); break;
+    case 'ep-delete': confirmDeletePath = path; editingPath = null; loadEpisodes(); break;
     case 'ep-delete-no': confirmDeletePath = null; loadEpisodes(); break;
     case 'ep-delete-yes': doDelete(path); break;
   }
@@ -278,18 +335,82 @@ function onClick(e) {
 
 function onKeydown(e) {
   if (e.key === 'Enter' && e.target.id === 'rec-ds-name') createDataset();
-  else if (e.key === 'Enter' && e.target.dataset.role === 'ep-name') {
+  else if (e.key === 'Enter' && ['ep-name', 'ep-demo'].includes(e.target.dataset.role)) {
     const row = e.target.closest('.episode-row');
-    doRename(row.dataset.path, e.target.value.trim());
+    doEditMeta(row.dataset.path, {
+      task: row.querySelector('[data-role="ep-name"]').value.trim(),
+      demonstrator: row.querySelector('[data-role="ep-demo"]').value.trim(),
+      hand: row.querySelector('[data-role="ep-hand"]').value,
+    });
   }
 }
 
 function onChange(e) {
-  if (e.target.id === 'rec-dataset') onDatasetChange();
+  if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
+  else if (e.target.id === 'rec-seconds' || e.target.id === 'rec-fps') persistRec();
+  else if (['rec-cl-stride', 'rec-cl-voxel', 'rec-cl-max', 'rec-cl-bbox'].includes(e.target.id)) persistCloud();
   else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
-    if (e.target.dataset.role === 'depthmode') cameras.updateFpsForDepthMode(view, e.target.dataset.id);
+    cameras.noteCardChange(view, e.target.dataset.id);  // fold into session config
     renderCards();  // refresh the "running as X" mismatch warning
   }
+}
+
+function persistRec() {
+  sessionPatch('record', {
+    duration: +view.querySelector('#rec-seconds').value || 10,
+    fps: +view.querySelector('#rec-fps').value || 15,
+    dataset: view.querySelector('#rec-dataset').value || '',
+  });
+}
+
+// ── point-cloud params + post-capture build progress ─────────────────────
+
+function cloudOpts() {
+  const bbox = (view.querySelector('#rec-cl-bbox').value || '')
+    .split(',').map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
+  return {
+    stride: Math.max(1, +view.querySelector('#rec-cl-stride').value || 1),
+    voxel: Math.max(0, +view.querySelector('#rec-cl-voxel').value || 0),
+    max_points: Math.max(0, +view.querySelector('#rec-cl-max').value || 0),
+    bbox: bbox.length === 6 ? bbox : null,
+  };
+}
+
+function persistCloud() {
+  const o = cloudOpts();
+  sessionPatch('cloud', {
+    stride: o.stride, voxel: o.voxel, maxPoints: o.max_points,
+    bbox: o.bbox || [],
+  });
+}
+
+// Poll the job queue for this episode's cloud build and draw a progress bar
+// (same look as the Extract-tab queue). Stops itself on done / error.
+function watchCloud(episodeId) {
+  const box = view?.querySelector('#rec-cloud-progress');
+  if (!box || !episodeId) return;
+  if (cloudPoll) clearInterval(cloudPoll);
+  box.innerHTML = `<div class="perc-job queued"><span class="perc-job-ep">${episodeId}</span>
+    <span class="perc-job-st">cloud queued…</span><span class="perc-bar"><i style="width:0%"></i></span></div>`;
+  cloudPoll = setInterval(async () => {
+    let jobs;
+    try { ({ jobs } = await api('GET', '/api/pipeline/jobs')); } catch { return; }
+    const j = jobs.find(x => x.kind === 'cloud' && x.episode === episodeId);
+    if (!j) return;
+    const p = j.progress || {};
+    const pct = p.total ? Math.round(100 * (p.frame || 0) / p.total) : 0;
+    const label = j.status === 'queued' ? `queued #${j.queue_pos ?? ''}`
+      : j.status === 'running' ? `cloud ${p.frame || 0}/${p.total || '?'}`
+        : j.status;
+    box.innerHTML = `<div class="perc-job ${j.status}"><span class="perc-job-ep">${episodeId}</span>
+      <span class="perc-job-st">${label}</span>
+      <span class="perc-bar"><i style="width:${j.status === 'done' ? 100 : (j.status === 'running' ? pct : 0)}%"></i></span></div>`;
+    if (j.status === 'done' || j.status === 'error') {
+      clearInterval(cloudPoll); cloudPoll = null;
+      if (j.status === 'done') { log(`Cloud built for ${episodeId}`, 'ok'); loadEpisodes(); }
+      else log(`Cloud build failed for ${episodeId}: ${j.error}`, 'error');
+    }
+  }, 1000);
 }
 
 // ── mount / unmount ──────────────────────────────────────────────────────
@@ -310,6 +431,7 @@ export function mount(container) {
 export function unmount() {
   if (onCamerasChanged) document.removeEventListener('cameras:changed', onCamerasChanged);
   onCamerasChanged = null;
+  if (cloudPoll) { clearInterval(cloudPoll); cloudPoll = null; }
   view?.querySelectorAll('.streams img').forEach(img => { img.src = ''; });
   recording = false;
   cameras.setRecording(false);

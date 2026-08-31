@@ -80,6 +80,60 @@ export function setRecording(on) {
   renderPills();
 }
 
+// ── session-wide per-device desired config ───────────────────────────────
+// `state[id].want` is the single source of truth for a camera's res / fps /
+// depth mode this session. Every tab's card renders from it and writes back to
+// it, so a change on Calibration shows up on Record (and is what a recording
+// actually uses) without re-picking anything.
+
+export function wantConfig(id) {
+  const s = state[id];
+  if (!s) return null;
+  if (!s.want) {
+    const cfg = CAMERA_CONFIG[s.type] || CAMERA_CONFIG.realsense || {};
+    const [w, h] = String(cfg.defaultRes || '1280x720').split('x').map(Number);
+    s.want = {
+      color_width: w || 1280, color_height: h || 720,
+      fps: parseInt(cfg.defaultFps ?? 30, 10),
+      depth_mode: cfg.defaultDepth || 'NFOV_UNBINNED',
+    };
+  }
+  return s.want;
+}
+
+export function setWantConfig(id, partial) {
+  const w = wantConfig(id);
+  if (!w) return;
+  Object.assign(w, partial);
+  emit();
+}
+
+// Called by a tab when the user touches a res/fps/depth select on a card:
+// clamp fps to the depth mode, fold the card's selects into `state[id].want`,
+// notify every tab.
+export function noteCardChange(root, id) {
+  root = root || document;
+  const q = role => root.querySelector(`[data-role="${role}"][data-id="${id}"]`);
+  const dm = q('depthmode');
+  if (dm) {
+    const cfg = CAMERA_CONFIG[state[id]?.type] || {};
+    const maxFps = (cfg.depthModeMaxFps || {})[dm.value] || 999;
+    const fpsSel = q('fps');
+    if (fpsSel) {
+      for (const opt of fpsSel.options) {
+        opt.disabled = parseInt(opt.value, 10) > maxFps;
+        if (opt.disabled && fpsSel.value === opt.value) fpsSel.value = String(maxFps);
+      }
+    }
+  }
+  const [w, h] = String(q('res')?.value || '1280x720').split('x').map(Number);
+  setWantConfig(id, {
+    color_width: w, color_height: h,
+    fps: parseInt(q('fps')?.value || '30', 10),
+    depth_mode: q('depthmode')?.value || wantConfig(id).depth_mode,
+  });
+}
+
 // ── per-tab camera card helpers ───────────────────────────────────────────
 
 // Shared card markup used by the Record and Calibration tabs. The tab points
@@ -109,42 +163,32 @@ export function cameraCardHTML(id, type, running, opts = {}) {
 
 export function controlsHTML(id, type) {
   const cfg = CAMERA_CONFIG[type] || CAMERA_CONFIG.realsense;
+  const want = wantConfig(id) || {};
+  const wantRes = `${want.color_width}x${want.color_height}`;
   const resOpts = (cfg.resolutions || []).map(r =>
-    `<option value="${r}" ${r === cfg.defaultRes ? 'selected' : ''}>${r.replace('x', ' × ')}</option>`).join('');
+    `<option value="${r}" ${r === wantRes ? 'selected' : ''}>${r.replace('x', ' × ')}</option>`).join('');
   const fpsOpts = (cfg.fps || []).map(f =>
-    `<option value="${f}" ${f === cfg.defaultFps ? 'selected' : ''}>${f} fps</option>`).join('');
+    `<option value="${f}" ${String(f) === String(want.fps) ? 'selected' : ''}>${f} fps</option>`).join('');
   let depthPart = '';
   if (cfg.depthModes) {
     const dOpts = cfg.depthModes.map(m =>
-      `<option value="${m}" ${m === cfg.defaultDepth ? 'selected' : ''}>${m}</option>`).join('');
+      `<option value="${m}" ${m === want.depth_mode ? 'selected' : ''}>${m}</option>`).join('');
     depthPart = `<div class="sep"></div><label>depth</label><select data-role="depthmode" data-id="${id}">${dOpts}</select>`;
   }
   return `<label>res</label><select data-role="res" data-id="${id}">${resOpts}</select>
     <label>fps</label><select data-role="fps" data-id="${id}">${fpsOpts}</select>${depthPart}`;
 }
 
-export function readCardConfig(root, id) {
-  const q = role => root.querySelector(`[data-role="${role}"][data-id="${id}"]`);
-  const resVal = q('res')?.value || '1280x720';
-  const [w, h] = resVal.split('x').map(Number);
-  return {
-    color_width: w, color_height: h,
-    fps: parseInt(q('fps')?.value || '30', 10),
-    depth_mode: q('depthmode')?.value || 'NFOV_UNBINNED',
-  };
+// Session config for the camera — read from `state[id].want`, not the DOM, so
+// every tab agrees regardless of which one rendered the card.
+export function readCardConfig(_root, id) {
+  return { ...(wantConfig(id) || {
+    color_width: 1280, color_height: 720, fps: 30, depth_mode: 'NFOV_UNBINNED',
+  }) };
 }
 
 export function updateFpsForDepthMode(root, id) {
-  const cfg = CAMERA_CONFIG[state[id]?.type] || CAMERA_CONFIG.realsense;
-  if (!cfg.depthModeMaxFps) return;
-  const depthMode = root.querySelector(`[data-role="depthmode"][data-id="${id}"]`)?.value;
-  const maxFps = cfg.depthModeMaxFps[depthMode] || 30;
-  const fpsSelect = root.querySelector(`[data-role="fps"][data-id="${id}"]`);
-  if (!fpsSelect) return;
-  for (const opt of fpsSelect.options) {
-    opt.disabled = parseInt(opt.value, 10) > maxFps;
-    if (opt.disabled && fpsSelect.value === opt.value) fpsSelect.value = String(maxFps);
-  }
+  noteCardChange(root, id);
 }
 
 // Point an <img> at an MJPEG endpoint (cache-busted). Pass null to detach.
@@ -192,11 +236,6 @@ export function renderPills() {
     box.innerHTML = ids.length
       ? ids.map(id => `<span class="cam-pill"><span class="dot ${pillClass(id)}"></span>${id}</span>`).join('')
       : '<span class="hint">no cameras</span>';
-  }
-  const dot = document.getElementById('server-dot');
-  if (dot) {
-    const anyRunning = Object.values(state).some(s => s.running);
-    dot.className = 'dot ' + (recording ? 'red blink' : anyRunning ? 'green blink' : 'grey');
   }
 }
 

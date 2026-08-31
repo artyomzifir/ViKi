@@ -63,6 +63,72 @@ class _EpReq(BaseModel):
     polyorder: int = 2
 
 
+class _PerceiveReq(BaseModel):
+    episodes: list[str]
+    opts: dict = {}
+
+
+class _ModelReq(BaseModel):
+    backend: str
+    model: str
+
+
+@_ep.post("/perceive")
+async def perceive(req: _PerceiveReq):
+    """Queue the full perception stage (extract → fuse → smooth → EE → gripper
+    → cln.npz) for one or more episodes. When ``opts.build_cloud`` is set the
+    point cloud is queued as a **separate** job on the ``cloud`` lane so it
+    computes in parallel with the model run."""
+    ids: list[str] = []
+    for ep_ref in req.episodes:
+        ep = _episode(ep_ref)
+        opts = dict(req.opts)
+        want_cloud = bool(opts.pop("build_cloud", False))
+        cloud_stride = opts.get("cloud_stride")
+
+        def _job(report, log, ep=ep, opts=opts):
+            from viki.perception.run import perceive_episode
+
+            log(f"perceive {ep.id}")
+            return perceive_episode(ep, opts, report)
+
+        ids.append(jobs.submit("perceive", _job, episode=ep.id))
+
+        if want_cloud:
+            def _cloud_job(report, log, ep=ep, stride=cloud_stride):
+                from viki.perception.cloud import build_cloud
+
+                log(f"cloud {ep.id}")
+                return build_cloud(ep, stride=stride, report=report)
+
+            ids.append(jobs.submit("cloud", _cloud_job, episode=ep.id, lane="cloud"))
+    return {"job_ids": ids}
+
+
+@_ep.get("/models")
+async def list_models():
+    from viki.perception.backends.registry import list_models as _lm
+
+    return _lm()
+
+
+@_ep.post("/models/download")
+async def download_model(req: _ModelReq):
+    def _job(report, log):
+        from viki.perception.backends.registry import download
+
+        return download(req.backend, req.model, report, log)
+
+    return {"job_id": jobs.submit("download", _job, episode=f"{req.backend}/{req.model}")}
+
+
+@_ep.delete("/jobs/{job_id}")
+async def cancel_job(job_id: str):
+    if not jobs.cancel(job_id):
+        raise HTTPException(409, "job already running or finished")
+    return {"status": "cancelled"}
+
+
 @_ep.post("/extract")
 async def extract(req: _EpReq):
     ep = _episode(req.episode)
@@ -79,12 +145,12 @@ async def extract(req: _EpReq):
 async def cloud(req: _EpReq):
     ep = _episode(req.episode)
 
-    def _job():
+    def _job(report, log):
         from viki.perception.cloud import build_cloud
 
-        return build_cloud(ep)
+        return build_cloud(ep, report=report)
 
-    return {"job_id": jobs.submit("cloud", _job)}
+    return {"job_id": jobs.submit("cloud", _job, episode=ep.id, lane="cloud")}
 
 
 @_ep.post("/prepare")
@@ -128,9 +194,22 @@ async def job_list():
 
 
 @_ep.get("/episode/{ep_id}/geometry")
-async def geometry(ep_id: str, include_raw: int = 0):
+async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
     ep = _episode(ep_id)
     out: dict = {"id": ep.id, "cameras": {}, "n_frames": 0}
+
+    meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
+    preset_name = meta.get("calibration_preset")
+    if preset_name:
+        try:
+            from viki.calibration import presets as _presets
+
+            board = _presets.read_detail(preset_name).get("board")
+            if board:
+                out["board"] = board
+        except Exception:  # noqa: BLE001
+            pass
+    out["workspace_bbox"] = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
 
     extr_path = ep.raw_dir / "extrinsics.json"
     if extr_path.exists():
@@ -169,7 +248,48 @@ async def geometry(ep_id: str, include_raw: int = 0):
                 raw[dev] = cloud[::3].tolist()  # decimate
             out["raw_points"] = raw
 
+    if frame is not None:
+        out["frame"] = int(frame)
+        grid = None
+        if ep.cln_npz.exists():
+            with np.load(ep.cln_npz) as d:
+                grid = np.asarray(d["timestamps"], np.float64)
+                n = len(d["smoothed_points"])
+                if 0 <= frame < n:
+                    out["fused_skeleton"] = _nan_rows(d["smoothed_points"][frame])
+                    out["landmark_ids"] = np.asarray(d["landmark_ids"], int).tolist()
+                    out["gripper"] = bool(d["gripper"][frame])
+                    out["frame_valid"] = bool(d["valid"][frame])
+        if ep.rec_npz.exists():
+            with np.load(ep.rec_npz) as d:
+                devs = np.array([str(x) for x in d["device_ids"]])
+                ts = np.asarray(d["timestamps"], np.float64)
+                pts = np.asarray(d["points"], np.float32)
+                conf = np.asarray(d["confidence"], np.float32)
+                lm_ids = np.asarray(d["landmark_ids"], int).tolist()
+                t_us = float(grid[frame]) if grid is not None and frame < len(grid) else None
+                per_cam: dict[str, dict] = {}
+                for dev in sorted(set(devs.tolist())):
+                    idx = np.where(devs == dev)[0]
+                    if idx.size == 0:
+                        continue
+                    row = (idx[int(np.argmin(np.abs(ts[idx] - t_us)))] if t_us is not None
+                           else idx[min(frame, idx.size - 1)])
+                    per_cam[dev] = {
+                        "points": _nan_rows(pts[row]),
+                        "confidence": [None if not np.isfinite(c) else float(c)
+                                       for c in conf[row]],
+                        "landmark_ids": lm_ids,
+                    }
+                out["per_camera"] = per_cam
+
     return out
+
+
+def _nan_rows(arr) -> list:
+    """(K,3) array → nested list with non-finite values as ``None`` (JSON-safe)."""
+    a = np.asarray(arr, float)
+    return [[None if not np.isfinite(v) else float(v) for v in row] for row in a]
 
 
 # ── coloured point cloud (Viewer tab) ────────────────────────────────

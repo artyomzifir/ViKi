@@ -3,7 +3,7 @@
 // preset picker + board params. Captures are rig-wide only ("Capture all"), so
 // set N is index-aligned across cameras and can be deleted as a unit. A saved
 // preset carries its sets, so it can be reopened, pruned, and re-solved.
-import { api, log, state, FRONTEND_CONFIG } from './core.js';
+import { api, log, state, FRONTEND_CONFIG, sessionGet, sessionSet } from './core.js';
 import * as cameras from './cameras.js';
 
 const ARUCO_DICTS = [
@@ -24,8 +24,16 @@ let openedPreset = null;   // name of the preset whose sets are shown, or null (
 
 function template() {
   const c = FRONTEND_CONFIG.calibration || { chess: {}, aruco: {} };
+  // session board params win over the config defaults (survive tab switches)
+  const s = sessionGet('calibBoard', null);
+  const b = s || {
+    type: 'aruco',
+    cols: c.aruco.boardSize?.[0] ?? 8, rows: c.aruco.boardSize?.[1] ?? 10,
+    square: c.aruco.squareSize ?? 0.05, marker: c.aruco.markerSize ?? 0.035,
+    dict: c.aruco.defaultDict,
+  };
   const arucoOpts = ARUCO_DICTS.map(n =>
-    `<option ${n === c.aruco.defaultDict ? 'selected' : ''}>${n}</option>`).join('');
+    `<option ${n === b.dict ? 'selected' : ''}>${n}</option>`).join('');
   return `
   <div class="calib-tab">
     <div class="calib-cards" id="calib-cards"></div>
@@ -40,44 +48,51 @@ function template() {
 
     <aside class="calib-side">
       <section class="calib-sec">
-        <div class="calib-sec-title">Active preset</div>
+        <details ${s ? '' : 'open'}>
+          <summary class="calib-sec-title">Board &nbsp;<span class="hint">${b.type === 'chess' ? 'chess' : 'ChArUco'} ${b.cols}×${b.rows} · ${b.square} m</span></summary>
+          <div class="hint">Match the printed board. Lay it <b>flat on the table,
+            face up</b>, where the work happens — it defines the world origin.</div>
+          <div class="cfg-row"><label>Type</label>
+            <select id="board-type">
+              <option value="chess" ${b.type === 'chess' ? 'selected' : ''}>Chessboard</option>
+              <option value="aruco" ${b.type !== 'chess' ? 'selected' : ''}>ChArUco</option>
+            </select></div>
+          <div class="cfg-row"><label>Cols</label>
+            <input type="number" id="board-width" min="1" value="${b.cols}"></div>
+          <div class="cfg-row"><label>Rows</label>
+            <input type="number" id="board-height" min="1" value="${b.rows}"></div>
+          <div class="cfg-row"><label>Square (m)</label>
+            <input type="number" id="square-size" step="0.001" min="0.001" value="${b.square}"></div>
+          <div id="aruco-fields">
+            <div class="cfg-row"><label>Marker (m)</label>
+              <input type="number" id="marker-size" step="0.001" min="0.001" value="${b.marker}"></div>
+            <div class="cfg-row"><label>Dictionary</label>
+              <select id="aruco-dict">${arucoOpts}</select></div>
+          </div>
+        </details>
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">Calibrate</div>
+        <div class="hint">Start every camera (top bar) so each one sees the board.</div>
+        <button id="calib-start-session" class="primary">1 · Start session</button>
+        <button id="calib-capture-all" class="primary">2 · Capture all <span class="hint">(3–10×, board static)</span></button>
+        <button id="calib-solve" class="primary">3 · Calibrate extrinsics</button>
+        <div class="inline-add">
+          <input type="text" id="calib-preset-name" placeholder="preset name">
+          <button id="calib-preset-save" class="primary">4 · Save</button>
+        </div>
+        <div class="hint">Save also grabs the Kinects' depth↔colour calibration.
+          Delete bad sets on the left before step 3.</div>
+        <button id="calib-clear" class="danger">Clear samples</button>
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">Load a saved preset</div>
         <select id="calib-preset"></select>
         <div class="hint" id="calib-preset-info">—</div>
         <button id="calib-preset-open" hidden>Open sets</button>
-        <div class="inline-add">
-          <input type="text" id="calib-preset-name" placeholder="save current as…">
-          <button id="calib-preset-save">Save</button>
-        </div>
-      </section>
-
-      <section class="calib-sec">
-        <div class="calib-sec-title">Board</div>
-        <div class="cfg-row"><label>Type</label>
-          <select id="board-type">
-            <option value="chess">Chessboard</option>
-            <option value="aruco" selected>ChArUco</option>
-          </select></div>
-        <div class="cfg-row"><label>Cols</label>
-          <input type="number" id="board-width" min="1" value="${c.aruco.boardSize?.[0] ?? 8}"></div>
-        <div class="cfg-row"><label>Rows</label>
-          <input type="number" id="board-height" min="1" value="${c.aruco.boardSize?.[1] ?? 10}"></div>
-        <div class="cfg-row"><label>Square (m)</label>
-          <input type="number" id="square-size" step="0.001" min="0.001" value="${c.aruco.squareSize ?? 0.05}"></div>
-        <div id="aruco-fields">
-          <div class="cfg-row"><label>Marker (m)</label>
-            <input type="number" id="marker-size" step="0.001" min="0.001" value="${c.aruco.markerSize ?? 0.035}"></div>
-          <div class="cfg-row"><label>Dictionary</label>
-            <select id="aruco-dict">${arucoOpts}</select></div>
-        </div>
-      </section>
-
-      <section class="calib-sec">
-        <button id="calib-start-session" class="primary">Start session</button>
-        <button id="calib-capture-all" class="primary">Capture all</button>
-        <button id="calib-solve" class="primary">Calibrate extrinsics</button>
-        <button id="calib-clear" class="danger">Clear samples</button>
-        <div class="hint">Capture the whole rig at once, with the board visible to
-          every camera. Delete bad sets on the left before calibrating.</div>
+        <button id="calib-preset-k4a" hidden title="attach the running Kinects' raw depth↔colour calibration to this preset">Grab k4a calibration for this preset</button>
       </section>
     </aside>
   </div>`;
@@ -138,7 +153,17 @@ function syncBoardFieldVisibility() {
   view.querySelector('#aruco-fields').style.display = boardType() === 'aruco' ? '' : 'none';
 }
 
+function persistBoard() {
+  const p = boardParams();
+  sessionSet('calibBoard', {
+    type: boardType(),
+    cols: p.board_size[0], rows: p.board_size[1], square: p.square_size,
+    marker: p.marker_size ?? 0.035, dict: p.aruco_dict ?? view.querySelector('#aruco-dict').value,
+  });
+}
+
 async function syncParams() {
+  persistBoard();
   try { await api('POST', `/api/calibration/sync?board_type=${boardType()}`, boardParams()); }
   catch (e) { log('Board param sync failed: ' + e, 'error'); }
 }
@@ -274,10 +299,13 @@ async function refreshPresets() {
       presets.map(p => `<option value="${p.name}" ${p.active ? 'selected' : ''}>${p.name}</option>`).join('');
     const active = presets.find(p => p.active);
     const sel_p = presets.find(p => p.name === sel.value);
-    info.textContent = active
+    const k4a = sel_p && sel_p.k4a && sel_p.k4a.length
+      ? ` · k4a ✓ (${sel_p.k4a.length})` : ' · k4a ✗';
+    info.textContent = (active
       ? `active: ${active.cameras.length} cam · ${active.sets} sets · ${new Date(active.solved_at * 1000).toLocaleString()}`
-      : `${presets.length} saved preset(s)`;
+      : `${presets.length} saved preset(s)`) + (sel_p ? k4a : '');
     view.querySelector('#calib-preset-open').hidden = !(sel_p && sel_p.sets > 0);
+    view.querySelector('#calib-preset-k4a').hidden = !sel_p;
   } catch (e) {
     info.textContent = 'presets unavailable';
     log('Failed to load calibration presets: ' + e, 'error');
@@ -315,6 +343,16 @@ async function savePreset() {
   } catch (e) { log('Save preset failed: ' + e, 'error'); }
 }
 
+async function grabPresetK4a() {
+  const name = view.querySelector('#calib-preset').value;
+  if (!name) { log('Pick a preset first', 'error'); return; }
+  try {
+    const r = await api('POST', `/api/calibration/presets/${encodeURIComponent(name)}/grab-k4a`);
+    log(`Preset "${name}": k4a calibration attached for ${r.devices.join(', ')}`, 'ok');
+    refreshPresets();
+  } catch (e) { log('Grab k4a failed: ' + e, 'error'); }
+}
+
 // ── mount / unmount ───────────────────────────────────────────────────────
 
 export function mount(container) {
@@ -324,6 +362,7 @@ export function mount(container) {
   openedPreset = null;
   view.innerHTML = template();
   syncBoardFieldVisibility();
+  syncParams();          // push the (session-remembered) board params to the server
   renderCards();
   refreshPresets();
   refreshSets();
@@ -363,6 +402,7 @@ function onClick(e) {
     case 'calib-clear': clearSamples(); break;
     case 'calib-preset-save': savePreset(); break;
     case 'calib-preset-open': openPreset(); break;
+    case 'calib-preset-k4a': grabPresetK4a(); break;
     case 'calib-sets-live': backToLive(); break;
     case 'set-del':
       openedPreset ? deletePresetSet(+btn.dataset.i) : deleteLiveSet(+btn.dataset.i);
@@ -376,5 +416,8 @@ function onChange(e) {
   else if (['board-width', 'board-height', 'square-size', 'marker-size'].includes(el.id)
     || el.id === 'aruco-dict') { syncParams(); }
   else if (el.id === 'calib-preset') { activatePreset(el.value); refreshPresets(); }
-  else if (el.dataset.role === 'depthmode') cameras.updateFpsForDepthMode(view, el.dataset.id);
+  else if (['res', 'fps', 'depthmode'].includes(el.dataset.role)) {
+    cameras.noteCardChange(view, el.dataset.id);   // session-wide camera config
+    renderCards();
+  }
 }

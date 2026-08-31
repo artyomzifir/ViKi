@@ -4,6 +4,7 @@ import { api, log, mountLog, initializeFrontendConfig } from './core.js';
 import * as cameras from './cameras.js';
 import * as calibration from './calibration.js';
 import * as record from './record.js';
+import * as perception from './perception.js';
 import * as viewer from './viewer.js';
 import * as configModal from './config.js';
 import { makeStub } from './tabs_stub.js';
@@ -11,7 +12,7 @@ import { makeStub } from './tabs_stub.js';
 const TABS = {
   calibration: { label: 'Calibration', mod: calibration },
   record: { label: 'Record', mod: record },
-  extract: { label: 'Extract', mod: makeStub('Extract') },
+  extract: { label: 'Extract', mod: perception },
   prepare: { label: 'Prepare', mod: makeStub('Prepare') },
   retarget: { label: 'Retarget', mod: makeStub('Retarget') },
   replay: { label: 'Replay', mod: makeStub('Replay') },
@@ -111,8 +112,56 @@ async function init() {
 
   await cameras.scanDevices();
   cameras.startStatusPoll();
+  startSysmonPoll();
   show(location.hash?.slice(1) || DEFAULT_TAB);
   window.addEventListener('hashchange', () => show(location.hash.slice(1)));
+}
+
+// ── host load monitor (top bar) ──────────────────────────────────────────
+
+const _gib = b => (b / 1073741824).toFixed(1);
+
+// <50% green · 50–90% yellow · >90% red  (same bands for °C)
+function tier(v, lo = 50, hi = 90) {
+  if (v == null || Number.isNaN(v)) return '';
+  return v < lo ? 'ok' : v < hi ? 'warn' : 'bad';
+}
+
+function renderSysmon(s) {
+  const el = document.getElementById('sysmon');
+  if (!el) return;
+  if (!s) { el.textContent = ''; return; }
+  const seg = [];
+  if (s.cpu_percent != null)
+    seg.push(`CPU <span class="${tier(s.cpu_percent)}">${s.cpu_percent.toFixed(0)}%</span>`);
+  if (s.mem)
+    seg.push(`RAM <span class="${tier(s.mem.percent)}">${_gib(s.mem.used)}/${_gib(s.mem.total)}G</span>`);
+  if (s.gpu && s.gpu[0]) {
+    const g = s.gpu[0];
+    const memPct = g.mem_total ? 100 * g.mem_used / g.mem_total : null;
+    seg.push(`GPU <span class="${tier(g.util)}">${g.util.toFixed(0)}%</span> `
+      + `<span class="${tier(memPct)}">${_gib(g.mem_used)}/${_gib(g.mem_total)}G</span>`
+      + (g.temp ? ` <span class="${tier(g.temp)}">${g.temp.toFixed(0)}°</span>` : ''));
+  } else {
+    seg.push('GPU n/a');
+  }
+  el.innerHTML = seg.join('&nbsp;&nbsp;·&nbsp;&nbsp;');
+}
+
+function setServerDot(ok) {
+  const dot = document.getElementById('server-dot');
+  if (dot) dot.className = ok ? 'dot green' : 'dot red blink';
+}
+
+function startSysmonPoll() {
+  const tick = async () => {
+    try { await api('GET', '/api/health'); setServerDot(true); }
+    catch { setServerDot(false); }
+    try { renderSysmon(await api('GET', '/api/system/stats')); }
+    catch { /* keep last reading */ }
+  };
+  tick();
+  setInterval(tick, 2500);
 }
 
 init();

@@ -99,11 +99,25 @@ add it to both JSON files, declare its type annotation in `config.py`.
 `viki/server/static/` — plain HTML/CSS/JS, no build step. `index.html` + one JS module per UI panel
 (`cameras.js`, `calibration.js`, `record.js`, …). Served directly by FastAPI.
 
-Exception: the **Viewer tab** (`viewer.js`) renders a per-frame coloured depth
-point cloud + skeleton with **three.js** (WebGL). three.js is the one vendored
-dep — `static/js/vendor/three.module.js` + `OrbitControls.js`, resolved by an
-importmap in `index.html`. A dense cloud (~10^5 points/frame) is not viable on a
-hand-rolled 2-D canvas. Everything else stays plain, no-build JS.
+Exception: the **Viewer** and **Extract** tabs share `scene3d.js` — a **three.js**
+(WebGL) scene controller (`create(canvas,{api,log})`) rendering the ChArUco world
+(board on the Z=0 plane at the origin), the per-frame coloured point cloud,
+per-camera + fused hand skeletons, wrist trajectory, palm triad + gripper marker
+and camera frusta, with layer toggles and a stop/play/skip±5s/±episode
+transport. three.js is the one vendored dep — `static/js/vendor/three.module.js`
++ `OrbitControls.js`, resolved by an importmap in `index.html`. A dense cloud
+(~10^5 points/frame) is not viable on a hand-rolled 2-D canvas. Everything else
+stays plain, no-build JS.
+
+**Extract tab** (`perception.js`) drives the whole perception stage:
+`viki.perception.run.perceive_episode` (extract → interpolate → cross-camera fuse
+→ Savitzky–Golay → EE pose → gripper → `cln.npz`, + optional cloud) over one /
+several / a whole dataset of episodes via a background **FIFO job queue**
+(`viki/server/jobs.py`, one worker; `POST /api/pipeline/perceive`,
+`GET /api/pipeline/jobs` with progress, `DELETE …/jobs/{id}`). Model tier per
+backend + Download in `viki/perception/backends/registry.py` (only `mediapipe`
+has a working backend). `rec.npz` timestamps are the real host-monotonic time
+from `raw/timestamps.json`, not the frame index.
 
 **Pipeline viz artifact:** `viki cloud <episode>` (`viki/perception/cloud.py`)
 turns `raw/` into `cloud/<i:06d>.bin` (`int32 n` · `float32[n*3]` xyz m ·

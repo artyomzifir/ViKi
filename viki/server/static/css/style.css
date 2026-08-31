@@ -13,13 +13,18 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
 
+html, body { height: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 13px;
-  min-height: 100vh;
+  /* full-viewport app shell — the page itself never scrolls */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+header, #tabbar { flex: 0 0 auto; }
 
 /* ── controls ─────────────────────────────────────────────────────────── */
 
@@ -97,6 +102,15 @@ header h1 {
   font-size: 11px; color: var(--muted);
   max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.sysmon {
+  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted); white-space: nowrap; letter-spacing: .2px;
+  padding-right: 4px; border-right: 1px solid var(--border);
+}
+.sysmon:empty { display: none; }
+.sysmon .ok   { color: var(--green); }
+.sysmon .warn { color: var(--yellow); }
+.sysmon .bad  { color: var(--red); }
 .log-line.error { color: var(--red); }
 .log-line.ok { color: var(--green); }
 .log-toggle, .gear { padding: 4px 9px; }
@@ -117,7 +131,8 @@ header h1 {
 #tabbar button:hover { color: var(--text); }
 #tabbar button.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-#view { padding: 16px 20px; }
+/* the one scroll owner: fills the space under header+tabbar, never grows the page */
+#view { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 .tab-stub { text-align: center; padding: 80px 20px; color: var(--muted); }
 .tab-stub h2 { font-size: 16px; margin-bottom: 10px; color: var(--text); }
@@ -195,13 +210,15 @@ header h1 {
 
 /* ── calibration tab ──────────────────────────────────────────────────── */
 
-.calib-tab { display: flex; gap: 16px; align-items: flex-start; }
-.calib-cards { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 14px; }
+.calib-tab { height: 100%; display: flex; gap: 16px; align-items: stretch; padding: 16px 20px; }
+.calib-cards { flex: 1; min-width: 0; overflow-y: auto; align-content: start;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
 
-.calib-sets { width: 240px; flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.calib-sets { width: clamp(200px, 16vw, 260px); flex-shrink: 0; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .calib-sets-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--accent); }
 .calib-sets-head button { padding: 3px 8px; font-size: 11px; }
-#calib-sets-list { max-height: 70vh; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 8px; }
+#calib-sets-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 8px; }
 .set-row { padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 11px; display: flex; flex-direction: column; gap: 6px; }
 .set-row-head { display: flex; align-items: center; justify-content: space-between; }
 .set-row .set-n { color: var(--muted); font-weight: 600; }
@@ -211,8 +228,19 @@ header h1 {
 .set-cam.ok { color: var(--green); }
 .set-thumb { width: 100%; max-height: 120px; object-fit: cover; border-radius: 4px; cursor: zoom-in; display: block; background: #000; }
 
-.calib-side, .record-side { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; }
-.calib-sec { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.calib-side, .record-side {
+  width: clamp(230px, 20vw, 300px); flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 10px;
+  overflow-y: auto; min-height: 0;
+}
+.calib-sec { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+.calib-side .calib-sec { padding: 9px 10px; gap: 6px; }
+.calib-side .hint { font-size: 10px; line-height: 1.35; }
+.calib-sec details > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; }
+.calib-sec details > summary::-webkit-details-marker { display: none; }
+.calib-sec details > summary::before { content: '▸'; margin-right: 6px; color: var(--muted); }
+.calib-sec details[open] > summary::before { content: '▾'; }
+.calib-sec details > *:not(summary) { margin-top: 7px; }
 .calib-sec-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
 .calib-sec select, .calib-sec button { width: 100%; }
 .calib-sec .cfg-row { justify-content: space-between; }
@@ -223,16 +251,17 @@ header h1 {
 
 /* ── record tab ───────────────────────────────────────────────────────── */
 
-.record-tab { display: flex; gap: 20px; align-items: flex-start; }
-.record-main { flex: 1; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.record-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 14px; }
+.record-tab { height: 100%; display: flex; gap: 20px; align-items: stretch; padding: 16px 20px; }
+.record-main { flex: 1; display: flex; flex-direction: column; gap: 16px; min-width: 0; overflow-y: auto; }
+.record-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; }
 .cam-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .cam-card .card-header { flex-wrap: wrap; }
 .cam-card .card-header .name { flex: 1; }
 .card-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border); }
 .card-controls .sep { width: 1px; height: 18px; background: var(--border); }
 .streams { display: grid; grid-template-columns: 1fr 1px 1fr; }
-.stream-panel { position: relative; background: #000; aspect-ratio: 4/3; overflow: hidden; }
+.cam-card.no-depth .streams { grid-template-columns: 1fr; }
+.stream-panel { position: relative; background: #000; aspect-ratio: 4/3; max-height: 40vh; overflow: hidden; }
 .stream-panel img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .stream-divider { background: var(--border); }
 
@@ -242,12 +271,22 @@ header h1 {
 .episode-row { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .episode-row:hover { background: var(--bg); }
 .episode-row .ep-id { font-family: inherit; color: var(--muted); }
-.episode-row .ep-task { flex: 1; }
+.episode-row .ep-task { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+.episode-row .ep-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.episode-row .ep-meta { color: var(--muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .episode-row .ep-badges { display: flex; gap: 3px; }
 .episode-row button { padding: 3px 8px; font-size: 11px; }
-.badge { width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 3px; font-size: 9px; background: var(--border); color: var(--muted); }
+.badge { padding: 1px 4px; border-radius: 3px; font-size: 9px; letter-spacing: 0.04em; background: var(--border); color: var(--muted); cursor: default; }
 .badge.ok { background: var(--accent); color: #fff; }
-.episode-row .ep-id-edit { width: 150px; padding: 3px 6px; font-size: 11px; }
+/* inline edit form — compact, fixed widths so it stays inside the panel */
+.episode-row.editing { gap: 6px; }
+.episode-row.editing .ep-edit-name,
+.episode-row.editing .ep-edit-demo,
+.episode-row.editing .ep-edit-hand { flex: 0 0 auto; padding: 3px 6px; font-size: 11px; }
+.episode-row.editing .ep-edit-name { width: 190px; }
+.episode-row.editing .ep-edit-demo { width: 130px; }
+.episode-row.editing .ep-edit-hand { width: 70px; }
+.episode-row.editing [data-role="ep-edit-save"] { margin-left: auto; }
 
 /* inline "create / save as" input + button row (datasets, calib presets) */
 .inline-add { display: flex; gap: 6px; }
@@ -259,12 +298,10 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 /* ── viewer tab (three.js) ───────────────────────────────────────────── */
 
 .viewer-tab {
-  /* fill the space under header + tabbar, cancelling #view's padding */
-  margin: -16px -20px;
-  height: calc(100vh - 94px);
+  height: 100%;
   display: grid;
-  grid-template-columns: 1fr 240px;
-  grid-template-rows: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) clamp(240px, 20vw, 320px);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 1px;
   background: var(--border);
 }
@@ -282,6 +319,10 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .viewer-hud dt { color: var(--muted); }
 .viewer-hud dd { color: var(--text); word-break: break-all; }
 .viewer-help { font-size: 10px; color: var(--muted); margin-top: auto; }
+.viewer-field input[type="number"] { width: 100%; }
+.viewer-layers { display: flex; flex-direction: column; gap: 3px; }
+.viewer-layer { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text); }
+.viewer-timeline button { padding: 3px 7px; font-size: 11px; }
 .viewer-timeline {
   grid-column: 1 / -1;
   background: var(--surface);
@@ -289,3 +330,42 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 }
 .viewer-timeline input[type="range"] { flex: 1; }
 .viewer-timeline span { font-size: 11px; color: var(--muted); min-width: 70px; text-align: right; }
+
+/* ── Extract (perception) tab ────────────────────────────────────────── */
+
+.perception-tab {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(280px, 24vw, 360px);
+  gap: 1px;
+  background: var(--border);
+}
+.perc-viewer {
+  display: grid; grid-template-rows: minmax(0, 1fr) auto auto;
+  background: #0b0d10; min-width: 0; min-height: 0;
+}
+.perc-viewer .viewer-canvas { position: relative; overflow: hidden; }
+.perc-layers {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px;
+  background: var(--surface); font-size: 11px;
+}
+.perc-layers label { display: flex; align-items: center; gap: 4px; }
+.perc-side { background: var(--surface); padding: 10px; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.perc-side .calib-sec { padding: 9px 10px; gap: 6px; }
+.perc-side .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.perc-side .cfg-row select, .perc-side .cfg-row input[type="number"] { width: 150px; }
+.perc-track { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 8px; font-size: 10px; max-height: 160px; overflow-y: auto; }
+.perc-track label { display: flex; align-items: center; gap: 4px; }
+.perc-eps { max-height: 120px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+.perc-ep { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 11px; cursor: pointer; }
+.perc-ep:hover { background: var(--bg); }
+.perc-all { font-size: 11px; color: var(--muted); display: flex; gap: 6px; }
+.perc-queue { display: flex; flex-direction: column; gap: 4px; }
+.perc-job { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; font-size: 10px; }
+.perc-job-ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perc-job-st { color: var(--muted); }
+.perc-job.error .perc-job-st { color: var(--red); }
+.perc-job.done .perc-job-st { color: var(--green); }
+.perc-bar { width: 60px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.perc-bar i { display: block; height: 100%; background: var(--accent); }
+.perc-job button { padding: 1px 5px; font-size: 10px; }
