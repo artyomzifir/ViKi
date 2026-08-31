@@ -282,45 +282,53 @@ class ArucoWorker(_CalibrationWorker):
             If no sample available, sample is not a CharUco sample,
             or pose estimation fails.
         """
-        if not sample:
-            if self.samples_count < 1:
-                msg = f"{self.device_id} extrinsics: no sample available"
+        # Solve one rigid board->camera pose from ChArUco 2D<->3D
+        # correspondences with ``cv2.solvePnP`` over ``getChessboardCorners()``.
+        # We deliberately do NOT use ``cv2.aruco.estimatePoseCharucoBoard``: its
+        # pose is expressed in the CharucoBoard's native object frame, whose
+        # origin/axes differ from ``getChessboardCorners()`` in OpenCV >= 4.7, so
+        # the re-centre in ``canonical_board_extrinsics`` (which assumes the
+        # first-corner origin) is applied from the wrong point and the board
+        # lands ~0.7 m off the real plane. This mirrors
+        # ``viki.calibration.samples.solve_extrinsics`` exactly.
+        if sample is not None:
+            if not type(sample) is ArucoCalibrationSample:
+                msg = "ArucoWorker extrinsics_calibration: sample is not CharUco sample"
                 self._logger.debug(msg)
                 raise RuntimeError(msg)
-            sample = self._samples[-1]
-        if not type(sample) is ArucoCalibrationSample:
-            msg = f"ArucoWorker extrinsics_calibration: sample is not CharUco sample"
+            solve_samples = [sample]
+        else:
+            solve_samples = list(self._samples)
+        if not solve_samples:
+            msg = f"{self.device_id} extrinsics: no sample available"
             self._logger.debug(msg)
             raise RuntimeError(msg)
+
         camera_matrix = intrinsics.camera_matrix
         dist_coeffs = intrinsics.dist_coeffs
-        if sample.corners is None:
-            msg = f"ArucoWorker extrinsics_calibration: corners are None"
+        obj_all = np.asarray(self.board.getChessboardCorners(), dtype=np.float32)
+        obj_pts, img_pts = [], []
+        for s in solve_samples:
+            if s.corners is None or s.c_ids is None:
+                continue
+            ids = np.asarray(s.c_ids, dtype=int).reshape(-1)
+            cor = np.asarray(s.corners, dtype=np.float32).reshape(-1, 2)
+            if ids.size < 4 or ids.size != len(cor) or int(ids.max(initial=-1)) >= len(obj_all):
+                continue
+            obj_pts.append(obj_all[ids])
+            img_pts.append(cor)
+        if not obj_pts:
+            msg = f"ArucoWorker extrinsics_calibration: no usable corners"
             self._logger.debug(msg)
             raise RuntimeError(msg)
 
-        try:
-            ret, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
-                sample.corners,
-                sample.c_ids,
-                self.board,
-                camera_matrix,
-                dist_coeffs,
-                None,  # pyright: ignore
-                None,  # pyright: ignore,
-            )
-        except AttributeError:
-            all_corners_3d = self.board.getChessboardCorners()
-            object_points = all_corners_3d[sample.c_ids].astype(np.float32)
-            image_points = sample.corners.astype(np.float32)
-
-            ret, rvec, tvec = cv2.solvePnP(
-                object_points,
-                image_points,
-                camera_matrix,
-                dist_coeffs,
-                flags=cv2.SOLVEPNP_ITERATIVE,
-            )
+        ret, rvec, tvec = cv2.solvePnP(
+            np.vstack(obj_pts),
+            np.vstack(img_pts),
+            camera_matrix,
+            dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
         if not ret:
             msg = f"{self.device_id} extrinsics: pose estimation failed"
             self._logger.debug(msg)
