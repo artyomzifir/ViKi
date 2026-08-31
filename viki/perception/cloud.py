@@ -98,13 +98,17 @@ def _camera_cloud(
     K_color: np.ndarray | None,
     cal,
     T_world_cam: np.ndarray,
+    bg_mm: np.ndarray | None = None,
+    bg_tol_mm: float = 50.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """One camera, one frame → (xyz_world Nx3 metres, rgb Nx3 uint8).
 
     Fully vectorised. When a k4a calibration is available the depth→colour-3D
     deprojection uses a precomputed ``(A, B)`` ray map (exact SDK lens model,
     built once and cached) so every frame is pure NumPy — no per-pixel ctypes
-    loop.
+    loop. When ``bg_mm`` (the calibrated empty-scene depth) is given, pixels
+    within ``bg_tol_mm`` of the background are dropped before deprojection —
+    only the operator + objects survive.
     """
     dh, dw = depth_mm.shape[:2]
     vs, us = np.mgrid[0:dh:stride, 0:dw:stride]
@@ -112,6 +116,11 @@ def _camera_cloud(
     vs = vs.ravel()
     z = depth_mm[vs, us].astype(np.float64)
     keep = z > 0
+    if bg_mm is not None and bg_mm.shape == depth_mm.shape:
+        bz = bg_mm[vs, us].astype(np.float64)
+        # a pixel is static scene when the background has a reading there and the
+        # current depth is within tolerance of it — drop those.
+        keep &= ~((bz > 0) & (np.abs(z - bz) <= float(bg_tol_mm)))
     us, vs, z = us[keep], vs[keep], z[keep]
     if us.size == 0:
         return np.empty((0, 3), np.float32), np.empty((0, 3), np.uint8)
@@ -162,13 +171,16 @@ def build_cloud(
     voxel: float | None = None,
     bbox: list[float] | None = None,
     max_points: int | None = None,
+    bg_subtract: bool | None = None,
+    bg_tol_mm: float | None = None,
     report=None,
 ) -> str:
     """Write ``cloud/<i>.bin`` + ``cloud/meta.json`` for the episode. Returns the dir.
 
-    ``stride`` / ``voxel`` / ``bbox`` / ``max_points`` default to the ``CLOUD_*``
-    config keys. ``report(stage="cloud", frame=i, total=N)`` is called ~every 15
-    frames so a queue job can show a progress bar.
+    ``stride`` / ``voxel`` / ``bbox`` / ``max_points`` / ``bg_subtract`` /
+    ``bg_tol_mm`` default to the ``CLOUD_*`` config keys.
+    ``bg_subtract`` drops points matching the calibration preset's empty-scene
+    depth. ``report(stage="cloud", frame=i, total=N)`` drives a progress bar.
     """
     raw = ep.raw_dir
     intr_all = _read_json(raw / "intrinsics.json")
@@ -179,6 +191,24 @@ def build_cloud(
     voxel = float(voxel if voxel is not None else getattr(config, "CLOUD_VOXEL_M", 0.005))
     bbox = list(bbox if bbox is not None else (getattr(config, "CLOUD_WORKSPACE_BBOX", []) or []))
     cap = int(max_points if max_points is not None else getattr(config, "CLOUD_MAX_POINTS_PER_FRAME", 40000))
+    bg_subtract = bool(getattr(config, "CLOUD_BG_SUBTRACT", True) if bg_subtract is None else bg_subtract)
+    bg_tol_mm = float(getattr(config, "CLOUD_BG_TOLERANCE_MM", 50.0) if bg_tol_mm is None else bg_tol_mm)
+
+    preset = (meta_all or {}).get("calibration_preset")
+    bg_by_dev: dict = {}
+    if bg_subtract and preset:
+        try:
+            from viki.calibration import presets as _presets
+
+            for mp4 in raw.glob("*.mp4"):
+                bd = _presets.background_depth(preset, mp4.stem)
+                if bd is not None:
+                    bg_by_dev[mp4.stem] = bd
+            if bg_by_dev:
+                logger.info("cloud %s: background subtract for %s (tol %.0f mm)",
+                            ep.id, sorted(bg_by_dev), bg_tol_mm)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cloud %s: background load failed (%s)", ep.id, exc)
 
     from viki.perception.k4a_offline import K4ACalibration
 
@@ -209,6 +239,7 @@ def build_cloud(
             "K": _color_K(intr_all.get(dev, {})),
             "cal": cal,
             "T": T,
+            "bg": bg_by_dev.get(dev),
         })
 
     out_dir = ep.cloud_dir
@@ -246,7 +277,8 @@ def build_cloud(
             depth_mm = np.load(dpath)
             if not depth_mm.any():
                 continue
-            x, r = _camera_cloud(bgr, depth_mm, stride, c["K"], c["cal"], c["T"])
+            x, r = _camera_cloud(bgr, depth_mm, stride, c["K"], c["cal"], c["T"],
+                                 bg_mm=c["bg"], bg_tol_mm=bg_tol_mm)
             if len(x):
                 xyz_parts.append(x)
                 rgb_parts.append(r)
