@@ -50,8 +50,9 @@ class MediaPipeHandBackend(HandPoseBackend):
         mode: str = "video",
         models_dir: str = "models",
         model_path: str | None = None,
-        model: str | None = None,  # tier id from the registry; MediaPipe has one
+        model_entry: dict | None = None,  # registry row; MediaPipe has one model
         min_confidence: float = 0.5,
+        **_ignored,
     ) -> None:
         if mode not in ("image", "video"):
             raise ValueError("MediaPipe backend supports 'image' or 'video' only")

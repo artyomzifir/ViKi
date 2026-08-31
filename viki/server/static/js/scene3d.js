@@ -20,7 +20,7 @@ const CAM_PALETTE = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0]
 
 const DEFAULT_LAYERS = {
   cloud: true, perCamera: true, fused: true, trajectory: true,
-  palm: true, frusta: true, board: true, bbox: false, confidence: false,
+  palm: true, frusta: true, board: true, bbox: false,
 };
 
 export function create(canvasEl, { api, log, layers: initLayers, colorMode: initColor, stride: initStride }) {
@@ -40,7 +40,21 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   controls.dampingFactor = 0.08;
 
   // ── static world ──────────────────────────────────────────────────────
-  const worldAxes = new THREE.AxesHelper(0.15);
+  // Origin triad as thin cylinders (WebGL ignores LineMaterial.linewidth), so
+  // the axes actually read as ~2x an AxesHelper hairline.
+  function fatAxes(len = 0.15, radius = 0.003) {
+    const g = new THREE.Group();
+    const arm = (color, ax) => {
+      const geo = new THREE.CylinderGeometry(radius, radius, len, 12);
+      geo.translate(0, len / 2, 0);            // base at origin, tip at +len
+      if (ax === 'x') geo.rotateZ(-Math.PI / 2);
+      if (ax === 'z') geo.rotateX(Math.PI / 2);
+      return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color }));
+    };
+    g.add(arm(0xff0000, 'x'), arm(0x00ff00, 'y'), arm(0x0000ff, 'z'));
+    return g;
+  }
+  const worldAxes = fatAxes(0.15, 0.003);
   scene.add(worldAxes);
   const grid = new THREE.GridHelper(2, 40, 0x2c2c34, 0x18181d);
   grid.rotation.x = Math.PI / 2;                    // grid on world XY
@@ -148,18 +162,20 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     const [cols, rows] = b.board_size;
     const sq = b.square_size;
     const w = cols * sq, h = rows * sq;
+    // canonical_board_extrinsics re-centres the world origin on the board
+    // centre, so the plane sits AT the origin (±½ square of slack from the
+    // (n-1)/2 rounding — negligible next to a 0.4–0.5 m board).
+    const geoPlane = new THREE.PlaneGeometry(w, h);
     const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(w, h),
+      geoPlane,
       new THREE.MeshBasicMaterial({ color: 0x20242c, transparent: true, opacity: 0.55,
         side: THREE.DoubleSide })
     );
-    plane.position.set(w / 2, h / 2, 0);          // OpenCV board origin = a corner
     boardGroup.add(plane);
     const edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.PlaneGeometry(w, h)),
+      new THREE.EdgesGeometry(geoPlane),
       new THREE.LineBasicMaterial({ color: 0x5b7fff })
     );
-    edges.position.copy(plane.position);
     boardGroup.add(edges);
   }
 
@@ -208,9 +224,10 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     const box = new THREE.Box3();
     const b = geo?.board;
     if (b?.board_size && b?.square_size) {
-      box.expandByPoint(new THREE.Vector3(0, 0, 0));
-      box.expandByPoint(new THREE.Vector3(
-        b.board_size[0] * b.square_size, b.board_size[1] * b.square_size, 0));
+      const hw = b.board_size[0] * b.square_size / 2;
+      const hh = b.board_size[1] * b.square_size / 2;
+      box.expandByPoint(new THREE.Vector3(-hw, -hh, 0));
+      box.expandByPoint(new THREE.Vector3(hw, hh, 0));
     }
     const bb = geo?.workspace_bbox;
     if (bb?.length === 6) {

@@ -29,6 +29,14 @@ dev = [
 export = [
     "lerobot",
 ]
+# RTMPose-Hand backend. rtmlib itself is installed --no-deps in the Dockerfile:
+# it hard-depends on opencv-python, which would collide with the
+# opencv-python-headless pinned above. Its real runtime needs are cv2 (provided
+# by headless), numpy, onnxruntime and tqdm.
+perception = [
+    "onnxruntime>=1.17",
+    "tqdm>=4.66",
+]
 
 [project.scripts]
 viki = "viki.cli:main"

@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from viki.contracts import HAND_LM_COUNT, HandDetection, LM, PreparedFrame
-from viki.perception.backends import BACKENDS, HandPoseBackend, load_backend
+from viki.perception.backends import HandPoseBackend, load_backend
+from viki.perception.backends import registry
 
 
 class _FakeBackend(HandPoseBackend):
@@ -33,19 +34,33 @@ def _frame():
     )
 
 
-def test_registry_has_the_four_backends():
-    assert set(BACKENDS) == {"mediapipe", "rtmpose", "hamer", "yolo"}
+def test_registry_is_a_flat_21pt_model_list():
+    ids = {m["id"] for m in registry.MODELS}
+    assert {"mediapipe", "rtmpose-m-hand5"} <= ids
+    for m in registry.MODELS:
+        assert m["impl"] in {"mediapipe", "rtmpose", "mmpose-heatmap"}
+        assert m["license"] in {"Apache-2.0", "MIT"}
+    rows = registry.list_models()
+    assert all({"id", "label", "present", "downloadable"} <= set(r) for r in rows)
 
 
-def test_unknown_backend_raises():
+def test_unknown_model_raises():
     with pytest.raises(ValueError):
         load_backend("nope")
 
 
-@pytest.mark.parametrize("name", ["rtmpose", "hamer", "yolo"])
-def test_stub_backends_raise_not_implemented(name):
-    with pytest.raises(NotImplementedError):
-        load_backend(name)
+def test_mmpose_heatmap_model_needs_a_local_onnx():
+    # no ONNX in models/ -> the backend must refuse with a helpful message
+    with pytest.raises(RuntimeError):
+        load_backend("hrnetv2-w18-hand")
+
+
+def test_backend_classes_are_in_spec():
+    from viki.perception.backends.rtmpose import RTMPoseHandBackend
+    from viki.perception.backends.mmpose_heatmap import MMPoseHeatmapBackend
+
+    assert issubclass(RTMPoseHandBackend, HandPoseBackend)
+    assert issubclass(MMPoseHeatmapBackend, HandPoseBackend)
 
 
 def test_fake_backend_satisfies_contract():

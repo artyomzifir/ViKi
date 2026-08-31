@@ -82,6 +82,7 @@ def list_presets() -> list[dict]:
     out: list[dict] = []
     for f in sorted(PRESETS_DIR.glob("*.json")):
         k4a: list[str] = []
+        background: list[str] = []
         try:
             data = json.loads(f.read_text())
             extr = _extrinsics_of(data)
@@ -92,6 +93,7 @@ def list_presets() -> list[dict]:
             )
             if isinstance(data, dict):
                 k4a = sorted((data.get("k4a_raw") or {}).keys())
+                background = sorted((data.get("background") or {}).keys())
         except (json.JSONDecodeError, OSError):
             cams, n_sets = [], 0
         out.append({
@@ -100,6 +102,7 @@ def list_presets() -> list[dict]:
             "cameras": cams,
             "sets": n_sets,
             "k4a": k4a,
+            "background": background,
             "active": f.stem == active,
         })
     return out
@@ -134,6 +137,7 @@ def read_detail(name: str) -> dict:
         "board": data.get("board"),
         "set_images": _set_images(name),
         "k4a_devices": sorted((data.get("k4a_raw") or {}).keys()),
+        "background_devices": sorted((data.get("background") or {}).keys()),
     }
 
 
@@ -161,6 +165,57 @@ def attach_k4a(
         data["k4a_color_res_int"] = int(color_res_int)
     preset_path(name).write_text(json.dumps(data, indent=2))
     return read_detail(name)
+
+
+# ── static background depth (empty-scene capture, for cloud/skeleton subtract) ─
+
+
+def _preset_dir(name: str) -> Path:
+    d = PRESETS_DIR / _safe_name(name)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def attach_background(name: str, depths: dict[str, "object"]) -> dict:
+    """Store a per-camera static-scene depth map (mm, float32) captured while
+    the scene was empty (i.e. during calibration). ``depths[dev]`` is a 2-D
+    array. Saved as ``<name>/<dev>_bg.npz`` next to the preset."""
+    import numpy as np
+
+    data = _read(name)
+    if isinstance(data, list):
+        raise ValueError("preset is v1 (legacy list) — re-solve to upgrade first")
+    if not depths:
+        raise ValueError("no background depth to attach")
+    pdir = _preset_dir(name)
+    data.setdefault("background", {})
+    for dev, arr in depths.items():
+        a = np.asarray(arr, dtype=np.float32)
+        np.savez_compressed(pdir / f"{dev}_bg.npz", depth_mm=a)
+        data["background"][dev] = {"file": f"{dev}_bg.npz", "shape": list(a.shape)}
+    preset_path(name).write_text(json.dumps(data, indent=2))
+    return read_detail(name)
+
+
+def background_depth(name: str, dev_id: str):
+    """The stored empty-scene depth map (mm, float32, 0 = no reading) for
+    ``dev_id`` under preset ``name``, or ``None``."""
+    import numpy as np
+
+    try:
+        data = _read(name)
+    except FileNotFoundError:
+        return None
+    if isinstance(data, list):
+        return None
+    ent = (data.get("background") or {}).get(dev_id)
+    if not ent:
+        return None
+    p = _preset_dir(name) / ent["file"]
+    if not p.is_file():
+        return None
+    with np.load(p) as z:
+        return z["depth_mm"].astype(np.float32)
 
 
 def k4a_calibration(name: str, dev_id: str):

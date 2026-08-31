@@ -8,6 +8,8 @@ thread; poll the returned job id.
 
 from __future__ import annotations
 
+import threading
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -17,6 +19,10 @@ from viki.server import jobs
 from viki.server.deps import get_manager
 
 router = APIRouter(prefix="/record", tags=["recording"])
+
+# Set by POST /record/stop to end the in-progress capture early (Stop button).
+# Cleared at the start of every recording.
+_stop_evt = threading.Event()
 
 
 def _build_cloud(ep, report, log, opts: dict | None = None) -> dict:
@@ -31,6 +37,8 @@ def _build_cloud(ep, report, log, opts: dict | None = None) -> dict:
         voxel=o.get("voxel"),
         bbox=o.get("bbox"),
         max_points=o.get("max_points"),
+        bg_subtract=o.get("bg_subtract"),
+        bg_tol_mm=o.get("bg_tol_mm"),
         report=report,
     )
     log(f"cloud done -> {out}")
@@ -42,6 +50,8 @@ class CloudOpts(BaseModel):
     voxel: float | None = None
     max_points: int | None = None
     bbox: list[float] | None = None
+    bg_subtract: bool | None = None
+    bg_tol_mm: float | None = None
 
 
 class RecordRequest(BaseModel):
@@ -62,6 +72,7 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
     meta = {"task": req.task, "demonstrator": req.demonstrator, "hand": req.hand}
     episodes_dir = None if req.dataset else getattr(config, "EPISODES_DIR", "data/episodes")
     cloud_opts = req.cloud.model_dump() if req.cloud is not None else {}
+    _stop_evt.clear()
 
     def _job():
         from viki.cameras.record import SceneRecorder
@@ -69,7 +80,7 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
         rec = SceneRecorder(
             mgr, dataset=req.dataset, episodes_dir=episodes_dir, meta=meta
         )
-        ep = rec.record(req.seconds, fps=req.fps)
+        ep = rec.record(req.seconds, fps=req.fps, stop_event=_stop_evt)
         # Build the coloured point cloud straight away (params from the request,
         # else the CLOUD_* config keys) so the episode is viewer-ready without a
         # manual step; on its own 'cloud' lane so it runs in parallel with any
@@ -83,6 +94,13 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
         return {"episode": str(ep.root), "dataset": req.dataset, "cloud_job": cloud_job}
 
     return {"job_id": jobs.submit("record", _job, queued=False)}
+
+
+@router.post("/stop")
+async def stop_recording():
+    """End the in-progress capture now (the recorder still finalises the file)."""
+    _stop_evt.set()
+    return {"status": "stopping"}
 
 
 @router.get("/jobs/{job_id}")

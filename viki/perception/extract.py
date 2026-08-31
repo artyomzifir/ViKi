@@ -121,8 +121,8 @@ def _noop(**_kw):
 def extract_episode(
     ep,
     *,
-    backend: str | None = None,
     model: str | None = None,
+    backend: str | None = None,  # deprecated alias for ``model``
     hand: str = "right",
     track_lm: list[int] | None = None,
     min_confidence: float | None = None,
@@ -146,7 +146,7 @@ def extract_episode(
 
     report = report or _noop
     raw = ep.raw_dir
-    backend_name = backend or getattr(_cfg, "POSE_BACKEND", "mediapipe")
+    model_id = model or backend or getattr(_cfg, "POSE_BACKEND", None) or "mediapipe"
     keep = set(track_lm) if track_lm else None
     intr_all = _read_json(raw / "intrinsics.json")
     extr_all = _read_json(raw / "extrinsics.json")
@@ -154,8 +154,6 @@ def extract_episode(
     ts_list = _frame_timestamps(raw)
     identity = _IdentityProjector()
     be_kw = {"mode": "video"}
-    if model:
-        be_kw["model"] = model
     if min_confidence is not None:
         be_kw["min_confidence"] = float(min_confidence)
 
@@ -175,7 +173,21 @@ def extract_episode(
                 "extract %s/%s: no k4a calibration — assuming depth is "
                 "colour-aligned (identity colour→depth map)", ep.id, dev_id,
             )
-        det_backend = load_backend(backend_name, **be_kw)
+        det_backend = load_backend(model_id, **be_kw)
+
+        # calibrated empty-scene depth (metres) for scene subtraction in the lift
+        base_depth_m = None
+        _preset = (meta_all or {}).get("calibration_preset")
+        if _preset:
+            try:
+                from viki.calibration import presets as _presets
+
+                _bg = _presets.background_depth(_preset, dev_id)
+                if _bg is not None:
+                    base_depth_m = (_bg.astype(np.float32) / 1000.0)
+                    base_depth_m[base_depth_m == 0] = np.nan
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("extract %s/%s: background load failed (%s)", ep.id, dev_id, exc)
 
         cap = cv2.VideoCapture(str(mp4))
         idx = 0
@@ -199,7 +211,8 @@ def extract_episode(
             ts_us = _row_ts_us(ts_list, idx, dev_id)
             det = det_backend.detect(
                 PreparedFrame(rgb=det_rgb, depth_m=depth_m, depth_K=K,
-                              device_id=dev_id, timestamp_us=ts_us),
+                              device_id=dev_id, timestamp_us=ts_us,
+                              base_depth_m=base_depth_m),
                 hand,
             )
             idx += 1
@@ -212,7 +225,8 @@ def extract_episode(
                     det.points[lm][0] = w - 1.0 - det.points[lm][0]
 
             prepared = PreparedFrame(rgb=rgb, depth_m=depth_m, depth_K=K,
-                                     device_id=dev_id, timestamp_us=ts_us)
+                                     device_id=dev_id, timestamp_us=ts_us,
+                                     base_depth_m=base_depth_m)
             lms = lift_to_3d(det, prepared, projector)
             if lms is None:
                 continue
@@ -243,7 +257,7 @@ def extract_episode(
 
     write_rec(ep.rec_npz, records)
     mark_stage(
-        ep, "extract", frames=len(records), backend=backend_name, model=model or "",
+        ep, "extract", frames=len(records), model=model_id,
         track_lm=sorted(keep) if keep else "all",
     )
     logger.info("extract %s: %d frames -> %s", ep.id, len(records), ep.rec_npz)

@@ -699,6 +699,53 @@ async def grab_preset_k4a(
     return {"status": "success", "devices": sorted(blobs), "detail": detail}
 
 
+def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
+    """Median depth (mm) over ~``n`` frames per running camera — the static
+    empty scene captured during calibration. 0 stays 0 (no IR reading)."""
+    import time
+
+    import numpy as np
+
+    stacks: dict[str, list] = {d: [] for d in mgr.active_device_ids()}
+    for _ in range(n):
+        for dev in list(stacks):
+            fr = mgr.latest_frame(dev)
+            if fr is not None and fr.has_depth():
+                stacks[dev].append(np.asarray(fr.depth, dtype=np.float32))
+        time.sleep(0.05)
+    out: dict = {}
+    for dev, frames in stacks.items():
+        if not frames:
+            continue
+        arr = np.stack(frames)                 # (F, H, W) mm, 0 = missing
+        arr[arr <= 0] = np.nan
+        with np.errstate(all="ignore"):
+            med = np.nanmedian(arr, axis=0)
+        out[dev] = np.nan_to_num(med, nan=0.0).astype(np.float32)
+    return out
+
+
+@router.post("/presets/{name}/grab-background")
+async def grab_preset_background(
+    name: str, mgr: CameraManager = Depends(get_manager)
+):
+    """Snapshot the empty scene's depth (per running camera) onto the preset so
+    recordings made against it can subtract the static background from the point
+    cloud. Run this during calibration, before the operator / objects enter."""
+    try:
+        _presets.read_detail(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    depths = _collect_background(mgr)
+    if not depths:
+        raise HTTPException(400, "no depth from running cameras — start the Kinects first")
+    try:
+        detail = _presets.attach_background(name, depths)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "success", "devices": sorted(depths), "detail": detail}
+
+
 @router.post("/activate")
 async def activate_preset(
     body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)

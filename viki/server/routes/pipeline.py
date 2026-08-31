@@ -57,7 +57,7 @@ async def list_episodes(dataset: str | None = None):
 
 class _EpReq(BaseModel):
     episode: str
-    backend: str | None = None
+    model: str | None = None
     robot: str | None = None
     window: int = 7
     polyorder: int = 2
@@ -69,7 +69,6 @@ class _PerceiveReq(BaseModel):
 
 
 class _ModelReq(BaseModel):
-    backend: str
     model: str
 
 
@@ -117,9 +116,9 @@ async def download_model(req: _ModelReq):
     def _job(report, log):
         from viki.perception.backends.registry import download
 
-        return download(req.backend, req.model, report, log)
+        return download(req.model, report, log)
 
-    return {"job_id": jobs.submit("download", _job, episode=f"{req.backend}/{req.model}")}
+    return {"job_id": jobs.submit("download", _job, episode=req.model)}
 
 
 @_ep.delete("/jobs/{job_id}")
@@ -136,7 +135,7 @@ async def extract(req: _EpReq):
     def _job():
         from viki.perception.extract import extract_episode
 
-        return extract_episode(ep, backend=req.backend)
+        return extract_episode(ep, model=req.model)
 
     return {"job_id": jobs.submit("extract", _job)}
 

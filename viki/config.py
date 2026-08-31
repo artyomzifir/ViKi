@@ -35,6 +35,8 @@ CLOUD_STRIDE: int  # keep every Nth depth pixel per axis when building the cloud
 CLOUD_VOXEL_M: float  # voxel-downsample leaf size (metres); 0 disables
 CLOUD_WORKSPACE_BBOX: list[float]  # world AABB [xmin,xmax,ymin,ymax,zmin,zmax]; empty = no crop
 CLOUD_MAX_POINTS_PER_FRAME: int
+CLOUD_BG_SUBTRACT: bool  # drop cloud points matching the calibrated empty-scene depth
+CLOUD_BG_TOLERANCE_MM: float  # |depth - background| below this = static scene, dropped
 PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 SKELETON_RECS_DIR: str
@@ -156,9 +158,11 @@ _DEFAULTS: dict[str, Any] = {
     "ACTIVE_CALIBRATION": "",
     "CLOUD_STRIDE": 1,
     "CLOUD_VOXEL_M": 0.005,
-    "CLOUD_WORKSPACE_BBOX": [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2],
+    "CLOUD_WORKSPACE_BBOX": [],
     "CLOUD_MAX_POINTS_PER_FRAME": 40000,
-    "PERCEPTION_TRACK_LM": [0, 1, 3, 4, 5, 8, 9, 13, 17],
+    "CLOUD_BG_SUBTRACT": True,
+    "CLOUD_BG_TOLERANCE_MM": 50.0,
+    "PERCEPTION_TRACK_LM": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 17],
     "PERCEPTION_INTERP_MAX_GAP": 0,
 }
 
