@@ -103,6 +103,10 @@ class PreparationPipeline:
         self.smoothed_dir = Path(config.SKELETON_SMOOTHED_DIR)
         # >0 leaves interior gaps longer than this many frames unfilled
         self.interp_max_gap = int(getattr(config, "PERCEPTION_INTERP_MAX_GAP", 0))
+        # optional explicit fused-output time grid (µs) — the raw synced-frame
+        # timestamps, so cln.npz shares one index with the point cloud. None →
+        # fuse onto the union of the per-camera detection timestamps.
+        self.grid_ts: np.ndarray | None = None
 
         self.recs_dir.mkdir(parents=True, exist_ok=True)
         self.smoothed_dir.mkdir(parents=True, exist_ok=True)
@@ -222,7 +226,7 @@ class PreparationPipeline:
         from viki.prepare.fuse import fuse_trajectories
 
         raw_fused, grid = fuse_trajectories(
-            raw_filled, ts_map, landmark_ids, weights=conf_map
+            raw_filled, ts_map, landmark_ids, weights=conf_map, grid=self.grid_ts
         )
 
         if grid.size == 0:
@@ -393,6 +397,17 @@ def prepare_episode(
         pp.smoothed_dir = stage_p
         if interp_max_gap is not None:
             pp.interp_max_gap = int(interp_max_gap)
+        # Fuse onto the raw synced-frame grid so cln.npz has one row per
+        # recorded frame, index-aligned with cloud/<i>.bin and everything else.
+        ts_path = ep.raw_dir / "timestamps.json"
+        if ts_path.exists():
+            try:
+                _ts = json.loads(ts_path.read_text())
+                _sync = [int(e["sync_us"]) for e in _ts if "sync_us" in e]
+                if _sync:
+                    pp.grid_ts = np.asarray(sorted(_sync), dtype=np.int64)
+            except Exception:  # noqa: BLE001 — fall back to the union grid
+                pass
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
 
