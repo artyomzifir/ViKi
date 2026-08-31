@@ -48,11 +48,42 @@ class K4ACalibration:
     # ------------------------------------------------------------------
 
     @classmethod
+    def from_blob(
+        cls, blob: bytes, depth_mode_int, color_res_int, tag: str = ""
+    ) -> "K4ACalibration | None":
+        """Rebuild ``k4a_calibration_t`` from a raw calibration blob + the target
+        depth-mode / colour-resolution enum ints. ``None`` if the ints are
+        missing, libk4a is unavailable, or the SDK rejects the blob."""
+        if depth_mode_int is None or color_res_int is None:
+            logger.warning("k4a_offline[%s]: missing depth-mode / colour-res ints", tag)
+            return None
+        try:
+            from viki.cameras import kinect as _k
+        except OSError as exc:  # libk4a not installed
+            logger.warning("k4a_offline[%s]: libk4a unavailable (%s)", tag, exc)
+            return None
+        if not blob:
+            return None
+        if not blob.endswith(b"\x00"):
+            blob += b"\x00"
+        out = ctypes.create_string_buffer(8192)
+        res = _k._lib.k4a_calibration_get_from_raw(
+            blob, len(blob), int(depth_mode_int), int(color_res_int), out
+        )
+        if res != _k.K4A_RESULT_SUCCEEDED:
+            logger.warning(
+                "k4a_offline[%s]: k4a_calibration_get_from_raw failed (res=%s)", tag, res
+            )
+            return None
+        logger.info("k4a_offline[%s]: rebuilt calibration from raw blob", tag)
+        return cls(out, _k)
+
+    @classmethod
     def from_episode(cls, raw_dir, dev_id: str, meta: dict | None) -> "K4ACalibration | None":
         """Build from ``raw/<dev>_k4a_calib.bin`` + ``meta['cameras'][dev]``.
 
-        Returns ``None`` (caller falls back to identity) when the blob is absent,
-        the enum ints can't be resolved, or libk4a is unavailable.
+        Returns ``None`` (caller falls back to identity / preset) when the blob is
+        absent, the enum ints can't be resolved, or libk4a is unavailable.
         """
         raw_dir = Path(raw_dir)
         cam = ((meta or {}).get("cameras") or {}).get(dev_id, {}) or {}
@@ -68,32 +99,7 @@ class K4ACalibration:
             color_int = _COLOR_RES_TO_INT.get(
                 (int(req.get("color_width", 0)), int(req.get("color_height", 0)))
             )
-        if depth_int is None or color_int is None:
-            logger.warning(
-                "k4a_offline[%s]: cannot resolve depth-mode / colour-resolution ints", dev_id
-            )
-            return None
-
-        try:
-            from viki.cameras import kinect as _k
-        except OSError as exc:  # libk4a not installed
-            logger.warning("k4a_offline[%s]: libk4a unavailable (%s)", dev_id, exc)
-            return None
-
-        blob = blob_path.read_bytes()
-        if not blob.endswith(b"\x00"):
-            blob += b"\x00"
-        out = ctypes.create_string_buffer(8192)
-        res = _k._lib.k4a_calibration_get_from_raw(
-            blob, len(blob), int(depth_int), int(color_int), out
-        )
-        if res != _k.K4A_RESULT_SUCCEEDED:
-            logger.warning(
-                "k4a_offline[%s]: k4a_calibration_get_from_raw failed (res=%s)", dev_id, res
-            )
-            return None
-        logger.info("k4a_offline[%s]: rebuilt calibration from raw blob", dev_id)
-        return cls(out, _k)
+        return cls.from_blob(blob_path.read_bytes(), depth_int, color_int, tag=dev_id)
 
     # ── projections ───────────────────────────────────────────────────
 

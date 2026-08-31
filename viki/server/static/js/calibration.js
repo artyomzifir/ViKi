@@ -44,6 +44,7 @@ function template() {
         <select id="calib-preset"></select>
         <div class="hint" id="calib-preset-info">—</div>
         <button id="calib-preset-open" hidden>Open sets</button>
+        <button id="calib-preset-k4a" title="attach the running Kinects' raw depth↔colour calibration to this preset">Grab k4a calibration</button>
         <div class="inline-add">
           <input type="text" id="calib-preset-name" placeholder="save current as…">
           <button id="calib-preset-save">Save</button>
@@ -274,10 +275,13 @@ async function refreshPresets() {
       presets.map(p => `<option value="${p.name}" ${p.active ? 'selected' : ''}>${p.name}</option>`).join('');
     const active = presets.find(p => p.active);
     const sel_p = presets.find(p => p.name === sel.value);
-    info.textContent = active
+    const k4a = sel_p && sel_p.k4a && sel_p.k4a.length
+      ? ` · k4a ✓ (${sel_p.k4a.length})` : ' · k4a ✗';
+    info.textContent = (active
       ? `active: ${active.cameras.length} cam · ${active.sets} sets · ${new Date(active.solved_at * 1000).toLocaleString()}`
-      : `${presets.length} saved preset(s)`;
+      : `${presets.length} saved preset(s)`) + (sel_p ? k4a : '');
     view.querySelector('#calib-preset-open').hidden = !(sel_p && sel_p.sets > 0);
+    view.querySelector('#calib-preset-k4a').hidden = !sel_p;
   } catch (e) {
     info.textContent = 'presets unavailable';
     log('Failed to load calibration presets: ' + e, 'error');
@@ -313,6 +317,16 @@ async function savePreset() {
     input.value = '';
     refreshPresets();
   } catch (e) { log('Save preset failed: ' + e, 'error'); }
+}
+
+async function grabPresetK4a() {
+  const name = view.querySelector('#calib-preset').value;
+  if (!name) { log('Pick a preset first', 'error'); return; }
+  try {
+    const r = await api('POST', `/api/calibration/presets/${encodeURIComponent(name)}/grab-k4a`);
+    log(`Preset "${name}": k4a calibration attached for ${r.devices.join(', ')}`, 'ok');
+    refreshPresets();
+  } catch (e) { log('Grab k4a failed: ' + e, 'error'); }
 }
 
 // ── mount / unmount ───────────────────────────────────────────────────────
@@ -363,6 +377,7 @@ function onClick(e) {
     case 'calib-clear': clearSamples(); break;
     case 'calib-preset-save': savePreset(); break;
     case 'calib-preset-open': openPreset(); break;
+    case 'calib-preset-k4a': grabPresetK4a(); break;
     case 'calib-sets-live': backToLive(); break;
     case 'set-del':
       openedPreset ? deletePresetSet(+btn.dataset.i) : deleteLiveSet(+btn.dataset.i);

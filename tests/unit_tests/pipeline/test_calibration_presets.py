@@ -70,6 +70,50 @@ def test_v2_save_read_activate_roundtrip():
     assert isinstance(written, list) and written[0]["device_id"] == "cam0"
 
 
+def test_attach_and_read_k4a_blob(monkeypatch):
+    import base64
+
+    presets.save_as(
+        "rigK",
+        extrinsics=[_extr("kinect_0"), _extr("kinect_1")],
+        sets={}, intrinsics={},
+        board={"type": "aruco", "board_size": [8, 10], "square_size": 0.05,
+               "marker_size": 0.035, "aruco_dict": 4},
+    )
+    presets.attach_k4a(
+        "rigK",
+        {"kinect_0": b'{"raw":"cal0"}\x00', "kinect_1": b'{"raw":"cal1"}\x00'},
+        depth_mode_int=2, color_res_int=1,
+    )
+
+    d = presets.read_detail("rigK")
+    assert d["k4a_devices"] == ["kinect_0", "kinect_1"]
+    assert presets.list_presets()[0]["k4a"] == ["kinect_0", "kinect_1"]
+    stored = json.loads((presets.PRESETS_DIR / "rigK.json").read_text())
+    assert base64.b64decode(stored["k4a_raw"]["kinect_0"]) == b'{"raw":"cal0"}\x00'
+    assert stored["k4a_depth_mode_int"] == 2 and stored["k4a_color_res_int"] == 1
+
+    seen = {}
+    def _fake_from_blob(cls, blob, di, ci, tag=""):
+        seen.update(blob=blob, di=di, ci=ci)
+        return "CAL"
+    monkeypatch.setattr(
+        "viki.perception.k4a_offline.K4ACalibration.from_blob",
+        classmethod(_fake_from_blob),
+    )
+    assert presets.k4a_calibration("rigK", "kinect_1") == "CAL"
+    assert seen["blob"] == b'{"raw":"cal1"}\x00' and seen["di"] == 2 and seen["ci"] == 1
+    assert presets.k4a_calibration("rigK", "kinect_9") is None  # unknown device
+
+
+def test_attach_k4a_rejects_v1_preset(tmp_path):
+    p = presets.PRESETS_DIR
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "legacy.json").write_text(json.dumps([_extr("cam0")]))
+    with pytest.raises(ValueError):
+        presets.attach_k4a("legacy", {"cam0": b"x"}, 2, 1)
+
+
 def test_delete_set_resolves_from_real_charuco():
     import cv2
 
