@@ -237,11 +237,6 @@ export function renderPills() {
       ? ids.map(id => `<span class="cam-pill"><span class="dot ${pillClass(id)}"></span>${id}</span>`).join('')
       : '<span class="hint">no cameras</span>';
   }
-  const dot = document.getElementById('server-dot');
-  if (dot) {
-    const anyRunning = Object.values(state).some(s => s.running);
-    dot.className = 'dot ' + (recording ? 'red blink' : anyRunning ? 'green blink' : 'grey');
-  }
 }
 
 export function startStatusPoll() {

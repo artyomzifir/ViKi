@@ -102,6 +102,15 @@ header h1 {
   font-size: 11px; color: var(--muted);
   max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.sysmon {
+  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted); white-space: nowrap; letter-spacing: .2px;
+  padding-right: 4px; border-right: 1px solid var(--border);
+}
+.sysmon:empty { display: none; }
+.sysmon .ok   { color: var(--green); }
+.sysmon .warn { color: var(--yellow); }
+.sysmon .bad  { color: var(--red); }
 .log-line.error { color: var(--red); }
 .log-line.ok { color: var(--green); }
 .log-toggle, .gear { padding: 4px 9px; }
