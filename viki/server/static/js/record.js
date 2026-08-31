@@ -158,7 +158,13 @@ function onDatasetChange() {
 
 // ── episode file-manager ─────────────────────────────────────────────────
 
-const STAGES = ['raw', 'rec', 'cln', 'plan', 'replay'];
+const STAGES = [
+  ['raw', 'RAW', 'raw/ — recorded colour + depth frames'],
+  ['rec', 'REC', 'rec.npz — extracted 3-D hand landmarks'],
+  ['cln', 'CLN', 'cln.npz — fused + smoothed trajectory'],
+  ['plan', 'PLN', 'plan.h5 — retargeted robot joint plan'],
+  ['replay', 'RPL', 'replay.h5 — physical replay states'],
+];
 
 async function loadEpisodes() {
   const box = view?.querySelector('#rec-episode-list');
@@ -177,8 +183,9 @@ function esc(s) {
 }
 
 function rowHTML(ep) {
-  const chips = STAGES.map(s =>
-    `<span class="badge ${ep.has?.[s] ? 'ok' : ''}">${s[0].toUpperCase()}</span>`).join('');
+  const chips = STAGES.map(([key, label, tip]) =>
+    `<span class="badge ${ep.has?.[key] ? 'ok' : ''}" title="${tip}${ep.has?.[key] ? '' : ' (not done)'}">${label}</span>`
+  ).join('');
 
   if (editingPath === ep.path) {
     const hand = (ep.hand || 'right').toLowerCase();
@@ -203,11 +210,18 @@ function rowHTML(ep) {
        <button data-role="ep-delete-no">no</button>`
     : `<button data-role="ep-edit">edit</button>
        <button data-role="ep-delete" class="danger">del</button>`;
-  const meta = [ep.demonstrator, ep.hand].filter(Boolean).join(' · ');
+  const meta = [
+    ep.demonstrator,
+    ep.hand,
+    ep.duration_s != null ? `${ep.duration_s}s` : '',
+    ep.fps ? `${ep.fps} fps` : '',
+  ].filter(Boolean).join(' · ');
   return `<div class="episode-row" data-path="${ep.path}">
     <span class="ep-id" title="capture id">${ep.id}</span>
-    <span class="ep-task">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}${
-      meta ? ` <span class="ep-meta">${esc(meta)}</span>` : ''}</span>
+    <span class="ep-task">
+      <span class="ep-name">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}</span>
+      ${meta ? `<span class="ep-meta">${esc(meta)}</span>` : ''}
+    </span>
     <span class="ep-badges">${chips}</span>
     ${actions}
   </div>`;

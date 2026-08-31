@@ -242,17 +242,22 @@ header h1 {
 .episode-row { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .episode-row:hover { background: var(--bg); }
 .episode-row .ep-id { font-family: inherit; color: var(--muted); }
-.episode-row .ep-task { flex: 1; }
+.episode-row .ep-task { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+.episode-row .ep-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.episode-row .ep-meta { color: var(--muted); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
 .episode-row .ep-badges { display: flex; gap: 3px; }
 .episode-row button { padding: 3px 8px; font-size: 11px; }
-.badge { width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 3px; font-size: 9px; background: var(--border); color: var(--muted); }
+.badge { padding: 1px 4px; border-radius: 3px; font-size: 9px; letter-spacing: 0.04em; background: var(--border); color: var(--muted); cursor: default; }
 .badge.ok { background: var(--accent); color: #fff; }
-.episode-row .ep-meta { color: var(--muted); font-size: 11px; }
-.episode-row.editing { flex-wrap: wrap; }
-.episode-row.editing .ep-id { width: 100%; }
-.episode-row .ep-edit-name { flex: 1 1 120px; padding: 3px 6px; font-size: 11px; }
-.episode-row .ep-edit-demo { flex: 1 1 90px; padding: 3px 6px; font-size: 11px; }
-.episode-row .ep-edit-hand { padding: 3px 6px; font-size: 11px; }
+/* inline edit form — compact, fixed widths so it stays inside the panel */
+.episode-row.editing { gap: 6px; }
+.episode-row.editing .ep-edit-name,
+.episode-row.editing .ep-edit-demo,
+.episode-row.editing .ep-edit-hand { flex: 0 0 auto; padding: 3px 6px; font-size: 11px; }
+.episode-row.editing .ep-edit-name { width: 190px; }
+.episode-row.editing .ep-edit-demo { width: 130px; }
+.episode-row.editing .ep-edit-hand { width: 70px; }
+.episode-row.editing [data-role="ep-edit-save"] { margin-left: auto; }
 
 /* inline "create / save as" input + button row (datasets, calib presets) */
 .inline-add { display: flex; gap: 6px; }

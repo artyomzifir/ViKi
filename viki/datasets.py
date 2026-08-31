@@ -98,6 +98,10 @@ def _episode_summary(d: Path, dataset: str | None) -> dict:
     ep = Episode(root=d)
     meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
     labels = meta.get("labels") or {}
+    stages = read_status(ep).get("stages", {})
+    rec = stages.get("record", {})
+    fps, frames = rec.get("fps"), rec.get("frames")
+    duration_s = round(frames / fps, 1) if fps and frames else None
     return {
         "id": ep.id,
         "path": str(d),
@@ -106,7 +110,10 @@ def _episode_summary(d: Path, dataset: str | None) -> dict:
         "demonstrator": labels.get("demonstrator", meta.get("demonstrator", "")),
         "hand": labels.get("hand", meta.get("hand", "")),
         "created": meta.get("created", ""),
-        "stages": read_status(ep).get("stages", {}),
+        "fps": fps,
+        "frames": frames,
+        "duration_s": duration_s,
+        "stages": stages,
         "has": {
             "raw": ep.raw_dir.is_dir(),
             "rec": ep.rec_npz.exists(),
