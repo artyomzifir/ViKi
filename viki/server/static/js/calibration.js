@@ -48,26 +48,28 @@ function template() {
 
     <aside class="calib-side">
       <section class="calib-sec">
-        <div class="calib-sec-title">Board</div>
-        <div class="hint">Match the printed board. Lay it <b>flat on the table,
-          face up</b>, where the work happens — it defines the world origin.</div>
-        <div class="cfg-row"><label>Type</label>
-          <select id="board-type">
-            <option value="chess" ${b.type === 'chess' ? 'selected' : ''}>Chessboard</option>
-            <option value="aruco" ${b.type !== 'chess' ? 'selected' : ''}>ChArUco</option>
-          </select></div>
-        <div class="cfg-row"><label>Cols</label>
-          <input type="number" id="board-width" min="1" value="${b.cols}"></div>
-        <div class="cfg-row"><label>Rows</label>
-          <input type="number" id="board-height" min="1" value="${b.rows}"></div>
-        <div class="cfg-row"><label>Square (m)</label>
-          <input type="number" id="square-size" step="0.001" min="0.001" value="${b.square}"></div>
-        <div id="aruco-fields">
-          <div class="cfg-row"><label>Marker (m)</label>
-            <input type="number" id="marker-size" step="0.001" min="0.001" value="${b.marker}"></div>
-          <div class="cfg-row"><label>Dictionary</label>
-            <select id="aruco-dict">${arucoOpts}</select></div>
-        </div>
+        <details ${s ? '' : 'open'}>
+          <summary class="calib-sec-title">Board &nbsp;<span class="hint">${b.type === 'chess' ? 'chess' : 'ChArUco'} ${b.cols}×${b.rows} · ${b.square} m</span></summary>
+          <div class="hint">Match the printed board. Lay it <b>flat on the table,
+            face up</b>, where the work happens — it defines the world origin.</div>
+          <div class="cfg-row"><label>Type</label>
+            <select id="board-type">
+              <option value="chess" ${b.type === 'chess' ? 'selected' : ''}>Chessboard</option>
+              <option value="aruco" ${b.type !== 'chess' ? 'selected' : ''}>ChArUco</option>
+            </select></div>
+          <div class="cfg-row"><label>Cols</label>
+            <input type="number" id="board-width" min="1" value="${b.cols}"></div>
+          <div class="cfg-row"><label>Rows</label>
+            <input type="number" id="board-height" min="1" value="${b.rows}"></div>
+          <div class="cfg-row"><label>Square (m)</label>
+            <input type="number" id="square-size" step="0.001" min="0.001" value="${b.square}"></div>
+          <div id="aruco-fields">
+            <div class="cfg-row"><label>Marker (m)</label>
+              <input type="number" id="marker-size" step="0.001" min="0.001" value="${b.marker}"></div>
+            <div class="cfg-row"><label>Dictionary</label>
+              <select id="aruco-dict">${arucoOpts}</select></div>
+          </div>
+        </details>
       </section>
 
       <section class="calib-sec">
