@@ -680,6 +680,12 @@ def _grab_k4a_best_effort(name: str, mgr: CameraManager) -> None:
         blobs, di, ci = _collect_k4a_blobs(mgr)
         if blobs:
             _presets.attach_k4a(name, blobs, di, ci)
+            logger.info("preset %r: k4a calibration attached for %s", name, sorted(blobs))
+        else:
+            logger.warning(
+                "preset %r: no k4a raw calibration from the running cameras "
+                "(none active, or not Kinect backends)", name,
+            )
     except Exception:  # noqa: BLE001 — never break save-as on this
         logger.warning("grab k4a for preset %r failed", name, exc_info=True)
 
@@ -689,6 +695,14 @@ def _grab_background_best_effort(name: str, mgr: CameraManager) -> None:
         depths = _collect_background(mgr)
         if depths:
             _presets.attach_background(name, depths)
+            logger.info("preset %r: empty-scene background attached for %s", name, sorted(depths))
+        else:
+            logger.warning(
+                "preset %r: no background depth captured — the running cameras "
+                "produced no depth frames in the ~1.5 s window (active: %s). "
+                "Make sure depth is streaming, then Save again.",
+                name, sorted(mgr.active_device_ids()),
+            )
     except Exception:  # noqa: BLE001 — never break save-as on this
         logger.warning("grab background for preset %r failed", name, exc_info=True)
 
