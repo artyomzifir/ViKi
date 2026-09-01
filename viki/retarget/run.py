@@ -22,7 +22,6 @@ import numpy as np
 from viki.config import MODELS_DIR
 import viki.config as viki_config
 from .archive import write_hdf5_archive
-from viki.dsp import adjusted_savgol_window, smooth_savgol
 
 
 RIGHT_BODY_WRIST = 16
@@ -74,6 +73,9 @@ class RunConfig:
     trajectory_scale_origin: str = "auto"
     base_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     target_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # λ_a: weight of the in-solver acceleration regulariser (paper eq. 4). This
+    # replaces the post-hoc Savitzky–Golay pass; joint_sg_* are now vestigial.
+    ik_accel_cost: float = 1e-2
 
 
 @dataclass(frozen=True)
@@ -467,10 +469,9 @@ def run_approach(
 
 
 def run_scene_ik(
+    pin: Any,
     Configuration: Any,
     solve_ik: Any,
-    FrameTask: Any,
-    PostureTask: Any,
     robot: Any,
     ee_frame: str,
     targets: list[Any],
@@ -478,28 +479,37 @@ def run_scene_ik(
     cfg: RunConfig,
     fps: float,
 ) -> np.ndarray:
-    """Track all scene targets with differential IK."""
-    configuration = Configuration(robot.model, robot.data, np.asarray(q_start, dtype=np.float64).copy())
-    frame_task = FrameTask(ee_frame, position_cost=cfg.ik_position_cost, orientation_cost=effective_orientation_cost(cfg))
-    posture_task = PostureTask(cost=cfg.ik_posture_cost)
-    posture_task.set_target_from_configuration(configuration)
+    """Track all scene targets with differential IK.
+
+    Smoothness is in the solve: an acceleration regulariser (λ_a) whose target
+    each frame is the constant-velocity extrapolation of the last two configs —
+    no post-hoc joint-trajectory filter.
+    """
+    from viki.retarget.cost import accel_reference, build_tasks
+
+    configuration = Configuration(
+        robot.model, robot.data, np.asarray(q_start, dtype=np.float64).copy()
+    )
+    frame_task, accel_task, tasks = build_tasks(
+        pin, robot, cfg, orientation_cost=effective_orientation_cost(cfg)
+    )
 
     dt = 1.0 / max(fps, 1e-9) / max(cfg.ik_substeps, 1)
     q_traj = np.zeros((len(targets), robot.model.nq), dtype=np.float64)
+    q_prev = np.asarray(configuration.q, dtype=np.float64).copy()
+    q_prev2: np.ndarray | None = None
     for i, target in enumerate(targets):
         frame_task.set_target(target)
+        q_ref = accel_reference(pin, robot.model, q_prev, q_prev2)
+        if q_ref is not None:
+            accel_task.set_target(q_ref)
         for _ in range(cfg.ik_substeps):
-            velocity = solve_ik(configuration, [frame_task, posture_task], dt, solver=cfg.ik_solver)
+            velocity = solve_ik(configuration, tasks, dt, solver=cfg.ik_solver)
             configuration.integrate_inplace(velocity, dt)
         q_traj[i] = configuration.q
+        q_prev2 = q_prev
+        q_prev = np.asarray(configuration.q, dtype=np.float64).copy()
     return q_traj
-
-
-def smooth_joint_trajectory(q_scene: np.ndarray, window: int, polyorder: int) -> np.ndarray:
-    if window <= 0:
-        return np.asarray(q_scene, dtype=np.float64).copy()
-    adjusted = adjusted_savgol_window(len(q_scene), window, polyorder)
-    return smooth_savgol(q_scene, window=adjusted, polyorder=polyorder, axis=0)
 
 
 def compute_tracking_error(pin: Any, robot: Any, ee_frame: str, q_traj: np.ndarray, targets: list[Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -576,10 +586,13 @@ def _run_ik_and_write(
     q_approach = run_approach(
         pin, Configuration, solve_ik, FrameTask, PostureTask, robot, cfg.robot.ee_frame, targets[0], cfg, fps,
     )
+    # The scene solve is C²-regularised in-solver (λ_a), so there is no post-hoc
+    # joint-trajectory filter; ``q_scene_smooth`` == the solve output and is kept
+    # only as the canonical "plan" key that replay / export / eval read.
     q_scene_raw = run_scene_ik(
-        Configuration, solve_ik, FrameTask, PostureTask, robot, cfg.robot.ee_frame, targets, q_approach[-1], cfg, fps,
+        pin, Configuration, solve_ik, robot, cfg.robot.ee_frame, targets, q_approach[-1], cfg, fps,
     )
-    q_scene_smooth = smooth_joint_trajectory(q_scene_raw, cfg.joint_sg_window, cfg.joint_sg_polyorder)
+    q_scene_smooth = q_scene_raw
     pos_err_smooth, ori_err_smooth = compute_tracking_error(pin, robot, cfg.robot.ee_frame, q_scene_smooth, targets)
     ori_err_smooth_deg = np.degrees(ori_err_smooth)
 
@@ -604,6 +617,7 @@ def _run_ik_and_write(
         "ik_orientation_cost": float(cfg.ik_orientation_cost),
         "effective_orientation_cost": float(effective_orientation_cost(cfg)),
         "ik_posture_cost": float(cfg.ik_posture_cost),
+        "ik_accel_cost": float(cfg.ik_accel_cost),
         "ik_substeps": int(cfg.ik_substeps),
         "ik_solver": cfg.ik_solver,
         "recenter_to_neutral": bool(cfg.recenter_to_neutral),
@@ -631,6 +645,7 @@ def _run_ik_and_write(
         "ik_orientation_cost": float(cfg.ik_orientation_cost),
         "effective_orientation_cost": float(effective_orientation_cost(cfg)),
         "ik_posture_cost": float(cfg.ik_posture_cost),
+        "ik_accel_cost": float(cfg.ik_accel_cost),
         "ik_substeps": int(cfg.ik_substeps),
         "ik_solver": cfg.ik_solver,
         "target_mode": target_mode,
@@ -831,6 +846,7 @@ def retarget_episode(ep, robot: str | None = None) -> str:
         align_initial_orientation=False,
         base_offset=tuple(getattr(_cfg, "ROBOT_BASE_OFFSET", (0.0, 0.0, 0.0))),
         target_offset=tuple(getattr(_cfg, "TARGET_OFFSET", (0.0, 0.0, 0.0))),
+        ik_accel_cost=float(getattr(_cfg, "RETARGET_IK_ACCEL_COST", 1e-2)),
     )
     summary = retarget_from_poses(positions, rotations, validity, fps, ep.plan_h5, cfg)
     mark_stage(
