@@ -63,6 +63,7 @@ class FitConfig:
     w_acc: float = 10.0
     w_prior: float = 200.0        # joint-limit barrier
     w_posture: float = 2.0        # pull fingers toward rest
+    w_landmark: float = 20.0      # anchor the model's joints to the fused landmarks
     min_points: int = 60
     accept_median_resid_m: float = 0.020
     max_nfev: int = 60
@@ -80,6 +81,7 @@ class FitConfig:
             w_acc=g("PERCEPTION_HAND_FIT_W_ACC", 10.0),
             w_prior=g("PERCEPTION_HAND_FIT_W_PRIOR", 200.0),
             w_posture=g("PERCEPTION_HAND_FIT_W_POSTURE", 2.0),
+            w_landmark=g("PERCEPTION_HAND_FIT_W_LANDMARK", 20.0),
         )
 
 
@@ -135,14 +137,24 @@ def assemble_residuals(
     q_prev: np.ndarray | None = None,
     q_pred: np.ndarray | None = None,
     q_rest: np.ndarray | None = None,
+    lm_anchor: Mapping[LM, np.ndarray] | None = None,
 ) -> np.ndarray:
-    """Full residual vector for config ``q``: data (point→capsule) + regularisers."""
+    """Full residual vector for config ``q``: data (point→capsule) + landmark
+    anchor + regularisers."""
     import pinocchio as pin
 
     ep = hm.fk_capsule_endpoints(hand, q)
     radii = hm.capsule_radii(hand)
     d, _ = nearest_capsule(cloud, ep, radii)
     parts = [np.sqrt(np.asarray(weights, float).reshape(-1)) * d]
+
+    if lm_anchor and fc.w_landmark > 0:
+        order = [int(lm) for lm, p in lm_anchor.items()
+                 if int(lm) in hand.lm_frames and np.all(np.isfinite(p))]
+        if order:
+            model_p = hm.fk_landmark_positions(hand, q, order)
+            obs = np.array([lm_anchor[LM(i)] for i in order], float)
+            parts.append(np.sqrt(fc.w_landmark) * (model_p - obs).reshape(-1))
 
     if q_prev is not None and fc.w_vel > 0:
         parts.append(np.sqrt(fc.w_vel) * pin.difference(hand.model, q_prev, q))
@@ -170,6 +182,7 @@ def fit_frame(
     *,
     q_prev: np.ndarray | None = None,
     q_pred: np.ndarray | None = None,
+    lm_anchor: Mapping[LM, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, dict]:
     """One frame: least-squares fit of the tangent increment about ``q0``.
 
@@ -187,7 +200,8 @@ def fit_frame(
 
     def f(dtheta):
         q = pin.integrate(hand.model, q0, dtheta)
-        return assemble_residuals(q, hand, cloud, w, fc, q_prev=q_prev, q_pred=q_pred)
+        return assemble_residuals(q, hand, cloud, w, fc, q_prev=q_prev, q_pred=q_pred,
+                                  lm_anchor=lm_anchor)
 
     res = least_squares(
         f, np.zeros(hand.nv), method="trf", loss="huber",
@@ -311,12 +325,14 @@ def _spread(pts: Mapping[LM, np.ndarray]) -> float:
                           for i in range(len(T)) for j in range(i + 1, len(T))]))
 
 
-def refine_cln(ep, cfg=None) -> str:
+def refine_cln(ep, cfg=None, report=None) -> str:
     """Refine ``ep.cln_npz`` wrist poses by cloud fitting. Returns the cln path.
 
     No-op (returns unchanged) when the episode has no usable k4a depth or the
-    cln is too short.
+    cln is too short. ``report(stage="hand_fit", frame=t, total=T)`` drives a
+    progress bar when driven from a job.
     """
+    report = report or (lambda **_k: None)
     fc = FitConfig.from_config(cfg)
     cln_path = Path(ep.cln_npz)
     with np.load(cln_path, allow_pickle=True) as d:
@@ -355,9 +371,13 @@ def refine_cln(ep, cfg=None) -> str:
 
     import pinocchio as pin
     nq = hand.nq
+    C = len(hand.capsules)
     q_traj = np.tile(pin.neutral(hand.model), (T, 1)).astype(np.float64)
+    caps = np.full((T, C, 2, 3), np.nan, np.float32)   # world capsule endpoints per frame
+    cap_r = hm.capsule_radii(hand).astype(np.float32)
     q_prev = None
     n_acc = 0
+    report(stage="hand_fit", frame=0, total=T)
     for t in range(T):
         if not valid[t] or not np.all(np.isfinite(pos[t])):
             q_prev = None
@@ -370,19 +390,27 @@ def refine_cln(ep, cfg=None) -> str:
             # const-velocity extrapolation on the manifold (mirrors retarget.cost)
             dv = pin.difference(hand.model, q_traj[t - 2], q_prev)
             q_pred = pin.integrate(hand.model, q_prev, dv)
-        q, info = fit_frame(hand, cloud, wts, q0, fc, q_prev=q_prev, q_pred=q_pred)
+        q, info = fit_frame(hand, cloud, wts, q0, fc, q_prev=q_prev, q_pred=q_pred,
+                            lm_anchor=frames[t])
         q_traj[t] = q
+        caps[t] = hm.fk_capsule_endpoints(hand, q)
         if not info["skipped"] and info["accepted"]:
             p, R = wrist_pose(hand, q)
             pos[t] = p
             rot[t] = R
             n_acc += 1
         q_prev = q
+        if t % 5 == 0:
+            report(stage="hand_fit", frame=t, total=T)
 
     data["positions"] = pos.astype(np.float32)
     data["rotations"] = rot.astype(np.float32)
     data["hand_joint_angles"] = q_traj.astype(np.float32)
     data["hand_model_nq"] = np.int64(nq)
+    data["hand_capsules"] = caps                       # (T, C, 2, 3) world, NaN where unfitted
+    data["hand_capsule_radii"] = cap_r                 # (C,)
     np.savez_compressed(cln_path, **data)
-    logger.info("hand_fit %s: refined %d/%d frames (nq=%d)", ep.id, n_acc, int(valid.sum()), nq)
+    report(stage="hand_fit", frame=T, total=T)
+    logger.info("hand_fit %s: refined %d/%d frames (nq=%d, %d capsules)",
+                ep.id, n_acc, int(valid.sum()), nq, C)
     return str(cln_path)

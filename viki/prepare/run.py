@@ -386,7 +386,8 @@ def estimate_fps(timestamps_us: np.ndarray) -> float:
 
 
 def prepare_episode(
-    ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None
+    ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None,
+    report=None,
 ) -> str:
     """
     Episode-aware wrapper around :meth:`PreparationPipeline.smooth_recording`:
@@ -431,7 +432,7 @@ def prepare_episode(
         try:
             from viki.perception.hand_fit import refine_cln
 
-            refine_cln(ep)
+            refine_cln(ep, report=report)
         except Exception:  # noqa: BLE001 — never fail prepare on the refinement
             logger.warning("prepare %s: hand-fit refinement failed", ep.id, exc_info=True)
             hand_fit = False

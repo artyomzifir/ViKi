@@ -397,12 +397,12 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .perc-side [data-role="model-meta"] { line-height: 1.35; }
 /* clickable hand diagram in "Track landmarks" */
 .perc-hand { width: 100%; max-width: 190px; align-self: center; display: block; }
-.perc-hand .hand-edges line { stroke: var(--border); stroke-width: 1.4; }
+.perc-hand .hand-edges line { stroke: var(--border); stroke-width: 1.6; }
 .perc-hand .hand-dots circle {
-  fill: var(--muted); stroke: var(--text); stroke-width: 1.9; cursor: pointer;
+  fill: var(--surface); stroke: var(--muted); stroke-width: 1; cursor: pointer;
   transition: fill .1s;
 }
-.perc-hand .hand-dots circle:hover { stroke: var(--accent); }
+.perc-hand .hand-dots circle:hover { stroke: var(--text); }
 .perc-hand .hand-dots circle.on { fill: var(--accent); stroke: var(--accent); }
 .perc-hand .hand-dots circle.req { stroke: var(--yellow); cursor: not-allowed; }
 .perc-hand .hand-dots circle.req.on { fill: var(--yellow); }

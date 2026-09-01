@@ -236,6 +236,9 @@ class CapsuleHand:
     params: HandParams
     # each capsule: (frame_id_a, frame_id_b, radius)
     capsules: list[tuple[int, int, float]] = field(default_factory=list)
+    # LM index -> Pinocchio frame id (WRIST + the 4 joints per finger sit exactly
+    # on the LM points by construction), for the landmark-anchor residual
+    lm_frames: dict[int, int] = field(default_factory=dict)
     q_lo: np.ndarray = field(default_factory=lambda: np.zeros(0))
     q_hi: np.ndarray = field(default_factory=lambda: np.zeros(0))
 
@@ -256,15 +259,18 @@ def build(params: HandParams) -> CapsuleHand:
 
     fid = model.getFrameId
     caps: list[tuple[int, int, float]] = []
-    for f in _JOINTS:
+    lm_frames: dict[int, int] = {int(LM.WRIST): fid("wrist_link")}
+    for f, lms in FINGERS.items():
         r = params.radius[f]
         caps.append((fid("wrist_link"), fid(f"{f}_prox"), params.palm_r))
         caps.append((fid(f"{f}_prox"), fid(f"{f}_mid"), float(r[0])))
         caps.append((fid(f"{f}_mid"), fid(f"{f}_dist"), float(r[1])))
         caps.append((fid(f"{f}_dist"), fid(f"{f}_tip"), float(r[2])))
+        for lm, fr in zip(lms, (f"{f}_prox", f"{f}_mid", f"{f}_dist", f"{f}_tip")):
+            lm_frames[int(lm)] = fid(fr)
 
     return CapsuleHand(
-        model=model, data=data, params=params, capsules=caps,
+        model=model, data=data, params=params, capsules=caps, lm_frames=lm_frames,
         q_lo=np.asarray(model.lowerPositionLimit, float),
         q_hi=np.asarray(model.upperPositionLimit, float),
     )
@@ -273,19 +279,29 @@ def build(params: HandParams) -> CapsuleHand:
 # ── FK + warm start ───────────────────────────────────────────────────────
 
 
-def fk_capsule_endpoints(hand: CapsuleHand, q: np.ndarray) -> np.ndarray:
-    """(C, 2, 3) world positions of every capsule's two endpoints for config ``q``."""
+def _fk(hand: CapsuleHand, q: np.ndarray) -> None:
     import pinocchio as pin
 
-    q = np.asarray(q, float)
-    pin.forwardKinematics(hand.model, hand.data, q)
+    pin.forwardKinematics(hand.model, hand.data, np.asarray(q, float))
     pin.updateFramePlacements(hand.model, hand.data)
+
+
+def fk_capsule_endpoints(hand: CapsuleHand, q: np.ndarray) -> np.ndarray:
+    """(C, 2, 3) world positions of every capsule's two endpoints for config ``q``."""
+    _fk(hand, q)
     P = hand.data.oMf
     out = np.empty((len(hand.capsules), 2, 3), float)
     for i, (a, b, _r) in enumerate(hand.capsules):
         out[i, 0] = P[a].translation
         out[i, 1] = P[b].translation
     return out
+
+
+def fk_landmark_positions(hand: CapsuleHand, q: np.ndarray, lm_order: list[int]) -> np.ndarray:
+    """(len(lm_order), 3) world positions of the LM-anchored frames for ``q``."""
+    _fk(hand, q)
+    P = hand.data.oMf
+    return np.array([P[hand.lm_frames[int(lm)]].translation for lm in lm_order], float)
 
 
 def capsule_radii(hand: CapsuleHand) -> np.ndarray:

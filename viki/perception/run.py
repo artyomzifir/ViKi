@@ -83,7 +83,8 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
     )
 
     report(stage="fuse")
-    prepare_episode(ep, opts.sg_window, opts.sg_polyorder, interp_max_gap=opts.interp_max_gap)
+    prepare_episode(ep, opts.sg_window, opts.sg_polyorder,
+                    interp_max_gap=opts.interp_max_gap, report=report)
 
     if opts.build_cloud:
         report(stage="cloud")

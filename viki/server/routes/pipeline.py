@@ -249,6 +249,8 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
                 np.asarray(d["rotations"], np.float32).reshape(-1, 9).tolist()
             )
             out["valid"] = np.asarray(d["valid"], bool).tolist()
+            if "hand_capsule_radii" in d.files:
+                out["hand_capsule_radii"] = np.asarray(d["hand_capsule_radii"], np.float32).tolist()
 
     if include_raw and ep.rec_npz.exists():
         with np.load(ep.rec_npz) as d:
@@ -274,6 +276,11 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
                     out["landmark_ids"] = np.asarray(d["landmark_ids"], int).tolist()
                     out["gripper"] = bool(d["gripper"][frame])
                     out["frame_valid"] = bool(d["valid"][frame])
+                    if "hand_capsules" in d.files and frame < len(d["hand_capsules"]):
+                        hc = np.asarray(d["hand_capsules"][frame], np.float32)  # (C, 2, 3)
+                        out["hand_capsules"] = (
+                            None if not np.isfinite(hc).any() else hc.tolist()
+                        )
         if ep.rec_npz.exists():
             with np.load(ep.rec_npz) as d:
                 devs = np.array([str(x) for x in d["device_ids"]])

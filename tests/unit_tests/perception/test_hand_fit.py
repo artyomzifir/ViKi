@@ -176,3 +176,56 @@ def test_refine_cln_noop_without_depth(tmp_path):
     after = np.load(ep.cln_npz)
     assert np.array_equal(before, after["positions"])
     assert "hand_joint_angles" not in after.files
+
+
+def test_refine_cln_writes_capsules_and_angles(tmp_path, monkeypatch):
+    """With a (faked) hand-ROI cloud, refine_cln rewrites cln.npz and adds the
+    capsule / joint-angle arrays the viewer needs."""
+    from viki.episode import new_episode
+
+    T = 5
+    fr = _open_hand_frame(w=np.array([0.10, 0.02, 0.80]))
+    lm_ids = np.arange(21, dtype=np.int32)
+    sp = np.stack([[fr[LM(int(i))] for i in lm_ids] for _ in range(T)]).astype(np.float32)
+    ep = new_episode(tmp_path)
+    np.savez_compressed(
+        ep.cln_npz,
+        positions=np.tile(fr[LM.WRIST], (T, 1)).astype(np.float32),
+        rotations=np.tile(np.eye(3), (T, 1, 1)).astype(np.float32),
+        valid=np.ones(T, bool),
+        omega=np.ones(T, np.float32),
+        gripper=np.zeros(T, bool),
+        timestamps=(np.arange(T) * 33_000).astype(np.int64),
+        smoothed_points=sp,
+        raw_points=sp,
+        landmark_ids=lm_ids,
+        coordinate_frame="robot_base",
+    )
+
+    # a hand model at the true (perturbed) pose → cloud sampled on its surface
+    hand = hm.build(hm.calibrate_from_frames([fr]))
+    q_true = pin.neutral(hand.model).copy()
+    q_true[:7] = pin.SE3ToXYZQUAT(pin.SE3(
+        pin.exp3(np.array([0.1, 0.15, -0.1])), fr[LM.WRIST] + np.array([0.01, -0.02, 0.015])
+    ))
+    cloud = _sample_cloud(hand, q_true, per_capsule=90, seed=3)
+
+    monkeypatch.setattr(hf, "_cameras", lambda *a, **k: [{"dev": "fake"}])
+    monkeypatch.setattr(hf, "hand_roi_cloud", lambda *a, **k: (cloud, np.ones(len(cloud))))
+
+    w_true = fr[LM.WRIST] + np.array([0.01, -0.02, 0.015])
+    warm_err = np.linalg.norm(fr[LM.WRIST] - w_true)   # landmark warm start
+
+    hf.refine_cln(ep)
+    d = np.load(ep.cln_npz)
+    assert "hand_capsules" in d.files and "hand_capsule_radii" in d.files
+    assert d["hand_capsules"].shape == (T, 20, 2, 3)
+    assert d["hand_capsule_radii"].shape == (20,)
+    assert np.isfinite(d["hand_capsules"][2]).all()
+    assert d["hand_joint_angles"].shape == (T, hand.nq)
+    assert int(d["hand_model_nq"]) == hand.nq
+    # the fitted wrist is pulled toward the (faked) true pose — better than the
+    # landmark warm start (the temporal / posture priors keep it from snapping
+    # all the way, hence the loose bound).
+    err = np.linalg.norm(d["positions"][2] - w_true)
+    assert err < warm_err and err < 0.04

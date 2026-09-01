@@ -17,7 +17,7 @@ const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need th
 const DEFAULT_LM = [...Array(21).keys()];           // track every landmark by default
 const LAYER_LABELS = {
   cloud: 'cloud', perCamera: 'per-camera', fused: 'fused', trajectory: 'traj',
-  palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox',
+  palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox', handFit: 'hand fit',
 };
 
 // 21-point hand diagram, palm toward you, fingers up. [x, y] in a 0..100 box.
@@ -195,7 +195,7 @@ function renderHand(sel) {
   const dot = (i) => {
     const req = REQUIRED_LM.has(i);
     const cls = `${set.has(i) ? 'on' : ''} ${req ? 'req' : ''}`.trim();
-    return `<circle data-lm="${i}" class="${cls}" cx="${HAND_XY[i][0]}" cy="${HAND_XY[i][1]}" r="4.4">
+    return `<circle data-lm="${i}" class="${cls}" cx="${HAND_XY[i][0]}" cy="${HAND_XY[i][1]}" r="3.2">
       <title>${i} ${LM_NAMES[i]}${req ? ' (locked)' : ''}</title></circle>`;
   };
   root.querySelector('[data-role="handmap"]').innerHTML =

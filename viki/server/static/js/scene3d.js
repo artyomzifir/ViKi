@@ -20,7 +20,7 @@ const CAM_PALETTE = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0]
 
 const DEFAULT_LAYERS = {
   cloud: true, perCamera: true, fused: true, trajectory: true,
-  palm: true, frusta: true, board: true, bbox: false,
+  palm: true, frusta: true, board: true, bbox: false, handFit: true,
 };
 
 export function create(canvasEl, { api, log, layers: initLayers, colorMode: initColor, stride: initStride }) {
@@ -90,6 +90,22 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   const camSkelGroup = new THREE.Group();
   scene.add(camSkelGroup);
 
+  // fitted capsule hand (PERCEPTION_HAND_FIT): thin bones + fatter, darker
+  // joint blobs sized to the calibrated capsule radius.
+  const handBones = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0x7dd3fc })
+  );
+  scene.add(handBones);
+  const handJoints = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 12, 12),
+    new THREE.MeshBasicMaterial({ color: 0x0369a1 }),
+    64
+  );
+  handJoints.count = 0;
+  handJoints.frustumCulled = false;
+  scene.add(handJoints);
+
   const palmTriad = new THREE.AxesHelper(0.05);
   palmTriad.visible = false;
   scene.add(palmTriad);
@@ -153,6 +169,7 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     frustaGroup.visible = layers.frusta;
     palmTriad.visible = layers.palm && palmTriad.userData.have;
     gripDot.visible = layers.palm && gripDot.userData.have;
+    handBones.visible = handJoints.visible = layers.handFit;
   }
 
   function buildBoard() {
@@ -314,6 +331,33 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     return new Float32Array(seg);
   }
 
+  const _m4 = new THREE.Matrix4();
+  function updateHandFit(caps) {
+    if (!Array.isArray(caps) || !caps.length) {
+      handBones.geometry.setDrawRange(0, 0);
+      handJoints.count = 0;
+      return;
+    }
+    const radii = geo?.hand_capsule_radii || [];
+    const seg = new Float32Array(caps.length * 6);
+    let ji = 0;
+    for (let c = 0; c < caps.length; c++) {
+      const a = caps[c][0], b = caps[c][1];
+      seg.set([a[0], a[1], a[2], b[0], b[1], b[2]], c * 6);
+      const r = Math.max(radii[c] || 0.008, 0.004);
+      for (const p of (caps[c])) {
+        if (ji >= handJoints.count && ji >= 64) break;
+        _m4.makeScale(r, r, r).setPosition(p[0], p[1], p[2]);
+        handJoints.setMatrixAt(ji++, _m4);
+      }
+    }
+    handBones.geometry.setAttribute('position', new THREE.BufferAttribute(seg, 3));
+    handBones.geometry.setDrawRange(0, seg.length / 3);
+    handBones.geometry.computeBoundingSphere();
+    handJoints.count = Math.min(ji, 64);
+    handJoints.instanceMatrix.needsUpdate = true;
+  }
+
   function updateFrameGeometry(fg) {
     // per-camera skeletons
     clearGroup(camSkelGroup);
@@ -332,6 +376,9 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     fusedSkel.geometry.setAttribute('position', new THREE.BufferAttribute(fArr, 3));
     fusedSkel.geometry.setDrawRange(0, fArr.length / 3);
     fusedSkel.geometry.computeBoundingSphere();
+
+    // fitted capsule hand: fg.hand_capsules = C×[[ax,ay,az],[bx,by,bz]] world
+    updateHandFit(fg?.hand_capsules);
 
     // palm triad + gripper marker from the summary geometry
     const T = geo?.wrist_traj, R = geo?.palm_rot;
