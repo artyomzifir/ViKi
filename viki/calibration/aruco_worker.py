@@ -150,109 +150,6 @@ class ArucoWorker(_CalibrationWorker):
 
         self._logger.debug(f"{self.device_id} add_sample: success")
 
-    def intrinsics_calibration(
-        self, samples: List[CalibrationSample] | None = None
-    ) -> CalibrationIntrinsics:
-        """
-        Calibrate intrinsic parameters using the collected ChArUco samples.
-
-        Uses `cv2.aruco.calibrateCameraCharuco` (fallback to `cv2.calibrateCamera`
-        if the Charuco function is unavailable). Requires at least 20 valid samples
-        with >8 corner points each, and all samples must have the same resolution.
-
-        Parameters
-        ----------
-        samples : Optional[List[CalibrationSample]]
-            List of samples; if None, uses internal list.
-
-        Returns
-        -------
-        CalibrationIntrinsics
-            Camera matrix and distortion coefficients.
-
-        Raises
-        ------
-        RuntimeError
-            If insufficient samples, resolution mismatch, or calibration fails.
-        """
-        if samples is None:
-            samples = self._samples
-        count = len(samples)
-
-        if count < 20:
-            msg = f"{self.device_id} intrinsics calibration: not enough samples"
-            self._logger.debug(msg)
-            raise RuntimeError(msg)
-
-        res = samples[0].resolution
-        if not all(res == sample.resolution for sample in samples):
-            msg = f"{self.device_id} intrinsics calibration: varying resolutions detected, expected same for all images, {set(sample.resolution for sample in self._samples)}"
-            self._logger.debug(msg)
-            raise RuntimeError(msg)
-
-        w, h = res
-        all_charuco_corners = []
-        all_charuco_ids = []
-
-        for sample in samples:
-            if not type(sample) is ArucoCalibrationSample:
-                continue
-            if (
-                sample.corners is not None
-                and sample.c_ids is not None
-                and len(sample.corners) > 8
-            ):
-                all_charuco_corners.append(sample.corners)
-                all_charuco_ids.append(sample.c_ids)
-
-        if len(all_charuco_corners) < 20:
-            msg = (
-                f"{self.device_id} intrinsics: not enough valid CharUco "
-                f"samples ({len(all_charuco_corners)})"
-            )
-            self._logger.debug(msg)
-            raise RuntimeError(msg)
-
-        try:
-            ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraCharuco(
-                all_charuco_corners,
-                all_charuco_ids,
-                self.board,
-                (w, h),
-                None,  # pyright: ignore
-                None,  # pyright: ignore
-            )
-        except AttributeError:
-            # Fallback: Use cv2.calibrateCamera
-            all_obj_points = []
-            all_img_points = []
-            board_corners_3d = self.board.getChessboardCorners()
-
-            for corners, ids in zip(all_charuco_corners, all_charuco_ids):
-                obj_pts = board_corners_3d[ids]
-                all_obj_points.append(obj_pts)
-                all_img_points.append(corners)
-
-            ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-                all_obj_points, all_img_points, (w, h), None, None
-            )
-
-        if not ret:
-            msg = f"{self.device_id} intrinsics: calibration failed"
-            self._logger.debug(msg)
-            raise RuntimeError(msg)
-
-        self._logger.debug(
-            f"{self.device_id} intrinsics: success (RMS error: {ret:.3f})"
-        )
-        return CalibrationIntrinsics(
-            fx=mtx[0, 0],
-            fy=mtx[1, 1],
-            cx=mtx[0, 2],
-            cy=mtx[1, 2],
-            dist_coeffs=dist.flatten(),
-        )
-
     def extrinsics_calibration(
         self,
         intrinsics: CalibrationIntrinsics,
@@ -322,23 +219,29 @@ class ArucoWorker(_CalibrationWorker):
             self._logger.debug(msg)
             raise RuntimeError(msg)
 
+        obj_v, img_v = np.vstack(obj_pts), np.vstack(img_pts)
         ret, rvec, tvec = cv2.solvePnP(
-            np.vstack(obj_pts),
-            np.vstack(img_pts),
-            camera_matrix,
-            dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE,
+            obj_v, img_v, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE,
         )
         if not ret:
             msg = f"{self.device_id} extrinsics: pose estimation failed"
             self._logger.debug(msg)
             raise RuntimeError(msg)
 
+        # Reprojection RMS — a healthy solve is ~1 px. A large value means the
+        # intrinsics don't match the images (wrong resolution) or the board
+        # moved between captures; either way the pose is not trustworthy.
+        proj, _ = cv2.projectPoints(obj_v, rvec, tvec, camera_matrix, dist_coeffs)
+        rms = float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - img_v) ** 2, axis=1))))
+        msg = (f"{self.device_id} extrinsics: {len(obj_v)} pts from {len(obj_pts)} "
+               f"set(s), reproj RMS {rms:.2f} px")
+        (self._logger.warning if rms > 3.0 else self._logger.info)(
+            msg + ("  — POSE UNRELIABLE, check intrinsics resolution / board" if rms > 3.0 else "")
+        )
+
         rvec, tvec = canonical_board_extrinsics(
             rvec, tvec, self.board_params.board_size, self.board_params.square_size
         )
-
-        self._logger.debug(f"{self.device_id} extrinsics: success")
         return CalibrationExtrinsics(rvec=rvec, tvec=tvec)
 
     def mark_board(self, frame: Frame) -> np.ndarray:

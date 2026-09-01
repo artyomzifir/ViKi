@@ -42,6 +42,7 @@ def _synthetic(ep, T=8):
 def test_geometry_shape(tmp_path, monkeypatch):
     episodes = tmp_path / "episodes"
     monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
     ep = new_episode(episodes)
     _synthetic(ep)
 
@@ -57,6 +58,7 @@ def test_geometry_shape(tmp_path, monkeypatch):
 
 def test_geometry_404_for_missing_episode(tmp_path, monkeypatch):
     monkeypatch.setattr("viki.config.EPISODES_DIR", str(tmp_path / "episodes"), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
     from fastapi import HTTPException
 
     from viki.server.routes.pipeline import geometry

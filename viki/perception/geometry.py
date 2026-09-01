@@ -50,6 +50,14 @@ _PALM_LM = (
 # scaled distance from the median exceeds this many robust scales.
 _OUTLIER_K = 3.0
 
+# Sensor-validity factor c in the fusion weight (paper §3.5, eq. 2). A landmark
+# with a real ToF depth reading gets full trust; one only placed from the
+# MediaPipe relative-z guess (no measured pixel) keeps a small non-zero weight
+# so a partially observed hand still contributes, but is dominated by any view
+# that actually measured it.
+_SENSOR_MEASURED = 1.0
+_SENSOR_UNMEASURED = 0.1
+
 
 def _empty_landmarks(detection: HandDetection) -> Landmarks3D:
     return Landmarks3D(
@@ -244,17 +252,24 @@ def lift_to_3d(
 
     # Per-landmark fusion weight (paper §3.5, eq. 2):
     #   w = visibility · sensor_validity · d^-2 · max(0, cosθ)
+    # d is the Euclidean range from the camera centre to the landmark (not the
+    # optical-axis depth z, which under-weights landmarks toward the frame edge).
     visibility = float(getattr(detection, "confidence", 1.0) or 1.0)
     weights: dict[LM, float] = {}
     for lm, p in points.items():
         cam_xyz = raw3d.get(lm)
         measured = cam_xyz is not None
-        d = float(cam_xyz[2]) if measured else float(p[2] if np.isfinite(p[2]) else zd)
+        if measured:
+            d = float(np.linalg.norm(cam_xyz))
+        else:
+            d = float(abs(p[2]) if np.isfinite(p[2]) else zd)
         d = max(d, 0.05)
-        sensor = 1.0 if measured else 0.1
+        sensor = _SENSOR_MEASURED if measured else _SENSOR_UNMEASURED
         cos_incidence = 1.0
         if measured:
             ud, vd = proj_uv[lm]
+            # _incidence_cos returns |cosθ|; the sign of the finite-difference
+            # normal is arbitrary, so max(0, ·) below is a guard, not a clamp.
             cos_incidence = _incidence_cos(
                 depth_m, int(round(ud)), int(round(vd)), fx, fy, cx, cy, cam_xyz
             )

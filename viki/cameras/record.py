@@ -143,7 +143,7 @@ class SceneRecorder:
         """Snapshot everything an offline run needs: SDK intrinsics, the active
         extrinsics, and each camera's capture config. Written once, before the
         first frame."""
-        from viki.calibration.file import read_device_extrinsics, read_device_intrinsics
+        from viki.calibration.file import read_device_extrinsics
 
         intr: dict = {}
         extr: dict = {}
@@ -152,17 +152,16 @@ class SceneRecorder:
             frame = self._mgr.latest_frame(dev_id)
             ci = frame.color_intrinsics if frame else None
             di = frame.depth_intrinsics if frame else None
-            # Prefer the live SDK-reported intrinsics; fall back to a stored file.
-            file_i = read_device_intrinsics(dev_id)
+            # SDK-reported intrinsics only — no stored-file fallback.
             depth_intr = self._intr_dict(di)
             if depth_intr and frame is not None and frame.has_depth():
                 # Stamp the *actual* frame size, not the nominal-from-mode value.
                 dh, dw = frame.depth.shape[:2]
                 depth_intr["width"], depth_intr["height"] = int(dw), int(dh)
             intr[dev_id] = {
-                "color": self._intr_dict(ci) or self._intr_dict(file_i),
+                "color": self._intr_dict(ci),
                 "depth": depth_intr,
-                "source": "sdk" if ci is not None else ("file" if file_i else "none"),
+                "source": "sdk" if ci is not None else "none",
             }
             e = read_device_extrinsics(dev_id)
             if e is not None:
@@ -196,8 +195,63 @@ class SceneRecorder:
         for w in self._writers.values():
             w.release()
         (self._raw() / "timestamps.json").write_text(json.dumps(self._timestamps, indent=2))
+        stats = _sync_stats(self._timestamps)
+        (self._raw() / "sync_stats.json").write_text(json.dumps(stats, indent=2))
+        logger.info(
+            "sync: %s (%s)",
+            "bounded drift" if stats["bounded"] else "DRIFT EXCEEDS BOUND",
+            ", ".join(
+                f"{d}: |off|<={s['max_abs_offset_us'] / 1000:.1f}ms "
+                f"drift={s['drift_ms_per_min']:+.2f}ms/min"
+                for d, s in stats["per_device"].items()
+            ) or "single camera",
+        )
         mark_stage(
             self.episode, "record",
             frames=self._n, fps=fps, cameras=sorted(self._writers),
+            sync_bounded=stats["bounded"],
         )
         logger.info("recorded %d frames → %s", self._n, self.episode.root)
+
+
+# Residual alignment jitter is measured, not assumed (paper §3.3): every frame
+# carries its offset from the shared host monotonic tick, so a linear fit of that
+# offset over the recording gives each camera's clock drift relative to the host,
+# and the peak |offset| is the worst-case grouping error.
+_DRIFT_BOUND_MS_PER_MIN = 1.0  # ridgerun: a healthy Kinect pair drifts < 1 ms/min
+
+
+def _sync_stats(timestamps: list[dict]) -> dict:
+    """Per-camera offset jitter + linear clock drift from the recorded ticks."""
+    per_device: dict[str, dict] = {}
+    t0 = timestamps[0]["sync_us"] if timestamps else 0
+    series: dict[str, list[tuple[float, float]]] = {}
+    for row in timestamps:
+        t_rel = float(row["sync_us"] - t0)
+        for dev, off in (row.get("offsets_us") or {}).items():
+            series.setdefault(dev, []).append((t_rel, float(off)))
+
+    worst_drift = 0.0
+    for dev, pairs in series.items():
+        ts = np.asarray([p[0] for p in pairs], dtype=np.float64)
+        off = np.asarray([p[1] for p in pairs], dtype=np.float64)
+        # slope [µs offset / µs elapsed] → ms per minute
+        drift = 0.0
+        if ts.size >= 2 and np.ptp(ts) > 0:
+            slope = float(np.polyfit(ts, off, 1)[0])
+            drift = slope * 60_000_000.0 / 1000.0
+        per_device[dev] = {
+            "samples": int(off.size),
+            "mean_offset_us": float(off.mean()) if off.size else 0.0,
+            "std_offset_us": float(off.std()) if off.size else 0.0,
+            "max_abs_offset_us": float(np.abs(off).max()) if off.size else 0.0,
+            "drift_ms_per_min": drift,
+        }
+        worst_drift = max(worst_drift, abs(drift))
+
+    return {
+        "per_device": per_device,
+        "worst_drift_ms_per_min": worst_drift,
+        "drift_bound_ms_per_min": _DRIFT_BOUND_MS_PER_MIN,
+        "bounded": worst_drift <= _DRIFT_BOUND_MS_PER_MIN,
+    }

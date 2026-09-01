@@ -77,15 +77,21 @@ def test_manager_latest_frame():
 
     with patch.object(CameraManager, "_make_backend", return_value=mock_backend):
         manager.start("mock_dev")
-        # The worker thread will now be calling get_frame() in a loop
-        # We need to wait a bit for the first frame to be buffered
-        import time
+        try:
+            # The worker thread will now be calling get_frame() in a loop
+            # We need to wait a bit for the first frame to be buffered
+            import time
 
-        time.sleep(0.1)
+            time.sleep(0.1)
 
-        latest = manager.latest_frame("mock_dev")
-        assert latest is not None
-        assert np.array_equal(latest.color, frame.color)
+            latest = manager.latest_frame("mock_dev")
+            assert latest is not None
+            assert np.array_equal(latest.color, frame.color)
+        finally:
+            # MockBackend.get_frame() returns instantly, so the worker thread
+            # busy-spins a full core — leaking it makes every later CPU-bound
+            # test (pinocchio, scipy) crawl. Always stop it.
+            manager.stop("mock_dev")
 
 
 def test_manager_nearest_frame():

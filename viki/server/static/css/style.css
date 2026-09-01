@@ -253,6 +253,9 @@ header h1 {
 .calib-sec details[open] > summary::before { content: '▾'; }
 .calib-sec details > *:not(summary) { margin-top: 7px; }
 .calib-sec-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+.calib-preset-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.calib-preset-acts button { padding: 3px 9px; font-size: 11px; }
+.calib-preset-acts button:disabled { opacity: 0.4; cursor: not-allowed; }
 .calib-sec select, .calib-sec button { width: 100%; }
 .calib-sec .cfg-row { justify-content: space-between; }
 .calib-sec .cfg-row input, .calib-sec .cfg-row select { width: 120px; }
@@ -279,6 +282,8 @@ header h1 {
 .episode-list { flex: 1; min-height: 0; overflow-y: auto; }
 .episode-row { display: flex; flex-direction: column; gap: 3px; padding: 7px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .episode-row:hover { background: var(--bg); }
+.episode-row.active { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.episode-row .ep-when .ep-sel { margin-right: 5px; vertical-align: middle; }
 .ep-row-top { display: flex; align-items: center; justify-content: space-between; gap: 6px 8px; flex-wrap: wrap; }
 .ep-row-bot { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .episode-row .ep-when { color: var(--text); font-size: 11px; white-space: nowrap; }
@@ -287,6 +292,13 @@ header h1 {
 .episode-row .ep-badges { display: flex; gap: 3px; flex-shrink: 0; }
 .episode-row .ep-acts { display: flex; gap: 5px; margin-left: auto; }
 .episode-row button { padding: 2px 7px; font-size: 10px; }
+/* post-capture cloud-build bar: wraps to its own line under name + edit/del */
+.episode-row .ep-cloud { width: 100%; display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 10px; color: var(--muted); }
+.episode-row .ep-cloud .perc-bar { flex: 1; width: auto; }
+.episode-row .ep-cloud.done .perc-bar i { background: var(--green); }
+.episode-row .ep-cloud.error { color: var(--red); }
+.episode-row .ep-cloud.error .perc-bar i { background: var(--red); }
+.episode-row .ep-cloud-lbl { white-space: nowrap; }
 .episode-row.editing { gap: 5px; }
 .episode-row.editing input, .episode-row.editing select { width: 100%; padding: 3px 6px; font-size: 11px; }
 .episode-row.editing .ep-edit-acts { display: flex; gap: 6px; }
@@ -341,7 +353,7 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .perception-tab {
   height: 100%;
   display: grid;
-  grid-template-columns: clamp(190px, 17vw, 250px) minmax(0, 1fr) clamp(280px, 24vw, 360px);
+  grid-template-columns: clamp(210px, 18vw, 270px) minmax(0, 1fr) clamp(280px, 24vw, 360px);
   gap: 1px;
   background: var(--border);
 }
@@ -387,19 +399,16 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .perc-hand { width: 100%; max-width: 190px; align-self: center; display: block; }
 .perc-hand .hand-edges line { stroke: var(--border); stroke-width: 1.6; }
 .perc-hand .hand-dots circle {
-  fill: var(--surface); stroke: var(--muted); stroke-width: 1.2; cursor: pointer;
+  fill: var(--surface); stroke: var(--muted); stroke-width: 1; cursor: pointer;
   transition: fill .1s;
 }
 .perc-hand .hand-dots circle:hover { stroke: var(--text); }
 .perc-hand .hand-dots circle.on { fill: var(--accent); stroke: var(--accent); }
 .perc-hand .hand-dots circle.req { stroke: var(--yellow); cursor: not-allowed; }
 .perc-hand .hand-dots circle.req.on { fill: var(--yellow); }
+/* Extract-tab episode picker: the shared .episode-row widget (episodes.js) in a
+   scrolling box, with a select checkbox + view button per row. */
 .perc-eps { flex: 1; min-height: 80px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
-.perc-ep { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 11px; }
-.perc-ep label { flex: 1; display: flex; align-items: center; gap: 5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.perc-ep:hover { background: var(--bg); }
-.perc-ep.active { background: color-mix(in srgb, var(--accent) 20%, transparent); }
-.perc-ep button { padding: 1px 6px; font-size: 10px; }
 .perc-all { font-size: 11px; color: var(--muted); display: flex; gap: 6px; }
 .perc-queue { display: flex; flex-direction: column; gap: 4px; }
 .perc-job { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; font-size: 10px; }

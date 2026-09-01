@@ -122,27 +122,6 @@ class _CalibrationWorker(ABC):
         pass
 
     @abstractmethod
-    def intrinsics_calibration(
-        self, samples: List[CalibrationSample] | None = None
-    ) -> CalibrationIntrinsics:
-        """
-        Perform intrinsic calibration using the collected (or provided) samples.
-        Parameters
-        ----------
-        samples : Optional[List[CalibrationSample]]
-            Optional list of samples; if None, uses internal samples.
-        Returns
-        -------
-        CalibrationIntrinsics
-            Focal lengths, principal point, distortion coefficients.
-        Raises
-        ------
-        RuntimeError
-            If not enough valid samples or calibration fails.
-        """
-        pass
-
-    @abstractmethod
     def extrinsics_calibration(
         self,
         intrinsics: CalibrationIntrinsics,

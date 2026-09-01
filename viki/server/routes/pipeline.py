@@ -9,6 +9,7 @@ viewer.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,7 @@ from viki.contracts import Episode
 from viki.episode import read_status
 from viki.server import jobs
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _ep = APIRouter(prefix="/pipeline", tags=["pipeline"])
@@ -78,12 +80,18 @@ async def perceive(req: _PerceiveReq):
     → cln.npz) for one or more episodes. When ``opts.build_cloud`` is set the
     point cloud is queued as a **separate** job on the ``cloud`` lane so it
     computes in parallel with the model run."""
+    logger.info("perceive: %d episode(s) %s opts=%s",
+                len(req.episodes), [str(e).split('/')[-1] for e in req.episodes], req.opts)
     ids: list[str] = []
     for ep_ref in req.episodes:
         ep = _episode(ep_ref)
         opts = dict(req.opts)
+        # The cloud is built right after recording; Extract only rebuilds it when
+        # the "regenerate cloud" box is ticked (e.g. to widen the workspace AABB).
         want_cloud = bool(opts.pop("build_cloud", False))
-        cloud_stride = opts.get("cloud_stride")
+        cloud_stride = opts.pop("cloud_stride", None)
+        cloud_bbox = opts.pop("cloud_bbox", None)
+        cloud_voxel = opts.pop("cloud_voxel", None)
 
         def _job(report, log, ep=ep, opts=opts):
             from viki.perception.run import perceive_episode
@@ -94,11 +102,12 @@ async def perceive(req: _PerceiveReq):
         ids.append(jobs.submit("perceive", _job, episode=ep.id))
 
         if want_cloud:
-            def _cloud_job(report, log, ep=ep, stride=cloud_stride):
+            def _cloud_job(report, log, ep=ep, stride=cloud_stride,
+                           bbox=cloud_bbox, voxel=cloud_voxel):
                 from viki.perception.cloud import build_cloud
 
-                log(f"cloud {ep.id}")
-                return build_cloud(ep, stride=stride, report=report)
+                log(f"cloud {ep.id} (regenerate, bbox={bbox})")
+                return build_cloud(ep, stride=stride, bbox=bbox, voxel=voxel, report=report)
 
             ids.append(jobs.submit("cloud", _cloud_job, episode=ep.id, lane="cloud"))
     return {"job_ids": ids}
@@ -113,6 +122,8 @@ async def list_models():
 
 @_ep.post("/models/download")
 async def download_model(req: _ModelReq):
+    logger.info("model download requested: %s", req.model)
+
     def _job(report, log):
         from viki.perception.backends.registry import download
 
@@ -131,18 +142,20 @@ async def cancel_job(job_id: str):
 @_ep.post("/extract")
 async def extract(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("extract: episode=%s model=%s", ep.id, req.model)
 
     def _job():
         from viki.perception.extract import extract_episode
 
         return extract_episode(ep, model=req.model)
 
-    return {"job_id": jobs.submit("extract", _job)}
+    return {"job_id": jobs.submit("extract", _job, episode=ep.id)}
 
 
 @_ep.post("/cloud")
 async def cloud(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("cloud: episode=%s", ep.id)
 
     def _job(report, log):
         from viki.perception.cloud import build_cloud
@@ -155,25 +168,27 @@ async def cloud(req: _EpReq):
 @_ep.post("/prepare")
 async def prepare(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("prepare: episode=%s sg=%s/%s", ep.id, req.window, req.polyorder)
 
     def _job():
         from viki.prepare.run import prepare_episode
 
         return prepare_episode(ep, req.window, req.polyorder)
 
-    return {"job_id": jobs.submit("prepare", _job)}
+    return {"job_id": jobs.submit("prepare", _job, episode=ep.id)}
 
 
 @_ep.post("/retarget")
 async def retarget(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("retarget: episode=%s robot=%s", ep.id, req.robot)
 
     def _job():
         from viki.retarget.run import retarget_episode
 
         return retarget_episode(ep, robot=req.robot)
 
-    return {"job_id": jobs.submit("retarget", _job)}
+    return {"job_id": jobs.submit("retarget", _job, episode=ep.id)}
 
 
 @_ep.get("/jobs/{job_id}")
@@ -234,6 +249,8 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
                 np.asarray(d["rotations"], np.float32).reshape(-1, 9).tolist()
             )
             out["valid"] = np.asarray(d["valid"], bool).tolist()
+            if "hand_capsule_radii" in d.files:
+                out["hand_capsule_radii"] = np.asarray(d["hand_capsule_radii"], np.float32).tolist()
 
     if include_raw and ep.rec_npz.exists():
         with np.load(ep.rec_npz) as d:
@@ -259,6 +276,11 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
                     out["landmark_ids"] = np.asarray(d["landmark_ids"], int).tolist()
                     out["gripper"] = bool(d["gripper"][frame])
                     out["frame_valid"] = bool(d["valid"][frame])
+                    if "hand_capsules" in d.files and frame < len(d["hand_capsules"]):
+                        hc = np.asarray(d["hand_capsules"][frame], np.float32)  # (C, 2, 3)
+                        out["hand_capsules"] = (
+                            None if not np.isfinite(hc).any() else hc.tolist()
+                        )
         if ep.rec_npz.exists():
             with np.load(ep.rec_npz) as d:
                 devs = np.array([str(x) for x in d["device_ids"]])

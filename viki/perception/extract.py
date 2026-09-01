@@ -97,7 +97,9 @@ def _frame_timestamps(raw: Path) -> list[dict]:
 
 
 def _row_ts_us(ts_list: list[dict], idx: int, dev_id: str) -> int:
-    """Real host-monotonic µs for camera ``dev_id`` at synced-group ``idx``."""
+    """Host-monotonic µs (arbitrary epoch, monotonic within the recording) for
+    camera ``dev_id`` at synced-group ``idx`` — the sync tick plus that camera's
+    measured offset from it."""
     if 0 <= idx < len(ts_list):
         e = ts_list[idx]
         return int(e.get("sync_us", idx)) + int((e.get("offsets_us") or {}).get(dev_id, 0))

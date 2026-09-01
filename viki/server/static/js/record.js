@@ -3,10 +3,13 @@
 // episodes already in that dataset. All input is on-page — no browser dialogs.
 import { api, log, state, FRONTEND_CONFIG, sessionGet, sessionPatch } from './core.js';
 import * as cameras from './cameras.js';
+import * as episodes from './episodes.js';
 
 let view = null;
 let onCamerasChanged = null;
 let cloudPoll = null;            // interval id for the post-capture cloud-build bar
+let cloudProg = null;            // { id, status, pct, label } — bar shown on that episode row
+let activeCalib = '';            // name of the active calibration preset ('' = none → can't record)
 let recording = false;
 let builtIds = '';               // csv of device ids currently rendered as cards
 let editingPath = null;          // episode row in inline metadata-edit mode
@@ -15,12 +18,17 @@ let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 // ── template ──────────────────────────────────────────────────────────────
 
 function template() {
-  const cfg = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
-  const rec = { duration: cfg.duration ?? 10, fps: cfg.fps ?? 15, ...sessionGet('record', {}) };
-  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [] }), ...sessionGet('cloud', {}) };
+  const cfg = FRONTEND_CONFIG.recording || { duration: 20, fps: 30 };
+  const rec = { duration: cfg.duration ?? 20, fps: cfg.fps ?? 30, ...sessionGet('record', {}) };
+  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [-0.8, 0.8, -0.8, 0.8, -0.8, 1.2] }), ...sessionGet('cloud', {}) };
   return `
   <div class="record-tab">
     <aside class="record-leftcol">
+      <section class="calib-sec">
+        <div class="calib-sec-title">Calibration</div>
+        <select id="rec-calib"></select>
+        <div class="hint" id="rec-calib-hint">the active preset — its extrinsics get baked into the take</div>
+      </section>
       <section class="calib-sec">
         <div class="calib-sec-title">Dataset</div>
         <select id="rec-dataset"></select>
@@ -70,8 +78,7 @@ function template() {
           <input type="text" id="rec-cl-bbox" placeholder="x0,x1,y0,y1,z0,z1 (m)" value="${(cl.bbox || []).join(', ')}"></div>
         <label class="cfg-row"><span>Subtract calibrated background</span>
           <input type="checkbox" id="rec-cl-bg" ${cl.bgSubtract !== false ? 'checked' : ''}></label>
-        <div class="hint">drops points matching the empty-scene depth from the preset — lighter cloud, cleaner segmentation. Needs "Grab background depth" on the calibration preset.</div>
-        <div id="rec-cloud-progress" class="perc-queue"></div>
+        <div class="hint">drops points matching the empty-scene depth from the preset — lighter cloud, cleaner segmentation. The build progress shows on the episode row once the capture ends.</div>
       </section>
     </aside>
   </div>`;
@@ -130,13 +137,48 @@ function updateHint() {
   const ds = view.querySelector('#rec-dataset')?.value;
   const go = view.querySelector('#rec-go');
   // while recording the button becomes Stop (always clickable)
-  go.disabled = recording ? false : (!anyRunning || !ds);
+  go.disabled = recording ? false : (!anyRunning || !ds || !activeCalib);
   go.textContent = recording ? '■ Stop' : '● Record';
   go.classList.toggle('danger', recording);
   hint.textContent = recording ? 'Recording… (stops at max seconds or Stop)'
     : !anyRunning ? 'Start ≥1 camera first.'
-      : !ds ? 'Pick or create a dataset.'
-        : 'Ready.';
+      : !activeCalib ? 'Select a calibration preset (or make one in the Calibration tab).'
+        : !ds ? 'Pick or create a dataset.'
+          : 'Ready.';
+}
+
+// ── calibration preset ───────────────────────────────────────────────────
+// The take can't be built into a cloud without the rig's extrinsics, so a
+// preset must be active before recording. Selecting one here activates it
+// (same POST the Calibration tab uses).
+
+async function loadCalibrations() {
+  const sel = view?.querySelector('#rec-calib');
+  if (!sel) return;
+  let list = [];
+  try { list = await api('GET', '/api/calibration/presets'); }
+  catch (e) { log('Failed to load calibrations: ' + e, 'error'); }
+  const act = list.find(p => p.active);
+  activeCalib = act ? act.name : '';
+  if (!list.length) {
+    sel.innerHTML = '<option value="">— none — calibrate first (Calibration tab)</option>';
+  } else {
+    sel.innerHTML = (act ? '' : '<option value="">— select a calibration —</option>')
+      + list.map(p =>
+        `<option value="${p.name}"${p.active ? ' selected' : ''}>${p.name}${p.active ? ' ✓' : ''}`
+        + `${p.background && p.background.length ? '' : '  (no background)'}</option>`).join('');
+  }
+  updateHint();
+}
+
+async function activateCalib(name) {
+  if (!name) { activeCalib = ''; updateHint(); return; }
+  try {
+    await api('POST', '/api/calibration/activate', { name });
+    log(`Calibration "${name}" active`, 'ok');
+    activeCalib = name;
+  } catch (e) { log('Activate calibration failed: ' + e, 'error'); activeCalib = ''; }
+  loadCalibrations();   // reflect the ✓ / drop the "select" placeholder
 }
 
 // ── datasets ──────────────────────────────────────────────────────────────
@@ -179,14 +221,8 @@ function onDatasetChange() {
 }
 
 // ── episode file-manager ─────────────────────────────────────────────────
-
-const STAGES = [
-  ['raw', 'RAW', 'raw/ — recorded colour + depth frames'],
-  ['rec', 'REC', 'rec.npz — extracted 3-D hand landmarks'],
-  ['cln', 'CLN', 'cln.npz — fused + smoothed trajectory'],
-  ['plan', 'PLN', 'plan.h5 — retargeted robot joint plan'],
-  ['replay', 'RPL', 'replay.h5 — physical replay states'],
-];
+// Row rendering is shared with the Extract tab (episodes.js); Record opts into
+// the inline edit / delete controls via `manage`.
 
 async function loadEpisodes() {
   const box = view?.querySelector('#rec-episode-list');
@@ -196,67 +232,7 @@ async function loadEpisodes() {
   let eps = [];
   try { ({ episodes: eps } = await api('GET', `/api/datasets/${encodeURIComponent(ds)}/episodes`)); }
   catch (e) { log('Failed to list episodes: ' + e, 'error'); return; }
-  box.innerHTML = eps.length ? eps.map(rowHTML).join('')
-    : '<div class="hint" style="padding:10px">no episodes yet</div>';
-}
-
-function esc(s) {
-  return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
-// "2026-08-31_13-06-43" → "2026-08-31 · 13:06:43"; anything else passes through.
-function prettyId(id) {
-  const m = /^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})$/.exec(String(id || ''));
-  return m ? `${m[1]} · ${m[2]}:${m[3]}:${m[4]}` : id;
-}
-
-function rowHTML(ep) {
-  const chips = STAGES.map(([key, label, tip]) =>
-    `<span class="badge ${ep.has?.[key] ? 'ok' : ''}" title="${tip}${ep.has?.[key] ? '' : ' (not done)'}">${label}</span>`
-  ).join('');
-
-  if (editingPath === ep.path) {
-    const hand = (ep.hand || 'right').toLowerCase();
-    return `<div class="episode-row editing" data-path="${ep.path}">
-      <span class="ep-when" title="${ep.id}">${prettyId(ep.id)}</span>
-      <input class="ep-edit-name" data-role="ep-name" placeholder="name / task"
-             value="${esc(ep.task)}">
-      <input class="ep-edit-demo" data-role="ep-demo" placeholder="demonstrator"
-             value="${esc(ep.demonstrator)}">
-      <select class="ep-edit-hand" data-role="ep-hand">
-        <option value="right"${hand === 'right' ? ' selected' : ''}>right</option>
-        <option value="left"${hand === 'left' ? ' selected' : ''}>left</option>
-      </select>
-      <div class="ep-edit-acts">
-        <button data-role="ep-edit-save">save</button>
-        <button data-role="ep-edit-cancel">cancel</button>
-      </div>
-    </div>`;
-  }
-
-  const actions = confirmDeletePath === ep.path
-    ? `<span class="hint">delete?</span>
-       <button data-role="ep-delete-yes" class="danger">yes</button>
-       <button data-role="ep-delete-no">no</button>`
-    : `<button data-role="ep-edit">edit</button>
-       <button data-role="ep-delete" class="danger">del</button>`;
-  const meta = [
-    ep.demonstrator,
-    ep.hand,
-    ep.duration_s != null ? `${ep.duration_s}s` : '',
-    ep.fps ? `${ep.fps} fps` : '',
-  ].filter(Boolean).join(' · ');
-  return `<div class="episode-row" data-path="${ep.path}">
-    <div class="ep-row-top">
-      <span class="ep-when" title="${ep.id}">${prettyId(ep.id)}</span>
-      <span class="ep-badges">${chips}</span>
-    </div>
-    <div class="ep-row-bot">
-      <span class="ep-name">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}</span>
-      ${meta ? `<span class="ep-meta">${esc(meta)}</span>` : ''}
-      <span class="ep-acts">${actions}</span>
-    </div>
-  </div>`;
+  episodes.renderList(box, eps, { manage: true, editingPath, confirmDeletePath, cloudProgress: cloudProg });
 }
 
 async function doEditMeta(path, fields) {
@@ -290,10 +266,11 @@ async function record() {
     dataset: currentDataset(),
     task: view.querySelector('#rec-task').value,
     demonstrator: view.querySelector('#rec-demo').value,
-    seconds: +view.querySelector('#rec-seconds').value || 10,
-    fps: +view.querySelector('#rec-fps').value || 15,
+    seconds: +view.querySelector('#rec-seconds').value || 20,
+    fps: +view.querySelector('#rec-fps').value || 30,
     cloud: cloudOpts(),
   };
+  if (!activeCalib) { log('Select a calibration preset first', 'error'); return; }
   if (!body.dataset) { log('Pick a dataset first', 'error'); return; }
   const box = view.querySelector('#record-cards');
   const stale = Object.keys(state).filter(id => state[id].running && cameras.configMismatch(box, id));
@@ -367,7 +344,8 @@ function onKeydown(e) {
 }
 
 function onChange(e) {
-  if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
+  if (e.target.id === 'rec-calib') activateCalib(e.target.value);
+  else if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
   else if (e.target.id === 'rec-seconds' || e.target.id === 'rec-fps') persistRec();
   else if (['rec-cl-stride', 'rec-cl-voxel', 'rec-cl-max', 'rec-cl-bbox', 'rec-cl-bg'].includes(e.target.id)) persistCloud();
   else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
@@ -378,8 +356,8 @@ function onChange(e) {
 
 function persistRec() {
   sessionPatch('record', {
-    duration: +view.querySelector('#rec-seconds').value || 10,
-    fps: +view.querySelector('#rec-fps').value || 15,
+    duration: +view.querySelector('#rec-seconds').value || 20,
+    fps: +view.querySelector('#rec-fps').value || 30,
     dataset: view.querySelector('#rec-dataset').value || '',
   });
 }
@@ -407,13 +385,13 @@ function persistCloud() {
 }
 
 // Poll the job queue for this episode's cloud build and draw a progress bar
-// (same look as the Extract-tab queue). Stops itself on done / error.
+// inline on that episode's row (under the name, next to edit / del). Stops
+// itself on done / error.
 function watchCloud(episodeId) {
-  const box = view?.querySelector('#rec-cloud-progress');
-  if (!box || !episodeId) return;
+  if (!episodeId) return;
   if (cloudPoll) clearInterval(cloudPoll);
-  box.innerHTML = `<div class="perc-job queued"><span class="perc-job-ep">${episodeId}</span>
-    <span class="perc-job-st">cloud queued…</span><span class="perc-bar"><i style="width:0%"></i></span></div>`;
+  cloudProg = { id: episodeId, status: 'queued', pct: 0, label: 'cloud queued…' };
+  loadEpisodes();   // re-render the list so the fresh row carries the bar
   cloudPoll = setInterval(async () => {
     let jobs;
     try { ({ jobs } = await api('GET', '/api/pipeline/jobs')); } catch { return; }
@@ -421,18 +399,38 @@ function watchCloud(episodeId) {
     if (!j) return;
     const p = j.progress || {};
     const pct = p.total ? Math.round(100 * (p.frame || 0) / p.total) : 0;
-    const label = j.status === 'queued' ? `queued #${j.queue_pos ?? ''}`
-      : j.status === 'running' ? `cloud ${p.frame || 0}/${p.total || '?'}`
-        : j.status;
-    box.innerHTML = `<div class="perc-job ${j.status}"><span class="perc-job-ep">${episodeId}</span>
-      <span class="perc-job-st">${label}</span>
-      <span class="perc-bar"><i style="width:${j.status === 'done' ? 100 : (j.status === 'running' ? pct : 0)}%"></i></span></div>`;
+    cloudProg = {
+      id: episodeId,
+      status: j.status,
+      pct,
+      label: j.status === 'queued' ? `cloud queued #${j.queue_pos ?? ''}`
+        : j.status === 'running' ? `cloud ${p.frame || 0}/${p.total || '?'}`
+          : `cloud ${j.status}`,
+    };
+    paintCloudBar();
     if (j.status === 'done' || j.status === 'error') {
       clearInterval(cloudPoll); cloudPoll = null;
-      if (j.status === 'done') { log(`Cloud built for ${episodeId}`, 'ok'); loadEpisodes(); }
-      else log(`Cloud build failed for ${episodeId}: ${j.error}`, 'error');
+      const ok = j.status === 'done';
+      cloudProg = null;
+      loadEpisodes();   // drop the bar, refresh stage badges
+      ok ? log(`Cloud built for ${episodeId}`, 'ok')
+        : log(`Cloud build failed for ${episodeId}: ${j.error}`, 'error');
     }
   }, 1000);
+}
+
+// Repaint just the one row's bar — no full list re-render, so hover / an
+// in-progress edit elsewhere in the list survive the 1 s tick.
+function paintCloudBar() {
+  if (!cloudProg || !view) return;
+  // Not on screen (other dataset) or that row is mid-edit (no bar slot) — skip;
+  // the next full loadEpisodes() re-renders the bar from cloudProg.
+  const bar = view.querySelector(`.episode-row[data-id="${cloudProg.id}"] .ep-cloud`);
+  if (!bar) return;
+  const pct = cloudProg.status === 'done' ? 100 : (cloudProg.status === 'running' ? cloudProg.pct : 0);
+  bar.className = `ep-cloud ${cloudProg.status}`;
+  bar.querySelector('i').style.width = pct + '%';
+  bar.querySelector('.ep-cloud-lbl').textContent = cloudProg.label;
 }
 
 // ── mount / unmount ──────────────────────────────────────────────────────
@@ -442,6 +440,7 @@ export function mount(container) {
   builtIds = '';
   view.innerHTML = template();
   renderCards();
+  loadCalibrations();
   loadDatasets();
   view.addEventListener('click', onClick);
   view.addEventListener('change', onChange);
@@ -454,6 +453,8 @@ export function unmount() {
   if (onCamerasChanged) document.removeEventListener('cameras:changed', onCamerasChanged);
   onCamerasChanged = null;
   if (cloudPoll) { clearInterval(cloudPoll); cloudPoll = null; }
+  cloudProg = null;
+  activeCalib = '';
   view?.querySelectorAll('.streams img').forEach(img => { img.src = ''; });
   recording = false;
   cameras.setRecording(false);

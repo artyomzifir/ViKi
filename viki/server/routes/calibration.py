@@ -7,6 +7,7 @@ calibration solve, status, and clearing collected samples.
 
 from __future__ import annotations
 
+import asyncio
 import cv2
 import logging
 
@@ -24,13 +25,9 @@ from viki.server.streams import marked_camera_stream
 from viki.server.routes.models import (
     ArucoBoardParametersData,
     BoardParametersData,
-    IntrinsicsResponse,
     ExtrinsicsResponse,
 )
-from viki.config import (
-    INTRINSICS_FILENAME,
-    EXTRINSICS_FILENAME,
-)
+from viki.config import EXTRINSICS_FILENAME
 
 router = APIRouter(prefix="/calibration", tags=["calibration"])
 
@@ -146,7 +143,9 @@ async def capture_all(
             400,
             "Calibration session not started. Please click 'Sync Parameters' first.",
         )
-    return cal.capture_all()
+    res = cal.capture_all()
+    logger.info("calibration capture-all: %s", res)
+    return res
 
 
 @router.post("/clear")
@@ -315,73 +314,20 @@ async def clear(device_id: str, cal: CalibrationManager = Depends(get_calibrator
     return {"status": "cleared"}
 
 
-@router.post("/intrinsics/{device_id}", response_model=IntrinsicsResponse)
-async def intrinsics_post(
-    device_id: str, cal: CalibrationManager = Depends(get_calibrator)
-):
-    """
-    Compute and save intrinsic parameters for a device (POST).
-
-    Uses the collected samples to run the calibration solve and persists the
-    result to the default intrinsics file.
-
-    Parameters
-    ----------
-    device_id : str
-        Camera ID.
-
-    Returns
-    -------
-    IntrinsicsResponse
-        Focal lengths, principal point, distortion coefficients.
-
-    Raises
-    ------
-    RuntimeError
-        If calibration fails (propagated as HTTP 500).
-    """
-    intrinsics = cal.intrinsics_calibration(device_id, INTRINSICS_FILENAME)
-    return IntrinsicsResponse(
-        fx=intrinsics.fx,
-        fy=intrinsics.fy,
-        cx=intrinsics.cx,
-        cy=intrinsics.cy,
-        dist_coeffs=intrinsics.dist_coeffs.tolist(),
-    )
-
-
-@router.get("/intrinsics/{device_id}", response_model=IntrinsicsResponse)
+@router.get("/intrinsics/{device_id}")
 async def intrinsics(device_id: str, cal: CalibrationManager = Depends(get_calibrator)):
+    """The running camera's SDK colour intrinsics (read-only, for inspection).
+
+    There is no intrinsics calibration / storage any more — the SDK is the only
+    source of truth. 404 when the camera isn't live.
     """
-    Retrieve previously computed intrinsic parameters (GET).
-
-    Parameters
-    ----------
-    device_id : str
-        Camera ID.
-
-    Returns
-    -------
-    IntrinsicsResponse
-        Focal lengths, principal point, distortion coefficients.
-
-    Raises
-    ------
-    HTTPException 404
-        If intrinsics not found.
-    """
-    intrinsics = cal.get_intrinsics(device_id)
-    if not intrinsics:
-        raise HTTPException(
-            status_code=404, detail="Intrinsics not found for this device"
-        )
-    return IntrinsicsResponse(
-        fx=intrinsics.fx,
-        fy=intrinsics.fy,
-        cx=intrinsics.cx,
-        cy=intrinsics.cy,
-        dist_coeffs=intrinsics.dist_coeffs.tolist(),
-    )
+    intr = cal.get_intrinsics(device_id)
+    if not intr:
+        raise HTTPException(404, f"{device_id} is not running — no SDK intrinsics")
+    return {
+        "fx": intr.fx, "fy": intr.fy, "cx": intr.cx, "cy": intr.cy,
+        "dist_coeffs": intr.dist_coeffs.tolist(), "source": "sdk",
+    }
 
 
 @router.post("/extrinsics", response_model=list[ExtrinsicsResponse])
@@ -411,6 +357,7 @@ async def extrinsics_post_all(
     if not active_devices:
         raise HTTPException(400, "No active cameras to calibrate")
 
+    logger.info("extrinsics solve: devices=%s", sorted(active_devices))
     results = []
     for device_id in active_devices:
         try:
@@ -429,11 +376,13 @@ async def extrinsics_post_all(
     if not results:
         # If we got here, it means all active devices failed to calibrate
         # (e.g. due to lack of samples)
+        logger.warning("extrinsics solve failed for every device")
         raise HTTPException(
             422,
             "Extrinsics calibration failed for all devices. Make sure you have captured enough samples.",
         )
 
+    logger.info("extrinsics solved for %s", [r.device_id for r in results])
     return results
 
 
@@ -643,8 +592,15 @@ async def save_preset(
             board=cal.board_cfg(),
         )
     except ValueError as exc:
+        logger.warning("save-as %r -> 400 %s", body.name, exc)
         raise HTTPException(400, str(exc)) from exc
-    _grab_k4a_best_effort(path.stem, mgr)  # cameras are live during calibration
+    logger.info("calibration preset %r saved (%d cams)", path.stem, len(extr))
+    # Cameras are live during calibration, so grab both device/scene snapshots
+    # now — no separate button. k4a raw calibration is a device property; the
+    # background depth is the static scene as it sits during the solve (the
+    # ChArUco board included — it's part of the fixed workspace).
+    await asyncio.to_thread(_grab_k4a_best_effort, path.stem, mgr)
+    await asyncio.to_thread(_grab_background_best_effort, path.stem, mgr)  # ~1.5 s of depth median
     return {"status": "success", "name": path.stem}
 
 
@@ -674,29 +630,31 @@ def _grab_k4a_best_effort(name: str, mgr: CameraManager) -> None:
         blobs, di, ci = _collect_k4a_blobs(mgr)
         if blobs:
             _presets.attach_k4a(name, blobs, di, ci)
+            logger.info("preset %r: k4a calibration attached for %s", name, sorted(blobs))
+        else:
+            logger.warning(
+                "preset %r: no k4a raw calibration from the running cameras "
+                "(none active, or not Kinect backends)", name,
+            )
     except Exception:  # noqa: BLE001 — never break save-as on this
         logger.warning("grab k4a for preset %r failed", name, exc_info=True)
 
 
-@router.post("/presets/{name}/grab-k4a")
-async def grab_preset_k4a(
-    name: str, mgr: CameraManager = Depends(get_manager)
-):
-    """Attach the running Kinects' raw calibration blob to an existing preset,
-    so recordings made against it can do offline colour↔depth lifting without a
-    re-record. Requires the Kinect cameras to be running."""
+def _grab_background_best_effort(name: str, mgr: CameraManager) -> None:
     try:
-        _presets.read_detail(name)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    blobs, di, ci = _collect_k4a_blobs(mgr)
-    if not blobs:
-        raise HTTPException(400, "no raw calibration from running cameras — start the Kinects first")
-    try:
-        detail = _presets.attach_k4a(name, blobs, di, ci)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return {"status": "success", "devices": sorted(blobs), "detail": detail}
+        depths = _collect_background(mgr)
+        if depths:
+            _presets.attach_background(name, depths)
+            logger.info("preset %r: empty-scene background attached for %s", name, sorted(depths))
+        else:
+            logger.warning(
+                "preset %r: no background depth captured — the running cameras "
+                "produced no depth frames in the ~1.5 s window (active: %s). "
+                "Make sure depth is streaming, then Save again.",
+                name, sorted(mgr.active_device_ids()),
+            )
+    except Exception:  # noqa: BLE001 — never break save-as on this
+        logger.warning("grab background for preset %r failed", name, exc_info=True)
 
 
 def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
@@ -725,27 +683,6 @@ def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
     return out
 
 
-@router.post("/presets/{name}/grab-background")
-async def grab_preset_background(
-    name: str, mgr: CameraManager = Depends(get_manager)
-):
-    """Snapshot the empty scene's depth (per running camera) onto the preset so
-    recordings made against it can subtract the static background from the point
-    cloud. Run this during calibration, before the operator / objects enter."""
-    try:
-        _presets.read_detail(name)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    depths = _collect_background(mgr)
-    if not depths:
-        raise HTTPException(400, "no depth from running cameras — start the Kinects first")
-    try:
-        detail = _presets.attach_background(name, depths)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return {"status": "success", "devices": sorted(depths), "detail": detail}
-
-
 @router.post("/activate")
 async def activate_preset(
     body: _PresetName, cal: CalibrationManager = Depends(get_calibrator)
@@ -753,8 +690,10 @@ async def activate_preset(
     try:
         _presets.activate(body.name)
     except (ValueError, FileNotFoundError) as exc:
+        logger.warning("activate preset %r -> 404 %s", body.name, exc)
         raise HTTPException(404, str(exc)) from exc
     cal.load_all_extrinsics()
+    logger.info("calibration preset %r activated", body.name)
     return {"status": "success", "name": body.name}
 
 
@@ -762,9 +701,30 @@ async def activate_preset(
 async def delete_preset(name: str):
     try:
         _presets.delete(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    logger.info("calibration preset %r deleted", name)
     return {"status": "deleted", "name": name}
+
+
+class _PresetRename(BaseModel):
+    new: str
+
+
+@router.patch("/presets/{name}")
+async def rename_preset(name: str, body: _PresetRename):
+    try:
+        path = _presets.rename(name, body.new)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    logger.info("calibration preset %r renamed to %r", name, path.stem)
+    return {"status": "renamed", "name": path.stem}
 
 
 @router.delete("/presets/{name}/sets/{index}")

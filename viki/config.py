@@ -18,7 +18,6 @@ DEFAULT_CONFIG_PATH = "data/default_configuration.json"
 USER_CONFIG_PATH = "data/user_configuration.json"
 
 # Duck variables which LSP can catch and use
-INTRINSICS_FILENAME: str
 EXTRINSICS_FILENAME: str
 ACTIVE_CALIBRATION: str  # name of the active preset under data/calibrations/, or ""
 DEFAULT_FPS: int
@@ -39,6 +38,17 @@ CLOUD_BG_SUBTRACT: bool  # drop cloud points matching the calibrated empty-scene
 CLOUD_BG_TOLERANCE_MM: float  # |depth - background| below this = static scene, dropped
 PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
+PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
+PERCEPTION_HAND_FIT: bool  # refine wrist pose by fitting a capsule hand to the per-frame cloud (prepare stage)
+PERCEPTION_HAND_FIT_ROI_M: float  # radius (m) of the depth ROI re-deprojected around the wrist estimate
+PERCEPTION_HAND_FIT_HUBER_M: float  # Huber δ (m) on the point→capsule data residual
+PERCEPTION_HAND_FIT_W_VEL: float  # λ_vel — temporal velocity regulariser
+PERCEPTION_HAND_FIT_W_ACC: float  # λ_acc — temporal acceleration regulariser
+PERCEPTION_HAND_FIT_W_PRIOR: float  # λ_prior — joint-limit barrier weight
+PERCEPTION_HAND_FIT_W_POSTURE: float  # λ_posture — pull fingers toward the rest pose
+PERCEPTION_HAND_FIT_W_LANDMARK: float  # λ_landmark — anchor the model joints to the fused landmarks
+PERCEPTION_HAND_FIT_MAX_POINTS: int  # random-subsample the hand-ROI cloud to this many points before the fit
+KINECT_SYNC: dict  # {"master": "kinect_0", "subordinates": [...], "subordinate_delay_us": 160}; {} = software sync only
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
 SKELETON_COORDINATE_FRAME: str
@@ -64,6 +74,8 @@ RETARGET_LANDMARK_SG_POLYORDER: int
 RETARGET_IK_POSITION_COST: float
 RETARGET_IK_ORIENTATION_COST: float
 RETARGET_IK_POSTURE_COST: float
+RETARGET_IK_ACCEL_COST: float  # λ_a: in-solver acceleration regulariser weight (replaces joint SG)
+RETARGET_IK_CONF_FLOOR: float  # lower clamp on ω_t when it scales the IK data term (0 disables the ω_t weighting)
 RETARGET_TARGET_MODE: str
 RETARGET_IK_SUBSTEPS: int
 RETARGET_IK_SOLVER: str
@@ -149,7 +161,7 @@ _DEFAULTS: dict[str, Any] = {
     "TARGET_OFFSET": [0.0, 0.0, 0.0],
     "RETARGET_BASE_ROTATION": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     "RETARGET_BASE_TRANSLATION": [0.0, 0.0, 0.0],
-    "POSE_BACKEND": "mediapipe",
+    "POSE_BACKEND": "rtmpose-m-hand5",
     "GRIPPER": "binary",
     "EXPORT_FPS": 15,
     "EPISODES_DIR": "data/episodes",
@@ -158,12 +170,24 @@ _DEFAULTS: dict[str, Any] = {
     "ACTIVE_CALIBRATION": "",
     "CLOUD_STRIDE": 1,
     "CLOUD_VOXEL_M": 0.005,
-    "CLOUD_WORKSPACE_BBOX": [],
+    "CLOUD_WORKSPACE_BBOX": [-0.8, 0.8, -0.8, 0.8, -0.8, 1.2],
     "CLOUD_MAX_POINTS_PER_FRAME": 40000,
     "CLOUD_BG_SUBTRACT": True,
     "CLOUD_BG_TOLERANCE_MM": 50.0,
-    "PERCEPTION_TRACK_LM": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 17],
+    "PERCEPTION_TRACK_LM": list(range(21)),
     "PERCEPTION_INTERP_MAX_GAP": 0,
+    "PERCEPTION_CONF_ALPHA": 1.0,
+    "PERCEPTION_HAND_FIT": True,
+    "PERCEPTION_HAND_FIT_ROI_M": 0.12,
+    "PERCEPTION_HAND_FIT_HUBER_M": 0.010,
+    "PERCEPTION_HAND_FIT_W_VEL": 40.0,
+    "PERCEPTION_HAND_FIT_W_ACC": 10.0,
+    "PERCEPTION_HAND_FIT_W_PRIOR": 200.0,
+    "PERCEPTION_HAND_FIT_W_POSTURE": 2.0,
+    "PERCEPTION_HAND_FIT_W_LANDMARK": 20.0,
+    "PERCEPTION_HAND_FIT_MAX_POINTS": 2500,
+    "KINECT_SYNC": {},
+    "RETARGET_IK_CONF_FLOOR": 0.05,
 }
 
 

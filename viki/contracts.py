@@ -110,8 +110,9 @@ class Frame:
     timestamp_us      : device monotonic clock, microseconds
     device_id         : serial or ``kinect_<n>``
     aligned_depth     : HxW uint16 SDK-aligned depth (optional)
-    host_timestamp_us : host clock stamped by the worker on arrival; used for
-                        cross-camera sync
+    host_timestamp_us : host **monotonic** clock (µs, arbitrary epoch) stamped by
+                        the worker on arrival; used for cross-camera sync — only
+                        ever compared as a difference, never as wall time
     color_intrinsics / depth_intrinsics : CameraIntrinsics | None
     """
 
@@ -131,8 +132,9 @@ class Frame:
 @dataclass
 class SyncedFrameGroup:
     """
-    One frame per camera, aligned to a common host-clock tick.
+    One frame per camera, aligned to a common host monotonic-clock tick.
 
+    ``sync_timestamp_us`` is ``time.monotonic_ns() // 1000`` at the tick;
     ``offsets_us[device_id] = frame.host_timestamp_us - sync_timestamp_us``
     (negative = frame arrived before the tick).
     """
@@ -476,7 +478,7 @@ REC_KEYS: tuple[str, ...] = (
     "timestamps",
     "points",  # (N, 21, 3)
     "landmark_ids",  # (21,)
-    "confidence",  # (N, 21)  — stub: detector visibility only
+    "confidence",  # (N, 21)  — per-landmark fusion weight w (paper §3.5 eq. 2)
 )
 
 CLN_KEYS: tuple[str, ...] = (
@@ -484,7 +486,7 @@ CLN_KEYS: tuple[str, ...] = (
     "positions",  # (T, 3)
     "rotations",  # (T, 3, 3)
     "valid",  # (T,)
-    "omega",  # (T,)  — per-frame confidence weight ω_t  (stub)
+    "omega",  # (T,)  — per-frame confidence weight ω_t (paper §3.5 eq. 5)
     "gripper",  # (T,)  bool
     "coordinate_frame",
     "raw_points",
@@ -494,6 +496,10 @@ CLN_KEYS: tuple[str, ...] = (
 CLN_OPTIONAL_KEYS: tuple[str, ...] = (
     "T_world_obj",  # (T, 4, 4)  — object pose track  (stub: absent)
     "T_obj_hand",  # (T, 4, 4)  — object-relative form  (stub: absent)
+    "hand_joint_angles",  # (T, nq)  — capsule-hand fit result (PERCEPTION_HAND_FIT)
+    "hand_model_nq",  # scalar int — nq of the fitted hand model
+    "hand_capsules",  # (T, C, 2, 3) — world capsule endpoints per frame (viewer)
+    "hand_capsule_radii",  # (C,) — capsule radii (m)
 )
 
 REPLAY_KEYS: tuple[str, ...] = (

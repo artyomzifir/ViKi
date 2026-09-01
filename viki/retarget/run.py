@@ -12,6 +12,7 @@ once, at the smooth stage, not here.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,10 +20,11 @@ from typing import Any
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 from viki.config import MODELS_DIR
 import viki.config as viki_config
 from .archive import write_hdf5_archive
-from viki.dsp import adjusted_savgol_window, smooth_savgol
 
 
 RIGHT_BODY_WRIST = 16
@@ -74,6 +76,9 @@ class RunConfig:
     trajectory_scale_origin: str = "auto"
     base_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
     target_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # λ_a: weight of the in-solver acceleration regulariser (paper eq. 4). This
+    # replaces the post-hoc Savitzky–Golay pass; joint_sg_* are now vestigial.
+    ik_accel_cost: float = 1e-2
 
 
 @dataclass(frozen=True)
@@ -86,6 +91,7 @@ class RetargetInput:
     timestamps_us: np.ndarray | None = None
     source_format: str = "legacy_sample"
     coordinate_frame: str = "viki_world_or_camera"
+    omega: np.ndarray | None = None  # per-frame confidence weight ω_t (paper §3.5 eq. 5)
 
 
 def _load_robot_description(description: str):
@@ -253,6 +259,11 @@ def load_smoothed_targets(
         rotations = np.asarray(data["rotations"], dtype=np.float64)
         valid = np.asarray(data["valid"], dtype=bool)
         timestamps_us = np.asarray(data["timestamps"], dtype=np.int64)
+        omega = (
+            np.asarray(data["omega"], dtype=np.float64)
+            if "omega" in data.files
+            else None
+        )
         coordinate_frame = (
             data["coordinate_frame"]
             if "coordinate_frame" in data.files
@@ -266,6 +277,8 @@ def load_smoothed_targets(
         rotations = rotations[:limit_frames]
         valid = valid[:limit_frames]
         timestamps_us = timestamps_us[:limit_frames]
+        if omega is not None:
+            omega = omega[:limit_frames]
 
     if positions.ndim != 2 or positions.shape[1] != 3:
         raise ValueError(f"Expected positions shape (T, 3), got {positions.shape}.")
@@ -302,6 +315,7 @@ def load_smoothed_targets(
         timestamps_us=timestamps_us,
         source_format="smoothed_targets",
         coordinate_frame=normalize_coordinate_frame(coordinate_frame),
+        omega=omega,
     )
 
 
@@ -467,39 +481,69 @@ def run_approach(
 
 
 def run_scene_ik(
+    pin: Any,
     Configuration: Any,
     solve_ik: Any,
-    FrameTask: Any,
-    PostureTask: Any,
     robot: Any,
     ee_frame: str,
     targets: list[Any],
     q_start: np.ndarray,
     cfg: RunConfig,
     fps: float,
+    omega: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Track all scene targets with differential IK."""
-    configuration = Configuration(robot.model, robot.data, np.asarray(q_start, dtype=np.float64).copy())
-    frame_task = FrameTask(ee_frame, position_cost=cfg.ik_position_cost, orientation_cost=effective_orientation_cost(cfg))
-    posture_task = PostureTask(cost=cfg.ik_posture_cost)
-    posture_task.set_target_from_configuration(configuration)
+    """Track all scene targets with differential IK.
+
+    Smoothness is in the solve: an acceleration regulariser (λ_a) whose target
+    each frame is the constant-velocity extrapolation of the last two configs —
+    no post-hoc joint-trajectory filter.
+
+    ``omega`` is the per-frame perception confidence weight ω_t (paper §3.5
+    eq. 5, §3.7.4). When given, it scales the frame (data) task cost each step,
+    clamped below by ``RETARGET_IK_CONF_FLOOR``: on a poorly observed frame the
+    data term shrinks and the λ_a / posture terms carry the trajectory through,
+    instead of the solve chasing a spurious observation.
+    """
+    from viki import config as _cfg
+    from viki.retarget.cost import accel_reference, build_tasks
+
+    configuration = Configuration(
+        robot.model, robot.data, np.asarray(q_start, dtype=np.float64).copy()
+    )
+    base_pos_cost = float(cfg.ik_position_cost)
+    base_ori_cost = float(effective_orientation_cost(cfg))
+    frame_task, accel_task, tasks = build_tasks(
+        pin, robot, cfg, orientation_cost=base_ori_cost
+    )
+
+    n = len(targets)
+    if omega is not None:
+        omega = np.asarray(omega, dtype=np.float64).reshape(-1)
+        if omega.size != n:  # frame-count drift → ignore rather than misalign
+            omega = None
+    conf_floor = float(getattr(_cfg, "RETARGET_IK_CONF_FLOOR", 0.05))
 
     dt = 1.0 / max(fps, 1e-9) / max(cfg.ik_substeps, 1)
-    q_traj = np.zeros((len(targets), robot.model.nq), dtype=np.float64)
+    q_traj = np.zeros((n, robot.model.nq), dtype=np.float64)
+    q_prev = np.asarray(configuration.q, dtype=np.float64).copy()
+    q_prev2: np.ndarray | None = None
     for i, target in enumerate(targets):
         frame_task.set_target(target)
+        if omega is not None and conf_floor < 1.0:
+            w = max(conf_floor, min(1.0, float(omega[i])))
+            frame_task.set_position_cost(base_pos_cost * w)
+            if base_ori_cost > 0.0:
+                frame_task.set_orientation_cost(base_ori_cost * w)
+        q_ref = accel_reference(pin, robot.model, q_prev, q_prev2)
+        if q_ref is not None:
+            accel_task.set_target(q_ref)
         for _ in range(cfg.ik_substeps):
-            velocity = solve_ik(configuration, [frame_task, posture_task], dt, solver=cfg.ik_solver)
+            velocity = solve_ik(configuration, tasks, dt, solver=cfg.ik_solver)
             configuration.integrate_inplace(velocity, dt)
         q_traj[i] = configuration.q
+        q_prev2 = q_prev
+        q_prev = np.asarray(configuration.q, dtype=np.float64).copy()
     return q_traj
-
-
-def smooth_joint_trajectory(q_scene: np.ndarray, window: int, polyorder: int) -> np.ndarray:
-    if window <= 0:
-        return np.asarray(q_scene, dtype=np.float64).copy()
-    adjusted = adjusted_savgol_window(len(q_scene), window, polyorder)
-    return smooth_savgol(q_scene, window=adjusted, polyorder=polyorder, axis=0)
 
 
 def compute_tracking_error(pin: Any, robot: Any, ee_frame: str, q_traj: np.ndarray, targets: list[Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -566,6 +610,7 @@ def _run_ik_and_write(
     scale_origin: str,
     recenter_offset: np.ndarray,
     source_meta: dict[str, Any],
+    omega: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Run approach + scene IK, smooth, score, and write the trajectory archive."""
     pin, _pink, Configuration, solve_ik, FrameTask, PostureTask, load_robot_description = deps
@@ -576,10 +621,14 @@ def _run_ik_and_write(
     q_approach = run_approach(
         pin, Configuration, solve_ik, FrameTask, PostureTask, robot, cfg.robot.ee_frame, targets[0], cfg, fps,
     )
+    # The scene solve is C²-regularised in-solver (λ_a), so there is no post-hoc
+    # joint-trajectory filter; ``q_scene_smooth`` == the solve output and is kept
+    # only as the canonical "plan" key that replay / export / eval read.
     q_scene_raw = run_scene_ik(
-        Configuration, solve_ik, FrameTask, PostureTask, robot, cfg.robot.ee_frame, targets, q_approach[-1], cfg, fps,
+        pin, Configuration, solve_ik, robot, cfg.robot.ee_frame, targets, q_approach[-1], cfg, fps,
+        omega=omega,
     )
-    q_scene_smooth = smooth_joint_trajectory(q_scene_raw, cfg.joint_sg_window, cfg.joint_sg_polyorder)
+    q_scene_smooth = q_scene_raw
     pos_err_smooth, ori_err_smooth = compute_tracking_error(pin, robot, cfg.robot.ee_frame, q_scene_smooth, targets)
     ori_err_smooth_deg = np.degrees(ori_err_smooth)
 
@@ -604,6 +653,13 @@ def _run_ik_and_write(
         "ik_orientation_cost": float(cfg.ik_orientation_cost),
         "effective_orientation_cost": float(effective_orientation_cost(cfg)),
         "ik_posture_cost": float(cfg.ik_posture_cost),
+        "ik_accel_cost": float(cfg.ik_accel_cost),
+        "ik_conf_floor": float(getattr(viki_config, "RETARGET_IK_CONF_FLOOR", 0.05)),
+        "ik_data_weight": (
+            np.asarray(omega, dtype=np.float64).reshape(-1)
+            if omega is not None
+            else np.ones(len(q_scene_smooth), dtype=np.float64)
+        ),
         "ik_substeps": int(cfg.ik_substeps),
         "ik_solver": cfg.ik_solver,
         "recenter_to_neutral": bool(cfg.recenter_to_neutral),
@@ -631,6 +687,7 @@ def _run_ik_and_write(
         "ik_orientation_cost": float(cfg.ik_orientation_cost),
         "effective_orientation_cost": float(effective_orientation_cost(cfg)),
         "ik_posture_cost": float(cfg.ik_posture_cost),
+        "ik_accel_cost": float(cfg.ik_accel_cost),
         "ik_substeps": int(cfg.ik_substeps),
         "ik_solver": cfg.ik_solver,
         "target_mode": target_mode,
@@ -650,10 +707,11 @@ def _run_ik_and_write(
     if orientation_valid is not None:
         summary["orientation_valid_frames"] = int(orientation_valid.sum())
         summary["orientation_total_frames"] = int(len(orientation_valid))
-    print(
-        f"Saved trajectory: {out_path} "
-        f"(mean error={summary['mean_not_aligned_pos_error_mm']:.1f} mm, "
-        f"orientation={summary['mean_not_aligned_orientation_error_deg']:.1f} deg)"
+    logger.info(
+        "retarget: saved %s (%d frames, mean pos err %.1f mm, orient %.1f deg)",
+        out_path, len(q_scene_smooth),
+        summary["mean_not_aligned_pos_error_mm"],
+        summary["mean_not_aligned_orientation_error_deg"],
     )
     return summary
 
@@ -708,6 +766,7 @@ def retarget(sample_path: Path, out_path: Path, cfg: RunConfig) -> dict[str, Any
     return _run_ik_and_write(
         deps, targets, target_pos, target_rot, orientation_valid_out, fps, out_path, cfg,
         target_mode, scale_origin, recenter_offset, source_meta,
+        omega=retarget_input.omega,
     )
 
 
@@ -718,6 +777,7 @@ def retarget_from_poses(
     fps: float,
     out_path: Path,
     cfg: RunConfig,
+    omega: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Retarget pre-computed wrist positions and palm rotations to a robot trajectory.
 
@@ -766,6 +826,7 @@ def retarget_from_poses(
     return _run_ik_and_write(
         deps, targets, target_pos, target_rot, orientation_valid, fps, out_path, cfg,
         target_mode, scale_origin, recenter_offset, source_meta,
+        omega=omega,
     )
 
 
@@ -803,10 +864,13 @@ def retarget_episode(ep, robot: str | None = None) -> str:
     if not ep.cln_npz.exists():
         raise FileNotFoundError(f"no cln.npz for episode {ep.id}; run prepare first")
 
+    logger.info("retarget: episode=%s robot=%s", ep.id, robot or getattr(_cfg, "RETARGET_DEFAULT_ROBOT", "ur10"))
+
     with np.load(ep.cln_npz) as d:
         positions = np.asarray(d["positions"])
         rotations = np.asarray(d["rotations"])
         validity = np.asarray(d["valid"])
+        omega = np.asarray(d["omega"]) if "omega" in d.files else None
         fps = estimate_fps(np.asarray(d["timestamps"]))
 
     rc = normalize_robot(robot or getattr(_cfg, "RETARGET_DEFAULT_ROBOT", "ur10"))
@@ -831,8 +895,9 @@ def retarget_episode(ep, robot: str | None = None) -> str:
         align_initial_orientation=False,
         base_offset=tuple(getattr(_cfg, "ROBOT_BASE_OFFSET", (0.0, 0.0, 0.0))),
         target_offset=tuple(getattr(_cfg, "TARGET_OFFSET", (0.0, 0.0, 0.0))),
+        ik_accel_cost=float(getattr(_cfg, "RETARGET_IK_ACCEL_COST", 1e-2)),
     )
-    summary = retarget_from_poses(positions, rotations, validity, fps, ep.plan_h5, cfg)
+    summary = retarget_from_poses(positions, rotations, validity, fps, ep.plan_h5, cfg, omega=omega)
     mark_stage(
         ep, "retarget", robot=rc.description,
         mean_pos_err_mm=summary.get("mean_not_aligned_pos_error_mm"),

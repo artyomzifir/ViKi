@@ -277,12 +277,41 @@ def activate(name: str, dst: str | None = None) -> Path:
 def delete(name: str) -> None:
     from viki.calibration import captures
 
+    safe = _safe_name(name)
     p = preset_path(name)
+    if not p.exists() and not (PRESETS_DIR / safe).is_dir():
+        raise FileNotFoundError(f"no calibration preset {name!r}")
     if p.exists():
         p.unlink()
-    captures.wipe(_safe_name(name))
-    if current_active() == _safe_name(name):
+    captures.wipe(safe)  # removes data/calibrations/<name>/ — sets, bg + k4a blobs
+    if current_active() == safe:
         _set_active("")
+
+
+def rename(name: str, new_name: str) -> Path:
+    """Rename a preset: its ``<name>.json`` and its ``<name>/`` blob+sets dir.
+    Keeps it active (by the new name) if it was."""
+    from viki.calibration import captures
+
+    src, dst = _safe_name(name), _safe_name(new_name)
+    src_json = preset_path(name)
+    if not src_json.exists():
+        raise FileNotFoundError(f"no calibration preset {name!r}")
+    if dst == src:
+        return src_json
+    if dst == captures.LIVE:
+        raise ValueError(f"{captures.LIVE!r} is reserved")
+    dst_json = preset_path(new_name)
+    if dst_json.exists() or (PRESETS_DIR / dst).is_dir():
+        raise FileExistsError(f"preset {new_name!r} already exists")
+
+    src_json.rename(dst_json)
+    src_dir = PRESETS_DIR / src
+    if src_dir.is_dir():
+        src_dir.rename(PRESETS_DIR / dst)
+    if current_active() == src:
+        _set_active(dst)
+    return dst_json
 
 
 def delete_set(name: str, index: int) -> dict:

@@ -8,6 +8,7 @@ WebSocket stream are gone: skeletons are extracted offline from recordings.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,7 @@ from viki.cameras.manager import CameraManager
 from viki.perception.camera_prep import prepare_frame
 from viki.server.deps import get_manager
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/skeleton", tags=["skeleton"])
 
 
@@ -36,4 +38,5 @@ async def capture_base_depth(
     prepared = prepare_frame(frame)
     path = base_dir / f"{device_id}.npy"
     np.save(path, prepared.depth_m)
+    logger.info("skeleton depth base captured for %s -> %s", device_id, path)
     return {"status": "success", "device_id": device_id, "path": str(path)}

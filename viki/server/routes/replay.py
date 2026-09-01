@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 from viki.contracts import Episode
 from viki.server import jobs
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/replay", tags=["replay"])
 
 
@@ -25,12 +27,14 @@ async def start_replay(req: ReplayRequest):
     if not ep.plan_h5.exists():
         raise HTTPException(404, f"no plan.h5 for episode {req.episode}; run retarget first")
 
+    logger.info("replay: episode=%s driver=%s max_resolves=%d", ep.id, req.driver, req.max_resolves)
+
     def _job():
         from viki.replay import replay_episode
 
         return replay_episode(ep, driver=req.driver, max_resolves=req.max_resolves)
 
-    return {"job_id": jobs.submit("replay", _job)}
+    return {"job_id": jobs.submit("replay", _job, episode=ep.id)}
 
 
 @router.get("/jobs/{job_id}")

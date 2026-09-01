@@ -74,10 +74,12 @@ def fuse_trajectories(
     landmark_ids : np.ndarray
         Landmark id array (length L) describing the second axis of the points.
     weights : dict[str, np.ndarray] | None
-        Optional per-camera ``(Tc, L)`` fusion weights (paper §3.5, eq. 2).
-        When ``None`` every observation gets weight 1 (plain mean). STUB: the
-        caller currently passes detector visibility only — the range and
-        incidence factors are not computed yet.
+        Optional per-camera ``(Tc, L)`` fusion weights (paper §3.5, eq. 2),
+        ``w = visibility · sensor_validity · d^-2 · max(0, cosθ)``, computed
+        per landmark in :func:`viki.perception.geometry.lift_to_3d` and carried
+        through ``rec.npz["confidence"]``. When ``None`` every observation gets
+        weight 1 (plain mean). A zero weight drops that camera's vote for that
+        landmark entirely rather than merely attenuating it.
     grid : np.ndarray | None
         Optional explicit output time grid (µs). When given, every camera is
         resampled onto it and a step counts as "observed" by a camera if that

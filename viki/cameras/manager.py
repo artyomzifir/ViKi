@@ -73,7 +73,9 @@ class _CameraWorker:
             while not self._stop_event.is_set():
                 try:
                     frame = self.backend.get_frame()
-                    frame.host_timestamp_us = time.time_ns() // 1000
+                    # monotonic, not wall clock: an NTP step / VM resume / manual
+                    # clock change mid-recording must not make timestamps jump.
+                    frame.host_timestamp_us = time.monotonic_ns() // 1000
                     with self._lock:
                         self._buffer.append(frame)
                 except TimeoutError:

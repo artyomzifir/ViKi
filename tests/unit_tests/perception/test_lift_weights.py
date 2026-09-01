@@ -47,3 +47,14 @@ def test_visibility_scales_weight_linearly():
     hi = lift_to_3d(_det(conf=0.9), _frame(), _Id()).weights[LM.WRIST]
     lo = lift_to_3d(_det(conf=0.3), _frame(), _Id()).weights[LM.WRIST]
     assert hi / lo == np.float32(3.0) or abs(hi / lo - 3.0) < 1e-4
+
+
+def test_range_is_euclidean_not_axial_depth():
+    # A landmark far off the principal point has range > z, so its d^-2 weight
+    # must be below an on-axis landmark at the same measured depth.
+    det = _det()
+    for lm in det.points:
+        det.points[lm] = np.array([320.0, 240.0], dtype=np.float32)
+    det.points[LM.INDEX_TIP] = np.array([40.0, 40.0], dtype=np.float32)  # corner
+    w = lift_to_3d(det, _frame(0.5), _Id()).weights
+    assert w[LM.INDEX_TIP] < w[LM.WRIST]

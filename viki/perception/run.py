@@ -70,6 +70,7 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
         opts = PerceiveOpts.from_dict(opts)
     report = report or _noop
 
+    logger.info("perceive %s: model=%s hand=%s cloud=%s", ep.id, opts.model, opts.hand, opts.build_cloud)
     report(stage="extract", frame=0, total=0)
     extract_episode(
         ep,
@@ -82,7 +83,8 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
     )
 
     report(stage="fuse")
-    prepare_episode(ep, opts.sg_window, opts.sg_polyorder, interp_max_gap=opts.interp_max_gap)
+    prepare_episode(ep, opts.sg_window, opts.sg_polyorder,
+                    interp_max_gap=opts.interp_max_gap, report=report)
 
     if opts.build_cloud:
         report(stage="cloud")

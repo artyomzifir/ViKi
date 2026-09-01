@@ -9,7 +9,7 @@ let root = null, ctl = null, episodes = [];
 const LAYER_LABELS = {
   cloud: 'point cloud', perCamera: 'per-camera skeletons', fused: 'fused skeleton',
   trajectory: 'wrist trajectory', palm: 'palm + gripper', frusta: 'camera frusta',
-  board: 'ChArUco board', bbox: 'workspace box',
+  board: 'ChArUco board', bbox: 'workspace box', handFit: 'fitted hand',
 };
 
 export function mount(view) {

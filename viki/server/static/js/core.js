@@ -109,7 +109,7 @@ export async function initializeFrontendConfig(config) {
       stride: config.CLOUD_STRIDE ?? 1,
       voxel: config.CLOUD_VOXEL_M ?? 0.005,
       maxPoints: config.CLOUD_MAX_POINTS_PER_FRAME ?? 40000,
-      bbox: config.CLOUD_WORKSPACE_BBOX ?? [],
+      bbox: config.CLOUD_WORKSPACE_BBOX ?? [-0.8, 0.8, -0.8, 0.8, -0.8, 1.2],
     },
   };
 

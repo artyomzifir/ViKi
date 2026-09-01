@@ -8,7 +8,7 @@ and to ``viki.server.streams``.
 
 from __future__ import annotations
 
-import traceback
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -20,7 +20,23 @@ from viki.cameras.manager import CameraManager
 from viki.server.deps import get_calibrator, get_manager
 from viki.server.streams import camera_stream
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cameras", tags=["cameras"])
+
+# 0 = standalone, 1 = master, 2 = subordinate (viki.cameras.kinect enum values)
+_WIRED_MASTER, _WIRED_SUBORDINATE = 1, 2
+
+
+def _wired_sync_for(device_id: str) -> tuple[int, int]:
+    """Resolve (wired_sync_mode, subordinate_delay_us) for ``device_id`` from
+    ``config.KINECT_SYNC``. Returns (0, 0) when the device has no assigned role,
+    so an un-cabled rig just starts standalone."""
+    spec = getattr(config, "KINECT_SYNC", {}) or {}
+    if device_id == spec.get("master"):
+        return _WIRED_MASTER, 0
+    if device_id in (spec.get("subordinates") or []):
+        return _WIRED_SUBORDINATE, int(spec.get("subordinate_delay_us", 0))
+    return 0, 0
 
 _MJPEG_MEDIA = "multipart/x-mixed-replace; boundary=frame"
 _STREAM_HEADERS = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
@@ -78,6 +94,19 @@ async def start_camera(
     HTTPException 500
         If the backend fails to start.
     """
+    # Honour an explicit request; otherwise fall back to the rig's KINECT_SYNC
+    # wiring so "Start cameras" produces a hardware-synced Kinect pair whenever
+    # the sync cable + config are present (paper §3.3), and a plain standalone
+    # start otherwise. Start subordinates before the master (they must be
+    # listening when the master starts sending trigger pulses).
+    wired_sync_mode = req.wired_sync_mode
+    subordinate_delay_us = req.subordinate_delay_us
+    if wired_sync_mode == 0:
+        wired_sync_mode, subordinate_delay_us = _wired_sync_for(device_id)
+        if wired_sync_mode:
+            role = "master" if wired_sync_mode == _WIRED_MASTER else "subordinate"
+            logger.info("cameras: %s starting as hardware-sync %s", device_id, role)
+
     try:
         outcome = mgr.start(
             device_id,
@@ -85,14 +114,17 @@ async def start_camera(
             color_width=req.color_width,
             color_height=req.color_height,
             depth_mode=req.depth_mode,
-            wired_sync_mode=req.wired_sync_mode,
-            subordinate_delay_us=req.subordinate_delay_us,
+            wired_sync_mode=wired_sync_mode,
+            subordinate_delay_us=subordinate_delay_us,
             synchronized_images_only=req.synchronized_images_only,
         )
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("camera %s start failed", device_id)
         raise HTTPException(status_code=500, detail=str(e))
     # outcome: "started" | "restarted" (config changed) | "unchanged"
+    logger.info("camera %s %s @ %dx%d/%dfps %s%s", device_id, outcome or "started",
+                req.color_width, req.color_height, req.fps, req.depth_mode,
+                f" sync={wired_sync_mode}" if wired_sync_mode else "")
     return {"status": outcome or "started", "device_id": device_id}
 
 
@@ -112,6 +144,7 @@ async def stop_camera(device_id: str, mgr: CameraManager = Depends(get_manager))
         {"status": "stopped", "device_id": device_id}
     """
     mgr.stop(device_id)
+    logger.info("camera %s stopped", device_id)
     return {"status": "stopped", "device_id": device_id}
 
 

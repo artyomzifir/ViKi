@@ -11,6 +11,7 @@ mutations live under their own prefix so they can't be shadowed by the
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -18,6 +19,7 @@ from pydantic import BaseModel
 
 from viki import datasets
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 ep_router = APIRouter(prefix="/episodes", tags=["episodes"])
 
@@ -55,11 +57,15 @@ def _run(fn, *args):
     try:
         result = fn(*args)
     except FileNotFoundError as exc:
+        logger.warning("%s%s -> 404 %s", fn.__name__, args, exc)
         raise HTTPException(404, str(exc)) from exc
     except FileExistsError as exc:
+        logger.warning("%s%s -> 409 %s", fn.__name__, args, exc)
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
+        logger.warning("%s%s -> 400 %s", fn.__name__, args, exc)
         raise HTTPException(400, str(exc)) from exc
+    logger.info("%s%s ok", fn.__name__, tuple(a for a in args if a is not None))
     out = {"status": "ok"}
     if isinstance(result, Path):
         out["path"] = str(result)

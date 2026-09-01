@@ -10,6 +10,7 @@ computes end-effector poses (rotation + position) for the retarget stage.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import List
 
@@ -18,6 +19,8 @@ from viki.dsp import smooth_landmark_sequence, interpolate_nans
 from viki.perception.hand_angles import compute_end_effector_pose
 from viki.contracts import HAND_LM_COUNT, LM
 import viki.config as config
+
+logger = logging.getLogger(__name__)
 
 
 _PALM_MIN_LENGTH_RATIO = 0.5
@@ -107,9 +110,10 @@ class PreparationPipeline:
         # timestamps, so cln.npz shares one index with the point cloud. None →
         # fuse onto the union of the per-camera detection timestamps.
         self.grid_ts: np.ndarray | None = None
-
-        self.recs_dir.mkdir(parents=True, exist_ok=True)
-        self.smoothed_dir.mkdir(parents=True, exist_ok=True)
+        # No mkdir here: the episode flow (prepare_episode) overrides recs_dir /
+        # smoothed_dir to a tempdir right after construction, so eagerly creating
+        # data/skeleton_{recs,smoothed}/ just litters (root-owned under Docker).
+        # smooth_recording() creates the output dir it actually writes to.
 
     def list_recordings(self, page: int = 0, page_size: int = 10) -> List[str]:
         """
@@ -259,8 +263,14 @@ class PreparationPipeline:
             if _cols
             else np.ones(len(grid), dtype=np.float64)
         )
+        # Normalise to [0, 1] across the episode (eq. 2's w is unbounded through
+        # the d^-2 factor, so ω_t is only meaningful relative to the episode's
+        # best-observed frame), then sharpen with the α exponent (eq. 5): α > 1
+        # discounts low-confidence frames harder, α = 1 leaves the ratio linear.
         _omax = float(omega.max()) or 1.0
-        omega = np.clip(omega / _omax, 0.0, 1.0).astype(np.float32)
+        _alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
+        omega = np.clip(omega / _omax, 0.0, 1.0) ** _alpha
+        omega = omega.astype(np.float32)
 
         # 4. Compute end-effector poses on the smoothed fused trajectory.
         T = fused_points.shape[0]
@@ -314,6 +324,7 @@ class PreparationPipeline:
 
         # 5. Save to smoothed directory as cln-*.npz
         output_filename = filename.replace("rec-", "cln-")
+        self.smoothed_dir.mkdir(parents=True, exist_ok=True)
         output_path = self.smoothed_dir / output_filename
 
         _extra = {}
@@ -375,7 +386,8 @@ def estimate_fps(timestamps_us: np.ndarray) -> float:
 
 
 def prepare_episode(
-    ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None
+    ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None,
+    report=None,
 ) -> str:
     """
     Episode-aware wrapper around :meth:`PreparationPipeline.smooth_recording`:
@@ -411,8 +423,25 @@ def prepare_episode(
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
 
+    # Optional: refine the wrist pose by fitting a capsule hand model to the
+    # per-frame point cloud (rewrites cln.npz positions/rotations in place,
+    # adds hand_joint_angles). Off by default; also runnable standalone via
+    # `viki hand-fit`.
+    hand_fit = bool(getattr(config, "PERCEPTION_HAND_FIT", False))
+    if hand_fit:
+        try:
+            from viki.perception.hand_fit import refine_cln
+
+            refine_cln(ep, report=report)
+        except Exception:  # noqa: BLE001 — never fail prepare on the refinement
+            logger.warning("prepare %s: hand-fit refinement failed", ep.id, exc_info=True)
+            hand_fit = False
+
     with np.load(ep.cln_npz) as d:
         n = len(d["positions"])
         obj_rel = "T_obj_hand" in d
-    mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel))
+        hand_fit = hand_fit and "hand_joint_angles" in d
+    mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel),
+               hand_fit=bool(hand_fit))
+    logger.info("prepare %s: %d frames -> %s", ep.id, n, ep.cln_npz)
     return str(ep.cln_npz)

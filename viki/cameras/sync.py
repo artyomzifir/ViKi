@@ -5,10 +5,11 @@ MultiCameraSync: software timestamp synchronisation across heterogeneous cameras
 
 How it works
 ------------
-Each CameraWorker stamps frames with host_timestamp_us = time.time_ns() // 1000
-as they arrive from the device.  The worker keeps a short rolling buffer of
-recent frames (not just the latest), so frames at the sync tick that landed a
-few milliseconds earlier are still reachable.
+Each CameraWorker stamps frames with host_timestamp_us = time.monotonic_ns() //
+1000 as they arrive from the device (monotonic, so a wall-clock adjustment
+mid-recording can't corrupt the timeline).  The worker keeps a short rolling
+buffer of recent frames (not just the latest), so frames at the sync tick that
+landed a few milliseconds earlier are still reachable.
 
 MultiCameraSync drives a loop at sync_fps (normally the rate of the slowest
 camera).  At each tick it calls nearest_to(tick_us) on every active worker and
@@ -84,7 +85,7 @@ class MultiCameraSync:
         """
         import logging
         logger = logging.getLogger(__name__)
-        tick_us = time.time_ns() // 1000
+        tick_us = time.monotonic_ns() // 1000
         device_ids = (
             self._required_devices
             if self._required_devices is not None
