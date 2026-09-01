@@ -1,127 +1,96 @@
-// Episodes panel: list episodes, run offline stages as jobs, edit labels,
-// record a new scene. Selecting an episode loads it into the 3-D viewer.
-import { api, log } from './core.js';
-import { loadEpisode } from './viewer.js';
+// Shared episode-list rendering for the Record and Extract tabs. One row shape
+// (pretty date · pipeline-stage badges · task/meta) with opt-in per-row controls:
+//   select  — a checkbox        (Extract: multi-select for the perceive queue)
+//   view    — a "view" button   (Extract: open the episode in the scene3d viewer)
+//   manage  — inline edit / del (Record: the episode file-manager)
+//
+// The row carries both data-path (Record's meta PATCH / DELETE key) and data-id
+// (Extract's episode id for the queue + viewer). Callers keep their own click
+// handlers; this module only builds markup.
 
-let selected = null;   // { id, path, ... }
-const STAGES = ['extract', 'prepare', 'retarget', 'replay'];
+export const STAGES = [
+  ['raw', 'RAW', 'raw/ — recorded colour + depth frames'],
+  ['rec', 'REC', 'rec.npz — extracted 3-D hand landmarks'],
+  ['cln', 'CLN', 'cln.npz — fused + smoothed trajectory'],
+  ['plan', 'PLN', 'plan.h5 — retargeted robot joint plan'],
+  ['replay', 'RPL', 'replay.h5 — physical replay states'],
+];
 
-export function togglePanel() {
-  for (const id of ['episodes-panel', 'viewer-panel']) {
-    const p = document.getElementById(id);
-    p.style.display = p.style.display === 'block' ? 'none' : 'block';
+export function esc(s) {
+  return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+// "2026-08-31_13-06-43" → "2026-08-31 · 13:06:43"; anything else passes through.
+export function prettyId(id) {
+  const m = /^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})$/.exec(String(id || ''));
+  return m ? `${m[1]} · ${m[2]}:${m[3]}:${m[4]}` : id;
+}
+
+function badgesHTML(ep) {
+  return STAGES.map(([key, label, tip]) =>
+    `<span class="badge ${ep.has?.[key] ? 'ok' : ''}" title="${tip}${ep.has?.[key] ? '' : ' (not done)'}">${label}</span>`
+  ).join('');
+}
+
+function editingRowHTML(ep) {
+  const hand = (ep.hand || 'right').toLowerCase();
+  return `<div class="episode-row editing" data-path="${ep.path}" data-id="${ep.id}">
+    <span class="ep-when" title="${ep.id}">${prettyId(ep.id)}</span>
+    <input class="ep-edit-name" data-role="ep-name" placeholder="name / task" value="${esc(ep.task)}">
+    <input class="ep-edit-demo" data-role="ep-demo" placeholder="demonstrator" value="${esc(ep.demonstrator)}">
+    <select class="ep-edit-hand" data-role="ep-hand">
+      <option value="right"${hand === 'right' ? ' selected' : ''}>right</option>
+      <option value="left"${hand === 'left' ? ' selected' : ''}>left</option>
+    </select>
+    <div class="ep-edit-acts">
+      <button data-role="ep-edit-save">save</button>
+      <button data-role="ep-edit-cancel">cancel</button>
+    </div>
+  </div>`;
+}
+
+// o: { select, selected:Set, view, manage, activeId, editingPath, confirmDeletePath }
+export function rowHTML(ep, o = {}) {
+  if (o.manage && o.editingPath === ep.path) return editingRowHTML(ep);
+
+  const pick = o.select
+    ? `<input type="checkbox" class="ep-sel" data-ep="${ep.id}"${o.selected?.has?.(ep.id) ? ' checked' : ''}> `
+    : '';
+  const meta = [
+    ep.demonstrator,
+    ep.hand,
+    ep.duration_s != null ? `${ep.duration_s}s` : '',
+    ep.fps ? `${ep.fps} fps` : '',
+  ].filter(Boolean).join(' · ');
+
+  let acts = '';
+  if (o.view) acts += `<button data-view="${ep.id}" title="open in viewer">view</button>`;
+  if (o.manage) {
+    acts += o.confirmDeletePath === ep.path
+      ? `<span class="hint">delete?</span>
+         <button data-role="ep-delete-yes" class="danger">yes</button>
+         <button data-role="ep-delete-no">no</button>`
+      : `<button data-role="ep-edit">edit</button>
+         <button data-role="ep-delete" class="danger">del</button>`;
   }
-  if (document.getElementById('episodes-panel').style.display === 'block') refresh();
+
+  const active = o.activeId != null && o.activeId === ep.id ? ' active' : '';
+  return `<div class="episode-row${active}" data-path="${ep.path}" data-id="${ep.id}">
+    <div class="ep-row-top">
+      <span class="ep-when" title="${ep.id}">${pick}${prettyId(ep.id)}</span>
+      <span class="ep-badges">${badgesHTML(ep)}</span>
+    </div>
+    <div class="ep-row-bot">
+      <span class="ep-name">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}</span>
+      ${meta ? `<span class="ep-meta">${esc(meta)}</span>` : ''}
+      ${acts ? `<span class="ep-acts">${acts}</span>` : ''}
+    </div>
+  </div>`;
 }
 
-export async function refresh() {
-  let data;
-  try { data = await api('GET', '/api/pipeline/episodes'); }
-  catch (e) { log('episodes: ' + e, 'error'); return; }
-  const box = document.getElementById('episode-list');
-  box.innerHTML = '';
-  for (const ep of data.episodes) {
-    const row = document.createElement('div');
-    row.className = 'episode-row' + (selected?.id === ep.id ? ' sel' : '');
-    const badges = STAGES.map(s => {
-      const done = ep.stages?.[s]?.done;
-      return `<span class="badge ${done ? 'ok' : ''}">${s[0].toUpperCase()}</span>`;
-    }).join('');
-    row.innerHTML = `<span class="ep-id">${ep.id}</span>
-      <span class="ep-task">${ep.task || '<i>unlabelled</i>'}</span>
-      <span class="ep-badges">${badges}</span>`;
-    row.onclick = () => select(ep);
-    box.appendChild(row);
-  }
-}
-
-function select(ep) {
-  selected = ep;
-  refresh();
-  document.getElementById('episode-detail').style.display = 'flex';
-  document.getElementById('ed-id').textContent = ep.id;
-  loadLabels(ep);
-  loadEpisode(ep.id);
-}
-
-async function loadLabels(ep) {
-  try {
-    const l = await api('GET', `/api/label?episode=${encodeURIComponent(ep.path)}`);
-    document.getElementById('lbl-task').value = l.task || '';
-    document.getElementById('lbl-hand').value = l.hand || 'right';
-    document.getElementById('lbl-outcome').value = l.outcome || 'unrated';
-  } catch (e) { /* no labels yet */ }
-}
-
-export async function saveLabels() {
-  if (!selected) return;
-  const body = {
-    task: document.getElementById('lbl-task').value,
-    hand: document.getElementById('lbl-hand').value,
-    outcome: document.getElementById('lbl-outcome').value,
-  };
-  try {
-    await api('POST', `/api/label?episode=${encodeURIComponent(selected.path)}`, body);
-    log('labels saved', 'ok');
-    refresh();
-  } catch (e) { log('save labels: ' + e, 'error'); }
-}
-
-const STAGE_PATH = {
-  extract: '/api/pipeline/extract', prepare: '/api/pipeline/prepare',
-  retarget: '/api/pipeline/retarget', replay: '/api/replay',
-};
-const JOB_BASE = { replay: '/api/replay/jobs', record: '/api/record/jobs' };
-
-export async function runStage(el) {
-  if (!selected) return;
-  await runOne(el.dataset.stage);
-}
-
-async function runOne(stage) {
-  const body = stage === 'replay'
-    ? { episode: selected.path, driver: 'dryrun' }
-    : { episode: selected.path };
-  let job_id;
-  try {
-    ({ job_id } = await api('POST', STAGE_PATH[stage], body));
-    log(`${stage} started (${job_id})`);
-  } catch (e) { log(`${stage}: ` + e, 'error'); throw e; }
-  const ok = await waitJob(stage, job_id);
-  refresh();
-  if (selected) loadEpisode(selected.id);
-  if (!ok) throw new Error(`${stage} failed`);
-}
-
-function waitJob(stage, jobId) {
-  const base = JOB_BASE[stage] || '/api/pipeline/jobs';
-  return new Promise(resolve => {
-    const t = setInterval(async () => {
-      let j;
-      try { j = await api('GET', `${base}/${jobId}`); } catch { return; }
-      if (j.status === 'running') return;
-      clearInterval(t);
-      if (j.status === 'done') { log(`${stage} done`, 'ok'); resolve(true); }
-      else { log(`${stage} failed: ${j.error}`, 'error'); resolve(false); }
-    }, 1500);
-  });
-}
-
-function pollJob(stage, jobId) { waitJob(stage, jobId).then(() => refresh()); }
-
-export async function runAll() {
-  if (!selected) return;
-  for (const s of STAGES) {
-    try { await runOne(s); } catch { break; }
-  }
-}
-
-export async function recordScene() {
-  const seconds = +document.getElementById('rec-seconds').value || 10;
-  const task = document.getElementById('rec-task').value || '';
-  try {
-    const { job_id } = await api('POST', '/api/record/start', { seconds, task, fps: 15 });
-    log(`recording ${seconds}s (${job_id})`);
-    pollJob('record', job_id);
-  } catch (e) { log('record: ' + e, 'error'); }
+export function renderList(box, episodes, o = {}) {
+  if (!box) return;
+  box.innerHTML = episodes?.length
+    ? episodes.map(ep => rowHTML(ep, o)).join('')
+    : `<div class="hint" style="padding:10px">${o.emptyText || 'no episodes yet'}</div>`;
 }

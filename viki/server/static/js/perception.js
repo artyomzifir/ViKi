@@ -4,6 +4,7 @@
 // scene3d viewer on the left.
 import { api, log, sessionGet, sessionSet, sessionPatch } from './core.js';
 import * as scene3d from './scene3d.js';
+import * as episodes from './episodes.js';
 
 const LM_NAMES = [
   'wrist', 'thumb_cmc', 'thumb_mcp', 'thumb_ip', 'thumb_tip',
@@ -43,7 +44,7 @@ const DEFAULT_OPTS = {
   sg_window: 7, sg_polyorder: 2, build_cloud: true, cloud_stride: 1, dataset: '',
 };
 
-let root = null, ctl = null, models = {}, episodes = [], poll = 0, viewedEp = null;
+let root = null, ctl = null, models = {}, epList = [], poll = 0, viewedEp = null;
 
 export function mount(view) {
   const S = { ...DEFAULT_OPTS, ...sessionGet('perceive', {}) };
@@ -249,26 +250,33 @@ async function loadEpisodes() {
   const ds = root.querySelector('[data-role="dataset"]').value;
   if (!ds) return;
   try {
-    ({ episodes } = await api('GET', `/api/datasets/${encodeURIComponent(ds)}/episodes`));
+    ({ episodes: epList } = await api('GET', `/api/datasets/${encodeURIComponent(ds)}/episodes`));
   } catch (e) { log('episodes: ' + e, 'error'); return; }
-  root.querySelector('[data-role="eps"]').innerHTML = episodes.map(e =>
-    `<div class="perc-ep${e.id === viewedEp ? ' active' : ''}">
-      <label><input type="checkbox" data-ep="${e.id}">
-        ${e.id}${e.task ? ' · ' + e.task : ''}</label>
-      <span class="badge ${e.has?.cln ? 'ok' : ''}">CLN</span>
-      <button data-view="${e.id}" title="open in viewer">view</button>
-    </div>`).join('')
-    || '<div class="hint">no episodes</div>';
+  // Same row widget as the Record tab, plus a select checkbox (queue) and a
+  // view button (scene3d). Keep whatever was already ticked across a reload.
+  const keep = new Set(selectedEpisodes());
+  episodes.renderList(root.querySelector('[data-role="eps"]'), epList, {
+    select: true, view: true, selected: keep, activeId: viewedEp,
+    emptyText: 'no episodes',
+  });
+  syncAllCheckbox();
 }
 
 function markViewed(id) {
   viewedEp = id;
-  root?.querySelectorAll('.perc-ep').forEach(r =>
-    r.classList.toggle('active', r.querySelector('[data-ep]')?.dataset.ep === id));
+  root?.querySelectorAll('.episode-row').forEach(r =>
+    r.classList.toggle('active', r.dataset.id === id));
 }
 
 function selectedEpisodes() {
   return [...root.querySelectorAll('[data-ep]:checked')].map(c => c.dataset.ep);
+}
+
+function syncAllCheckbox() {
+  const all = root?.querySelector('[data-role="all"]');
+  if (!all) return;
+  const boxes = [...root.querySelectorAll('[data-ep]')];
+  all.checked = boxes.length > 0 && boxes.every(c => c.checked);
 }
 
 // ── run + queue ───────────────────────────────────────────────────────
@@ -337,7 +345,7 @@ function onClick(e) {
   const b = e.target.closest('button');
   if (!b) return;
   if (b.dataset.view) {
-    ctl.loadEpisode(b.dataset.view, episodes);
+    ctl.loadEpisode(b.dataset.view, epList);
     markViewed(b.dataset.view);
     return;
   }
@@ -376,6 +384,7 @@ function onChange(e) {
   else if (el.dataset.role === 'all') {
     root.querySelectorAll('[data-ep]').forEach(c => { c.checked = el.checked; });
   }
+  else if (el.dataset.ep) syncAllCheckbox();   // a row checkbox toggled
   else if (el.dataset.role) persist();   // any other param widget
 }
 

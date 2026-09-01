@@ -3,6 +3,7 @@
 // episodes already in that dataset. All input is on-page — no browser dialogs.
 import { api, log, state, FRONTEND_CONFIG, sessionGet, sessionPatch } from './core.js';
 import * as cameras from './cameras.js';
+import * as episodes from './episodes.js';
 
 let view = null;
 let onCamerasChanged = null;
@@ -179,14 +180,8 @@ function onDatasetChange() {
 }
 
 // ── episode file-manager ─────────────────────────────────────────────────
-
-const STAGES = [
-  ['raw', 'RAW', 'raw/ — recorded colour + depth frames'],
-  ['rec', 'REC', 'rec.npz — extracted 3-D hand landmarks'],
-  ['cln', 'CLN', 'cln.npz — fused + smoothed trajectory'],
-  ['plan', 'PLN', 'plan.h5 — retargeted robot joint plan'],
-  ['replay', 'RPL', 'replay.h5 — physical replay states'],
-];
+// Row rendering is shared with the Extract tab (episodes.js); Record opts into
+// the inline edit / delete controls via `manage`.
 
 async function loadEpisodes() {
   const box = view?.querySelector('#rec-episode-list');
@@ -196,67 +191,7 @@ async function loadEpisodes() {
   let eps = [];
   try { ({ episodes: eps } = await api('GET', `/api/datasets/${encodeURIComponent(ds)}/episodes`)); }
   catch (e) { log('Failed to list episodes: ' + e, 'error'); return; }
-  box.innerHTML = eps.length ? eps.map(rowHTML).join('')
-    : '<div class="hint" style="padding:10px">no episodes yet</div>';
-}
-
-function esc(s) {
-  return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
-// "2026-08-31_13-06-43" → "2026-08-31 · 13:06:43"; anything else passes through.
-function prettyId(id) {
-  const m = /^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})$/.exec(String(id || ''));
-  return m ? `${m[1]} · ${m[2]}:${m[3]}:${m[4]}` : id;
-}
-
-function rowHTML(ep) {
-  const chips = STAGES.map(([key, label, tip]) =>
-    `<span class="badge ${ep.has?.[key] ? 'ok' : ''}" title="${tip}${ep.has?.[key] ? '' : ' (not done)'}">${label}</span>`
-  ).join('');
-
-  if (editingPath === ep.path) {
-    const hand = (ep.hand || 'right').toLowerCase();
-    return `<div class="episode-row editing" data-path="${ep.path}">
-      <span class="ep-when" title="${ep.id}">${prettyId(ep.id)}</span>
-      <input class="ep-edit-name" data-role="ep-name" placeholder="name / task"
-             value="${esc(ep.task)}">
-      <input class="ep-edit-demo" data-role="ep-demo" placeholder="demonstrator"
-             value="${esc(ep.demonstrator)}">
-      <select class="ep-edit-hand" data-role="ep-hand">
-        <option value="right"${hand === 'right' ? ' selected' : ''}>right</option>
-        <option value="left"${hand === 'left' ? ' selected' : ''}>left</option>
-      </select>
-      <div class="ep-edit-acts">
-        <button data-role="ep-edit-save">save</button>
-        <button data-role="ep-edit-cancel">cancel</button>
-      </div>
-    </div>`;
-  }
-
-  const actions = confirmDeletePath === ep.path
-    ? `<span class="hint">delete?</span>
-       <button data-role="ep-delete-yes" class="danger">yes</button>
-       <button data-role="ep-delete-no">no</button>`
-    : `<button data-role="ep-edit">edit</button>
-       <button data-role="ep-delete" class="danger">del</button>`;
-  const meta = [
-    ep.demonstrator,
-    ep.hand,
-    ep.duration_s != null ? `${ep.duration_s}s` : '',
-    ep.fps ? `${ep.fps} fps` : '',
-  ].filter(Boolean).join(' · ');
-  return `<div class="episode-row" data-path="${ep.path}">
-    <div class="ep-row-top">
-      <span class="ep-when" title="${ep.id}">${prettyId(ep.id)}</span>
-      <span class="ep-badges">${chips}</span>
-    </div>
-    <div class="ep-row-bot">
-      <span class="ep-name">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}</span>
-      ${meta ? `<span class="ep-meta">${esc(meta)}</span>` : ''}
-      <span class="ep-acts">${actions}</span>
-    </div>
-  </div>`;
+  episodes.renderList(box, eps, { manage: true, editingPath, confirmDeletePath });
 }
 
 async function doEditMeta(path, fields) {
