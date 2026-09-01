@@ -68,6 +68,12 @@ def _cmd_prepare(a) -> None:
     print(prepare_episode(_episode(a.episode), a.window, a.polyorder))
 
 
+def _cmd_hand_fit(a) -> None:
+    from viki.perception.hand_fit import refine_cln
+
+    print(refine_cln(_episode(a.episode)))
+
+
 def _cmd_retarget(a) -> None:
     from viki.retarget.run import retarget_episode
 
@@ -162,6 +168,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
     pc.add_argument("episode")
     pc.set_defaults(func=_cmd_cloud)
+
+    phf = sub.add_parser("hand-fit", help="refine cln.npz wrist poses by fitting a capsule hand to the cloud")
+    phf.add_argument("episode")
+    phf.set_defaults(func=_cmd_hand_fit)
 
     pp = sub.add_parser("prepare", help="rec.npz -> cln.npz")
     pp.add_argument("episode")

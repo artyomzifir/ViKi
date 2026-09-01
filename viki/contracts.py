@@ -496,6 +496,8 @@ CLN_KEYS: tuple[str, ...] = (
 CLN_OPTIONAL_KEYS: tuple[str, ...] = (
     "T_world_obj",  # (T, 4, 4)  — object pose track  (stub: absent)
     "T_obj_hand",  # (T, 4, 4)  — object-relative form  (stub: absent)
+    "hand_joint_angles",  # (T, nq)  — capsule-hand fit result (PERCEPTION_HAND_FIT)
+    "hand_model_nq",  # scalar int — nq of the fitted hand model
 )
 
 REPLAY_KEYS: tuple[str, ...] = (

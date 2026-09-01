@@ -39,6 +39,13 @@ CLOUD_BG_TOLERANCE_MM: float  # |depth - background| below this = static scene, 
 PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
+PERCEPTION_HAND_FIT: bool  # refine wrist pose by fitting a capsule hand to the per-frame cloud (prepare stage)
+PERCEPTION_HAND_FIT_ROI_M: float  # radius (m) of the depth ROI re-deprojected around the wrist estimate
+PERCEPTION_HAND_FIT_HUBER_M: float  # Huber δ (m) on the point→capsule data residual
+PERCEPTION_HAND_FIT_W_VEL: float  # λ_vel — temporal velocity regulariser
+PERCEPTION_HAND_FIT_W_ACC: float  # λ_acc — temporal acceleration regulariser
+PERCEPTION_HAND_FIT_W_PRIOR: float  # λ_prior — joint-limit barrier weight
+PERCEPTION_HAND_FIT_W_POSTURE: float  # λ_posture — pull fingers toward the rest pose
 KINECT_SYNC: dict  # {"master": "kinect_0", "subordinates": [...], "subordinate_delay_us": 160}; {} = software sync only
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
@@ -168,6 +175,13 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_TRACK_LM": list(range(21)),
     "PERCEPTION_INTERP_MAX_GAP": 0,
     "PERCEPTION_CONF_ALPHA": 1.0,
+    "PERCEPTION_HAND_FIT": False,
+    "PERCEPTION_HAND_FIT_ROI_M": 0.12,
+    "PERCEPTION_HAND_FIT_HUBER_M": 0.010,
+    "PERCEPTION_HAND_FIT_W_VEL": 40.0,
+    "PERCEPTION_HAND_FIT_W_ACC": 10.0,
+    "PERCEPTION_HAND_FIT_W_PRIOR": 200.0,
+    "PERCEPTION_HAND_FIT_W_POSTURE": 2.0,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
 }

@@ -422,9 +422,25 @@ def prepare_episode(
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
 
+    # Optional: refine the wrist pose by fitting a capsule hand model to the
+    # per-frame point cloud (rewrites cln.npz positions/rotations in place,
+    # adds hand_joint_angles). Off by default; also runnable standalone via
+    # `viki hand-fit`.
+    hand_fit = bool(getattr(config, "PERCEPTION_HAND_FIT", False))
+    if hand_fit:
+        try:
+            from viki.perception.hand_fit import refine_cln
+
+            refine_cln(ep)
+        except Exception:  # noqa: BLE001 — never fail prepare on the refinement
+            logger.warning("prepare %s: hand-fit refinement failed", ep.id, exc_info=True)
+            hand_fit = False
+
     with np.load(ep.cln_npz) as d:
         n = len(d["positions"])
         obj_rel = "T_obj_hand" in d
-    mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel))
+        hand_fit = hand_fit and "hand_joint_angles" in d
+    mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel),
+               hand_fit=bool(hand_fit))
     logger.info("prepare %s: %d frames -> %s", ep.id, n, ep.cln_npz)
     return str(ep.cln_npz)
