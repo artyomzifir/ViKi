@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from viki.contracts import Episode
+from viki.contracts import Episode, cln_pose_keys
 from viki.episode import read_status, stage_done
 from viki.labeling import load_labels, validate_labels
 from viki.retarget.archive import load_archive
@@ -42,8 +42,12 @@ def _eligible(ep: Episode) -> tuple[bool, str]:
 def _episode_frames(ep: Episode, fps: int) -> tuple[list[dict], str, int, list[str]]:
     """Assemble per-frame dicts from cln.npz + plan/replay .h5 (+ raw video refs)."""
     with np.load(ep.cln_npz) as cln:
-        wrist_pos = np.asarray(cln["positions"], dtype=np.float32)
-        wrist_rot = np.asarray(cln["rotations"], dtype=np.float32)
+        from viki import config
+        p_key, r_key = cln_pose_keys(
+            cln.files, getattr(config, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+        )
+        wrist_pos = np.asarray(cln[p_key], dtype=np.float32)
+        wrist_rot = np.asarray(cln[r_key], dtype=np.float32)
         omega = np.asarray(cln.get("omega", np.ones(len(wrist_pos))), dtype=np.float32)
         obj_rel = cln["T_obj_hand"] if "T_obj_hand" in cln else None
 

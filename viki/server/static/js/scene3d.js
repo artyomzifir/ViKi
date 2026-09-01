@@ -90,21 +90,24 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   const camSkelGroup = new THREE.Group();
   scene.add(camSkelGroup);
 
-  // fitted capsule hand (PERCEPTION_HAND_FIT): thin bones + fatter, darker
-  // joint blobs sized to the calibrated capsule radius.
-  const handBones = new THREE.LineSegments(
-    new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({ color: 0x7dd3fc })
+  // Fitted hand: translucent cylinders are used because WebGL ignores line
+  // widths. Reconstructing the MediaPipe joints from capsule endpoints lets us
+  // draw the complete 21-joint topology, including the palm cross-links.
+  const handBones = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(1, 1, 1, 10),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.42,
+      depthWrite: false }),
+    HAND_EDGES.length
   );
-  scene.add(handBones);
   const handJoints = new THREE.InstancedMesh(
-    new THREE.SphereGeometry(1, 12, 12),
-    new THREE.MeshBasicMaterial({ color: 0x0369a1 }),
-    64
+    new THREE.SphereGeometry(1, 12, 9),
+    new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.72,
+      depthWrite: false }),
+    21
   );
-  handJoints.count = 0;
-  handJoints.frustumCulled = false;
-  scene.add(handJoints);
+  handBones.count = handJoints.count = 0;
+  handBones.frustumCulled = handJoints.frustumCulled = false;
+  scene.add(handBones, handJoints);
 
   const palmTriad = new THREE.AxesHelper(0.05);
   palmTriad.visible = false;
@@ -169,7 +172,8 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     frustaGroup.visible = layers.frusta;
     palmTriad.visible = layers.palm && palmTriad.userData.have;
     gripDot.visible = layers.palm && gripDot.userData.have;
-    handBones.visible = handJoints.visible = layers.handFit;
+    handBones.visible = layers.handFit;
+    handJoints.visible = layers.handFit;
   }
 
   function buildBoard() {
@@ -331,30 +335,47 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     return new Float32Array(seg);
   }
 
-  const _m4 = new THREE.Matrix4();
   function updateHandFit(caps) {
-    if (!Array.isArray(caps) || !caps.length) {
-      handBones.geometry.setDrawRange(0, 0);
-      handJoints.count = 0;
+    if (!Array.isArray(caps) || caps.length < 16) {
+      handBones.count = handJoints.count = 0;
       return;
     }
-    const radii = geo?.hand_capsule_radii || [];
-    const seg = new Float32Array(caps.length * 6);
-    let ji = 0;
-    for (let c = 0; c < caps.length; c++) {
-      const a = caps[c][0], b = caps[c][1];
-      seg.set([a[0], a[1], a[2], b[0], b[1], b[2]], c * 6);
-      const r = Math.max(radii[c] || 0.008, 0.004);
-      for (const p of (caps[c])) {
-        if (ji >= handJoints.count && ji >= 64) break;
-        _m4.makeScale(r, r, r).setPosition(p[0], p[1], p[2]);
-        handJoints.setMatrixAt(ji++, _m4);
-      }
+
+    // Capsule 0 is palm; then 3 phalanges for thumb/index/middle/ring/pinky.
+    const joints = [caps[0][0]];
+    for (let start = 1; start < 16; start += 3) {
+      joints.push(caps[start][0], caps[start][1], caps[start + 1][1], caps[start + 2][1]);
     }
-    handBones.geometry.setAttribute('position', new THREE.BufferAttribute(seg, 3));
-    handBones.geometry.setDrawRange(0, seg.length / 3);
-    handBones.geometry.computeBoundingSphere();
-    handJoints.count = Math.min(ji, 64);
+    const up = new THREE.Vector3(0, 1, 0);
+    const a = new THREE.Vector3(), b = new THREE.Vector3();
+    const mid = new THREE.Vector3(), direction = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const matrix = new THREE.Matrix4();
+    let boneCount = 0;
+    for (const [ia, ib] of HAND_EDGES) {
+      a.fromArray(joints[ia]); b.fromArray(joints[ib]);
+      direction.subVectors(b, a);
+      const length = direction.length();
+      if (!Number.isFinite(length) || length < 1e-7) continue;
+      mid.addVectors(a, b).multiplyScalar(0.5);
+      rotation.setFromUnitVectors(up, direction.multiplyScalar(1 / length));
+      scale.set(0.0038, length, 0.0038);
+      matrix.compose(mid, rotation, scale);
+      handBones.setMatrixAt(boneCount++, matrix);
+    }
+    handBones.count = boneCount;
+    handBones.instanceMatrix.needsUpdate = true;
+
+    let jointCount = 0;
+    rotation.identity(); scale.setScalar(0.0052);
+    for (const p of joints) {
+      a.fromArray(p);
+      if (!Number.isFinite(a.x + a.y + a.z)) continue;
+      matrix.compose(a, rotation, scale);
+      handJoints.setMatrixAt(jointCount++, matrix);
+    }
+    handJoints.count = jointCount;
     handJoints.instanceMatrix.needsUpdate = true;
   }
 

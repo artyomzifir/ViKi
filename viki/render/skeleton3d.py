@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from viki import config
+from viki.contracts import cln_pose_keys
+
 _HAND_BONES = [
     (0, 1), (1, 2), (2, 3), (3, 4),
     (0, 5), (5, 6), (6, 7), (7, 8),
@@ -91,8 +94,11 @@ def render_episode_figure(ep, stage: str = "cln"):
             raise FileNotFoundError(f"no cln.npz for episode {ep.id}")
         with np.load(ep.cln_npz) as d:
             hand = np.asarray(d["smoothed_points"], dtype=np.float64)  # (T, 21, 3)
-            pos = np.asarray(d["positions"], dtype=np.float64)  # (T, 3)
-            rot = np.asarray(d["rotations"], dtype=np.float64)  # (T, 3, 3)
+            p_key, r_key = cln_pose_keys(
+                d.files, getattr(config, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+            )
+            pos = np.asarray(d[p_key], dtype=np.float64)  # (T, 3)
+            rot = np.asarray(d[r_key], dtype=np.float64)  # (T, 3, 3)
             valid = np.asarray(d["valid"], dtype=bool)
         T = len(pos)
         track = pos[np.isfinite(pos).all(axis=1)]

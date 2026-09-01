@@ -22,6 +22,8 @@ from viki.config import (
     ROBOT_BASE_OFFSET,
     TARGET_OFFSET,
 )
+from viki import config as viki_config
+from viki.contracts import cln_pose_keys
 
 EXTRINSICS_FILE = Path("data/extrinsics_calibration.json")
 DEBUG_FILE = Path("data/retarget_debug.json")
@@ -155,7 +157,10 @@ def load_skeleton_wrist(path: Path) -> tuple[np.ndarray, int]:
     """
     with np.load(path, allow_pickle=True) as data:
         if "positions" in data.files:
-            positions = np.asarray(data["positions"], dtype=np.float64)
+            p_key, _ = cln_pose_keys(
+                data.files, getattr(viki_config, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+            )
+            positions = np.asarray(data[p_key], dtype=np.float64)
         else:
             points = data["points"] if "points" in data.files else data["body"]
             wrist_idx = 16 if "right_hand" in data.files else 15

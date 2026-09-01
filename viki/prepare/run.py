@@ -198,6 +198,7 @@ class PreparationPipeline:
         hand_mask = landmark_ids < HAND_LM_COUNT
         if not hand_mask.all():
             points = points[:, hand_mask, :]
+            conf_all = conf_all[:, hand_mask]
             landmark_ids = landmark_ids[hand_mask]
 
         # Reconstruct per-camera trajectories (each camera may have skipped
@@ -271,6 +272,14 @@ class PreparationPipeline:
         _alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
         omega = np.clip(omega / _omax, 0.0, 1.0) ** _alpha
         omega = omega.astype(np.float32)
+        # Preserve the per-landmark signal as well as its frame aggregate.
+        # The trajectory hand fit uses this for a confidence-weighted anchor;
+        # collapsing it into omega would make an occluded fingertip as trusted
+        # as a clearly observed wrist in the same frame.
+        _cmax = float(np.nanmax(grid_conf)) if grid_conf.size else 0.0
+        landmark_confidence = (
+            np.clip(grid_conf / (_cmax or 1.0), 0.0, 1.0).astype(np.float32)
+        )
 
         # 4. Compute end-effector poses on the smoothed fused trajectory.
         T = fused_points.shape[0]
@@ -338,6 +347,7 @@ class PreparationPipeline:
             rpy=rpy,
             valid=valid,
             omega=omega,
+            landmark_confidence=landmark_confidence,
             gripper=gripper,
             timestamps=grid,
             raw_points=raw_fused.astype(np.float32),
@@ -423,10 +433,9 @@ def prepare_episode(
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
 
-    # Optional: refine the wrist pose by fitting a capsule hand model to the
-    # per-frame point cloud (rewrites cln.npz positions/rotations in place,
-    # adds hand_joint_angles). Off by default; also runnable standalone via
-    # `viki hand-fit`.
+    # Optional trajectory-level capsule fit. It appends hand_fit_* arrays and
+    # deliberately leaves landmark-derived positions/rotations untouched.
+    # Also runnable standalone via `viki hand-fit`.
     hand_fit = bool(getattr(config, "PERCEPTION_HAND_FIT", False))
     if hand_fit:
         try:
@@ -440,7 +449,7 @@ def prepare_episode(
     with np.load(ep.cln_npz) as d:
         n = len(d["positions"])
         obj_rel = "T_obj_hand" in d
-        hand_fit = hand_fit and "hand_joint_angles" in d
+        hand_fit = hand_fit and "hand_fit_joint_angles" in d
     mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel),
                hand_fit=bool(hand_fit))
     logger.info("prepare %s: %d frames -> %s", ep.id, n, ep.cln_npz)

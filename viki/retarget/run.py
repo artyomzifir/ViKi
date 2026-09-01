@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 from viki.config import MODELS_DIR
 import viki.config as viki_config
+from viki.contracts import cln_pose_keys
 from .archive import write_hdf5_archive
 
 
@@ -255,8 +256,11 @@ def load_smoothed_targets(
         missing = sorted(SMOOTHED_TARGET_KEYS.difference(data.files))
         if missing:
             raise KeyError(f"{sample_path} is missing smoothed target keys: {', '.join(missing)}.")
-        positions = np.asarray(data["positions"], dtype=np.float64)
-        rotations = np.asarray(data["rotations"], dtype=np.float64)
+        p_key, r_key = cln_pose_keys(
+            data.files, getattr(viki_config, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+        )
+        positions = np.asarray(data[p_key], dtype=np.float64)
+        rotations = np.asarray(data[r_key], dtype=np.float64)
         valid = np.asarray(data["valid"], dtype=bool)
         timestamps_us = np.asarray(data["timestamps"], dtype=np.int64)
         omega = (
@@ -867,8 +871,11 @@ def retarget_episode(ep, robot: str | None = None) -> str:
     logger.info("retarget: episode=%s robot=%s", ep.id, robot or getattr(_cfg, "RETARGET_DEFAULT_ROBOT", "ur10"))
 
     with np.load(ep.cln_npz) as d:
-        positions = np.asarray(d["positions"])
-        rotations = np.asarray(d["rotations"])
+        p_key, r_key = cln_pose_keys(
+            d.files, getattr(_cfg, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+        )
+        positions = np.asarray(d[p_key])
+        rotations = np.asarray(d[r_key])
         validity = np.asarray(d["valid"])
         omega = np.asarray(d["omega"]) if "omega" in d.files else None
         fps = estimate_fps(np.asarray(d["timestamps"]))

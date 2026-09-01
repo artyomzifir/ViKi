@@ -8,7 +8,8 @@ point cloud (:mod:`viki.perception.hand_fit`).
 Why a capsule model, why these radii
 ------------------------------------
 The hand is a kinematic tree: a free-flyer ``wrist`` (the 6-DOF we ultimately
-want) plus 5 finger chains. Each phalanx and each palm metacarpal is a **capsule**
+want) plus 5 finger chains. Each phalanx is a **capsule** and the palm is one
+broad longitudinal capsule
 (line segment + radius) — the cheapest primitive whose signed point distance has
 a closed form and a smooth Jacobian, and a good geometric proxy for a finger.
 
@@ -55,7 +56,7 @@ _JOINTS: dict[str, tuple[str, str, str, str]] = {
 
 RADIUS_FRAC = 0.35
 _R_MIN, _R_MAX = 0.006, 0.014          # m — human phalanx radius band
-_PALM_R = 0.012                        # m — metacarpal capsule radius
+_PALM_R = 0.024                        # m — broad palm proxy radius
 _FLEX_LIM = (-0.25, 1.95)              # rad
 _ABD_LIM = (-0.45, 0.45)
 _THUMB_ABD_LIM = (-0.7, 1.0)
@@ -64,7 +65,12 @@ _THUMB_FLEX_LIM = (-0.4, 1.4)
 
 @dataclass
 class HandParams:
-    """Calibrated rest geometry, all in the palm frame (x≈forward, z≈palm normal)."""
+    """Calibrated rest geometry in the right-hand palm frame.
+
+    ``x`` points wrist→fingers and ``+z`` points out through the palmar (grasp)
+    side. Positive flexion must therefore curl a finger from ``+x`` toward
+    ``+z``, which is a rotation about local ``-y``.
+    """
     root_xyz: dict[str, np.ndarray]      # finger -> (3,) MCP/CMC position
     root_rpy: dict[str, np.ndarray]      # finger -> (3,) rot so local +x = finger axis
     bone_len: dict[str, np.ndarray]      # finger -> (3,) proximal/middle/distal lengths (m)
@@ -170,7 +176,15 @@ def calibrate_from_frames(frames: list[Mapping[LM, np.ndarray]]) -> HandParams:
         root_rpy[f] = _rpy_for_dir(np.median(np.stack(dirs), axis=0))
         radius[f] = np.clip(RADIUS_FRAC * bl, _R_MIN, _R_MAX)
 
-    return HandParams(root_xyz, root_rpy, bone_len, radius)
+    # One broad wrist→middle-MCP capsule is a conservative palm proxy. The
+    # former five overlapping metacarpal capsules counted dense palm pixels
+    # five times and caused unstable switches between coincident primitives.
+    palm_width = float(np.linalg.norm(root_xyz["index"] - root_xyz["pinky"]))
+    # Keep the proxy narrower than half the palm span: an overly spherical
+    # capsule steals correspondences from proximal phalanges and makes wrist
+    # roll weakly observable. The adaptive ROI adds its own 3 cm margin.
+    palm_r = float(np.clip(0.32 * palm_width, 0.020, 0.030))
+    return HandParams(root_xyz, root_rpy, bone_len, radius, palm_r=palm_r)
 
 
 # ── URDF generation + Pinocchio model ─────────────────────────────────────
@@ -210,15 +224,15 @@ def _urdf(params: HandParams) -> str:
             f'<axis xyz="0 0 1"/><limit lower="{lo_a}" upper="{hi_a}" effort="1" velocity="1"/></joint>\n'
             f'  <joint name="{j_mcp}" type="revolute">'
             f'<parent link="{f}_mcp_link"/><child link="{f}_prox"/>'
-            f'<origin xyz="0 0 0"/><axis xyz="0 1 0"/>'
+            f'<origin xyz="0 0 0"/><axis xyz="0 -1 0"/>'
             f'<limit lower="{lo_f}" upper="{hi_f}" effort="1" velocity="1"/></joint>\n'
             f'  <joint name="{j_pip}" type="revolute">'
             f'<parent link="{f}_prox"/><child link="{f}_mid"/>'
-            f'<origin xyz="{L[0]:.6f} 0 0"/><axis xyz="0 1 0"/>'
+            f'<origin xyz="{L[0]:.6f} 0 0"/><axis xyz="0 -1 0"/>'
             f'<limit lower="{lo_f}" upper="{hi_f}" effort="1" velocity="1"/></joint>\n'
             f'  <joint name="{j_dip}" type="revolute">'
             f'<parent link="{f}_mid"/><child link="{f}_dist"/>'
-            f'<origin xyz="{L[1]:.6f} 0 0"/><axis xyz="0 1 0"/>'
+            f'<origin xyz="{L[1]:.6f} 0 0"/><axis xyz="0 -1 0"/>'
             f'<limit lower="{lo_f}" upper="{hi_f}" effort="1" velocity="1"/></joint>\n'
             f'  <joint name="{f}_tip_j" type="fixed">'
             f'<parent link="{f}_dist"/><child link="{f}_tip"/>'
@@ -260,9 +274,11 @@ def build(params: HandParams) -> CapsuleHand:
     fid = model.getFrameId
     caps: list[tuple[int, int, float]] = []
     lm_frames: dict[int, int] = {int(LM.WRIST): fid("wrist_link")}
+    # A single broad capsule keeps the proven capsule-distance Jacobian while
+    # approximating the palm plate without overlapping five primitives.
+    caps.append((fid("wrist_link"), fid("middle_prox"), params.palm_r))
     for f, lms in FINGERS.items():
         r = params.radius[f]
-        caps.append((fid("wrist_link"), fid(f"{f}_prox"), params.palm_r))
         caps.append((fid(f"{f}_prox"), fid(f"{f}_mid"), float(r[0])))
         caps.append((fid(f"{f}_mid"), fid(f"{f}_dist"), float(r[1])))
         caps.append((fid(f"{f}_dist"), fid(f"{f}_tip"), float(r[2])))
@@ -327,20 +343,34 @@ def capsule_radii(hand: CapsuleHand) -> np.ndarray:
     return np.array([r for _a, _b, r in hand.capsules], float)
 
 
-def _angle(u: np.ndarray, v: np.ndarray) -> float:
-    nu, nv = np.linalg.norm(u), np.linalg.norm(v)
-    if nu < 1e-9 or nv < 1e-9:
+def _signed_angle(u: np.ndarray, v: np.ndarray, axis: np.ndarray) -> float:
+    """Full u→v angle with its sign determined by ``axis``.
+
+    Landmarks are noisy and their measured bend is rarely perfectly coplanar
+    with the model's flexion axis. Using ``atan2(axis·cross, dot)`` therefore
+    collapses a real bend toward zero as soon as the cross product tilts away
+    from that axis. Keep the full ``acos(dot)`` magnitude and use the projected
+    cross product only for the sign.
+    """
+    u = np.asarray(u, float); v = np.asarray(v, float); axis = np.asarray(axis, float)
+    nu, nv, na = np.linalg.norm(u), np.linalg.norm(v), np.linalg.norm(axis)
+    if min(nu, nv, na) < 1e-9:
         return 0.0
-    c = float(np.clip(np.dot(u, v) / (nu * nv), -1.0, 1.0))
-    return float(np.arccos(c))
+    u, v, axis = u / nu, v / nv, axis / na
+    dot = float(np.clip(np.dot(u, v), -1.0, 1.0))
+    magnitude = float(np.arccos(dot))
+    projected_cross = float(np.dot(axis, np.cross(u, v)))
+    return magnitude if projected_cross >= 0.0 else -magnitude
 
 
 def q_from_landmarks(hand: CapsuleHand, pts: Mapping[LM, np.ndarray]) -> np.ndarray:
     """Geometric warm start for ``q`` from a fused ``{LM: world xyz}`` frame.
 
-    Wrist SE(3) is taken exactly from the palm frame; each finger's flexion
-    angles are the (unsigned) angles between consecutive landmark bones, clamped
-    to the joint limits. Missing landmarks → that joint stays at 0 (rest).
+    Wrist SE(3) is taken from the palm frame. Abduction is the signed in-plane
+    component of the proximal bone relative to its calibrated root direction;
+    flexion is signed about the calibrated finger flexion axis. This removes the
+    old ``arccos`` ambiguity and initializes abduction. Missing landmarks leave
+    the corresponding joints at rest.
     """
     import pinocchio as pin
 
@@ -351,9 +381,6 @@ def q_from_landmarks(hand: CapsuleHand, pts: Mapping[LM, np.ndarray]) -> np.ndar
         se3 = pin.SE3(R, w)
         q[:7] = pin.SE3ToXYZQUAT(se3)      # free-flyer: xyz + xyzw quaternion
 
-    # forward direction of the palm (local +x) in world, for the MCP flex angle
-    fwd_w = (R @ np.array([1.0, 0.0, 0.0])) if pf is not None else np.array([1.0, 0.0, 0.0])
-
     for f, lms in FINGERS.items():
         pp = [pts.get(lm) for lm in lms]
         if any(p is None or not np.all(np.isfinite(p)) for p in pp):
@@ -361,10 +388,22 @@ def q_from_landmarks(hand: CapsuleHand, pts: Mapping[LM, np.ndarray]) -> np.ndar
         pp = [np.asarray(p, float) for p in pp]
         bones = [pp[1] - pp[0], pp[2] - pp[1], pp[3] - pp[2]]
         abd, j_mcp, j_pip, j_dip = _JOINTS[f]
+        R_palm = R if pf is not None else np.eye(3)
+        R_root = pin.rpy.rpyToMatrix(np.asarray(hand.params.root_rpy[f], float))
+        d0 = R_root.T @ R_palm.T @ bones[0]
+        abd_angle = float(np.arctan2(d0[1], d0[0]))
+        ca, sa = np.cos(abd_angle), np.sin(abd_angle)
+        R_abd = np.array([[ca, -sa, 0.0], [sa, ca, 0.0], [0.0, 0.0, 1.0]])
+        # The active right-hand model curls toward palm +z, hence local -y.
+        # Keep this identical to the URDF joint axes above or the warm start
+        # will bend toward the back of the hand.
+        flex_axis_w = R_palm @ R_root @ R_abd @ np.array([0.0, -1.0, 0.0])
+        rest_dir_w = R_palm @ R_root @ R_abd @ np.array([1.0, 0.0, 0.0])
         ang = {
-            j_mcp: _angle(fwd_w, bones[0]),
-            j_pip: _angle(bones[0], bones[1]),
-            j_dip: _angle(bones[1], bones[2]),
+            abd: abd_angle,
+            j_mcp: _signed_angle(rest_dir_w, bones[0], flex_axis_w),
+            j_pip: _signed_angle(bones[0], bones[1], flex_axis_w),
+            j_dip: _signed_angle(bones[1], bones[2], flex_axis_w),
         }
         for jname, a in ang.items():
             jid = hand.model.getJointId(jname)
