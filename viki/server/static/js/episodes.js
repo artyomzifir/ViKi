@@ -49,7 +49,18 @@ function editingRowHTML(ep) {
   </div>`;
 }
 
-// o: { select, selected:Set, view, manage, activeId, editingPath, confirmDeletePath }
+// A post-capture cloud-build bar shown on one row (Record: the take just
+// recorded). cp = { id, status, pct, label }.
+function cloudBarHTML(cp) {
+  const pct = cp.status === 'done' ? 100 : (cp.status === 'running' ? (cp.pct || 0) : 0);
+  return `<span class="ep-cloud ${cp.status || ''}">
+    <span class="perc-bar"><i style="width:${pct}%"></i></span>
+    <span class="ep-cloud-lbl">${esc(cp.label || '')}</span>
+  </span>`;
+}
+
+// o: { select, selected:Set, view, manage, activeId, editingPath,
+//      confirmDeletePath, cloudProgress:{id,status,pct,label} }
 export function rowHTML(ep, o = {}) {
   if (o.manage && o.editingPath === ep.path) return editingRowHTML(ep);
 
@@ -84,6 +95,7 @@ export function rowHTML(ep, o = {}) {
       <span class="ep-name">${ep.task ? esc(ep.task) : '<i>unnamed</i>'}</span>
       ${meta ? `<span class="ep-meta">${esc(meta)}</span>` : ''}
       ${acts ? `<span class="ep-acts">${acts}</span>` : ''}
+      ${o.cloudProgress && o.cloudProgress.id === ep.id ? cloudBarHTML(o.cloudProgress) : ''}
     </div>
   </div>`;
 }

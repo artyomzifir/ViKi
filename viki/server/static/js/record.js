@@ -8,6 +8,7 @@ import * as episodes from './episodes.js';
 let view = null;
 let onCamerasChanged = null;
 let cloudPoll = null;            // interval id for the post-capture cloud-build bar
+let cloudProg = null;            // { id, status, pct, label } — bar shown on that episode row
 let recording = false;
 let builtIds = '';               // csv of device ids currently rendered as cards
 let editingPath = null;          // episode row in inline metadata-edit mode
@@ -71,8 +72,7 @@ function template() {
           <input type="text" id="rec-cl-bbox" placeholder="x0,x1,y0,y1,z0,z1 (m)" value="${(cl.bbox || []).join(', ')}"></div>
         <label class="cfg-row"><span>Subtract calibrated background</span>
           <input type="checkbox" id="rec-cl-bg" ${cl.bgSubtract !== false ? 'checked' : ''}></label>
-        <div class="hint">drops points matching the empty-scene depth from the preset — lighter cloud, cleaner segmentation. Needs "Grab background depth" on the calibration preset.</div>
-        <div id="rec-cloud-progress" class="perc-queue"></div>
+        <div class="hint">drops points matching the empty-scene depth from the preset — lighter cloud, cleaner segmentation. The build progress shows on the episode row once the capture ends.</div>
       </section>
     </aside>
   </div>`;
@@ -191,7 +191,7 @@ async function loadEpisodes() {
   let eps = [];
   try { ({ episodes: eps } = await api('GET', `/api/datasets/${encodeURIComponent(ds)}/episodes`)); }
   catch (e) { log('Failed to list episodes: ' + e, 'error'); return; }
-  episodes.renderList(box, eps, { manage: true, editingPath, confirmDeletePath });
+  episodes.renderList(box, eps, { manage: true, editingPath, confirmDeletePath, cloudProgress: cloudProg });
 }
 
 async function doEditMeta(path, fields) {
@@ -342,13 +342,13 @@ function persistCloud() {
 }
 
 // Poll the job queue for this episode's cloud build and draw a progress bar
-// (same look as the Extract-tab queue). Stops itself on done / error.
+// inline on that episode's row (under the name, next to edit / del). Stops
+// itself on done / error.
 function watchCloud(episodeId) {
-  const box = view?.querySelector('#rec-cloud-progress');
-  if (!box || !episodeId) return;
+  if (!episodeId) return;
   if (cloudPoll) clearInterval(cloudPoll);
-  box.innerHTML = `<div class="perc-job queued"><span class="perc-job-ep">${episodeId}</span>
-    <span class="perc-job-st">cloud queued…</span><span class="perc-bar"><i style="width:0%"></i></span></div>`;
+  cloudProg = { id: episodeId, status: 'queued', pct: 0, label: 'cloud queued…' };
+  loadEpisodes();   // re-render the list so the fresh row carries the bar
   cloudPoll = setInterval(async () => {
     let jobs;
     try { ({ jobs } = await api('GET', '/api/pipeline/jobs')); } catch { return; }
@@ -356,18 +356,38 @@ function watchCloud(episodeId) {
     if (!j) return;
     const p = j.progress || {};
     const pct = p.total ? Math.round(100 * (p.frame || 0) / p.total) : 0;
-    const label = j.status === 'queued' ? `queued #${j.queue_pos ?? ''}`
-      : j.status === 'running' ? `cloud ${p.frame || 0}/${p.total || '?'}`
-        : j.status;
-    box.innerHTML = `<div class="perc-job ${j.status}"><span class="perc-job-ep">${episodeId}</span>
-      <span class="perc-job-st">${label}</span>
-      <span class="perc-bar"><i style="width:${j.status === 'done' ? 100 : (j.status === 'running' ? pct : 0)}%"></i></span></div>`;
+    cloudProg = {
+      id: episodeId,
+      status: j.status,
+      pct,
+      label: j.status === 'queued' ? `cloud queued #${j.queue_pos ?? ''}`
+        : j.status === 'running' ? `cloud ${p.frame || 0}/${p.total || '?'}`
+          : `cloud ${j.status}`,
+    };
+    paintCloudBar();
     if (j.status === 'done' || j.status === 'error') {
       clearInterval(cloudPoll); cloudPoll = null;
-      if (j.status === 'done') { log(`Cloud built for ${episodeId}`, 'ok'); loadEpisodes(); }
-      else log(`Cloud build failed for ${episodeId}: ${j.error}`, 'error');
+      const ok = j.status === 'done';
+      cloudProg = null;
+      loadEpisodes();   // drop the bar, refresh stage badges
+      ok ? log(`Cloud built for ${episodeId}`, 'ok')
+        : log(`Cloud build failed for ${episodeId}: ${j.error}`, 'error');
     }
   }, 1000);
+}
+
+// Repaint just the one row's bar — no full list re-render, so hover / an
+// in-progress edit elsewhere in the list survive the 1 s tick.
+function paintCloudBar() {
+  if (!cloudProg || !view) return;
+  // Not on screen (other dataset) or that row is mid-edit (no bar slot) — skip;
+  // the next full loadEpisodes() re-renders the bar from cloudProg.
+  const bar = view.querySelector(`.episode-row[data-id="${cloudProg.id}"] .ep-cloud`);
+  if (!bar) return;
+  const pct = cloudProg.status === 'done' ? 100 : (cloudProg.status === 'running' ? cloudProg.pct : 0);
+  bar.className = `ep-cloud ${cloudProg.status}`;
+  bar.querySelector('i').style.width = pct + '%';
+  bar.querySelector('.ep-cloud-lbl').textContent = cloudProg.label;
 }
 
 // ── mount / unmount ──────────────────────────────────────────────────────
@@ -389,6 +409,7 @@ export function unmount() {
   if (onCamerasChanged) document.removeEventListener('cameras:changed', onCamerasChanged);
   onCamerasChanged = null;
   if (cloudPoll) { clearInterval(cloudPoll); cloudPoll = null; }
+  cloudProg = null;
   view?.querySelectorAll('.streams img').forEach(img => { img.src = ''; });
   recording = false;
   cameras.setRecording(false);

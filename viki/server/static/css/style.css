@@ -289,6 +289,13 @@ header h1 {
 .episode-row .ep-badges { display: flex; gap: 3px; flex-shrink: 0; }
 .episode-row .ep-acts { display: flex; gap: 5px; margin-left: auto; }
 .episode-row button { padding: 2px 7px; font-size: 10px; }
+/* post-capture cloud-build bar: wraps to its own line under name + edit/del */
+.episode-row .ep-cloud { width: 100%; display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 10px; color: var(--muted); }
+.episode-row .ep-cloud .perc-bar { flex: 1; width: auto; }
+.episode-row .ep-cloud.done .perc-bar i { background: var(--green); }
+.episode-row .ep-cloud.error { color: var(--red); }
+.episode-row .ep-cloud.error .perc-bar i { background: var(--red); }
+.episode-row .ep-cloud-lbl { white-space: nowrap; }
 .episode-row.editing { gap: 5px; }
 .episode-row.editing input, .episode-row.editing select { width: 100%; padding: 3px 6px; font-size: 11px; }
 .episode-row.editing .ep-edit-acts { display: flex; gap: 6px; }
