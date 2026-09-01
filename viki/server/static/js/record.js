@@ -18,9 +18,9 @@ let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 // ── template ──────────────────────────────────────────────────────────────
 
 function template() {
-  const cfg = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
-  const rec = { duration: cfg.duration ?? 10, fps: cfg.fps ?? 15, ...sessionGet('record', {}) };
-  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2] }), ...sessionGet('cloud', {}) };
+  const cfg = FRONTEND_CONFIG.recording || { duration: 20, fps: 30 };
+  const rec = { duration: cfg.duration ?? 20, fps: cfg.fps ?? 30, ...sessionGet('record', {}) };
+  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [-0.8, 0.8, -0.8, 0.8, -0.8, 1.2] }), ...sessionGet('cloud', {}) };
   return `
   <div class="record-tab">
     <aside class="record-leftcol">
@@ -266,8 +266,8 @@ async function record() {
     dataset: currentDataset(),
     task: view.querySelector('#rec-task').value,
     demonstrator: view.querySelector('#rec-demo').value,
-    seconds: +view.querySelector('#rec-seconds').value || 10,
-    fps: +view.querySelector('#rec-fps').value || 15,
+    seconds: +view.querySelector('#rec-seconds').value || 20,
+    fps: +view.querySelector('#rec-fps').value || 30,
     cloud: cloudOpts(),
   };
   if (!activeCalib) { log('Select a calibration preset first', 'error'); return; }
@@ -356,8 +356,8 @@ function onChange(e) {
 
 function persistRec() {
   sessionPatch('record', {
-    duration: +view.querySelector('#rec-seconds').value || 10,
-    fps: +view.querySelector('#rec-fps').value || 15,
+    duration: +view.querySelector('#rec-seconds').value || 20,
+    fps: +view.querySelector('#rec-fps').value || 30,
     dataset: view.querySelector('#rec-dataset').value || '',
   });
 }

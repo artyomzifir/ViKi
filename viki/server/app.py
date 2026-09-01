@@ -64,8 +64,33 @@ async def lifespan(app: FastAPI):
     if applied:
         logging.getLogger(__name__).info("active calibration preset: %s", applied)
     app.state.calibrator.load_all_extrinsics()
+    _prefetch_models()
     yield
     app.state.manager.stop_all()
+
+
+# The two models with a working backend — fetched in the background on every
+# start so they're ready the moment someone hits Extract. mmpose-heatmap models
+# have no published ONNX, so they're never auto-fetched.
+_PREFETCH_MODELS = ("rtmpose-m-hand5", "mediapipe")
+
+
+def _prefetch_models() -> None:
+    from viki.perception.backends import registry
+    from viki.server import jobs
+
+    for mid in _PREFETCH_MODELS:
+        try:
+            if registry.is_present(mid):
+                continue
+        except Exception:  # noqa: BLE001
+            pass
+        jobs.submit(
+            "download",
+            (lambda report, log, m=mid: registry.download(m, report, log)),
+            episode=mid,
+        )
+        logging.getLogger(__name__).info("prefetch: queued download for %s", mid)
 
 
 app = FastAPI(title="ViKi Server", lifespan=lifespan)

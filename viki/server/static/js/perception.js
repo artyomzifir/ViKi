@@ -14,8 +14,7 @@ const LM_NAMES = [
   'pinky_mcp', 'pinky_pip', 'pinky_dip', 'pinky_tip',
 ];
 const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need these
-// wrist + the whole thumb + the whole index (to read the action) + M/R/P MCP
-const DEFAULT_LM = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 17];
+const DEFAULT_LM = [...Array(21).keys()];           // track every landmark by default
 const LAYER_LABELS = {
   cloud: 'cloud', perCamera: 'per-camera', fused: 'fused', trajectory: 'traj',
   palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox',
@@ -39,9 +38,10 @@ const HAND_EDGES = [
 ];
 
 const DEFAULT_OPTS = {
-  model: 'mediapipe', hand: 'right', flip: false,
+  model: 'rtmpose-m-hand5', hand: 'right', flip: false,
   track_lm: DEFAULT_LM, min_confidence: 0.5, interp_max_gap: 0,
-  sg_window: 7, sg_polyorder: 2, build_cloud: true, cloud_stride: 1, dataset: '',
+  sg_window: 7, sg_polyorder: 2,
+  regen_cloud: false, cloud_stride: 1, cloud_bbox: '', dataset: '',
 };
 
 let root = null, ctl = null, models = {}, epList = [], poll = 0, viewedEp = null;
@@ -56,6 +56,8 @@ export function mount(view) {
       <div class="cfg-row"><label>Dataset</label><select data-role="dataset"></select></div>
       <div class="perc-eps" data-role="eps"></div>
       <label class="perc-all"><input type="checkbox" data-role="all"> select all</label>
+      <label class="perc-all" title="rebuild the point cloud too (e.g. to widen the workspace AABB below); off by default — the cloud is already built right after recording">
+        <input type="checkbox" data-role="regen-cloud" ${S.regen_cloud ? 'checked' : ''}> regenerate cloud</label>
       <button class="primary" data-role="process">Process</button>
     </aside>
 
@@ -90,9 +92,9 @@ export function mount(view) {
 
       <section class="calib-sec">
         <div class="calib-sec-title">2 · Track landmarks</div>
-        <div class="hint">click a joint to include / drop it (locked = needed for EE pose + gripper)</div>
+        <div class="hint">all 21 tracked by default — click a joint to drop it (locked = needed for EE pose + gripper)</div>
         <svg class="perc-hand" data-role="handmap" viewBox="0 0 100 105"></svg>
-        <div class="hint" data-role="track-sum">12 / 21</div>
+        <div class="hint" data-role="track-sum">21 / 21</div>
       </section>
 
       <section class="calib-sec">
@@ -105,9 +107,13 @@ export function mount(view) {
           <input type="number" data-role="sgwin" min="3" step="2" value="${S.sg_window}"></div>
         <div class="cfg-row"><label>SG polyorder</label>
           <input type="number" data-role="sgpoly" min="1" value="${S.sg_polyorder}"></div>
-        <div class="cfg-row"><label>Build cloud</label>
-          <input type="checkbox" data-role="cloud" ${S.build_cloud ? 'checked' : ''}></div>
-        <div class="cfg-row"><label>Cloud stride</label>
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">Cloud (only if "regenerate cloud")</div>
+        <div class="rec-field"><label>Workspace AABB <span class="hint">— x0,x1,y0,y1,z0,z1 (m); empty = full scene</span></label>
+          <input type="text" data-role="cloud-bbox" placeholder="-0.8,0.8,-0.8,0.8,-0.8,1.2" value="${S.cloud_bbox || ''}"></div>
+        <div class="cfg-row"><label>Depth stride</label>
           <input type="number" data-role="stride" min="1" max="12" value="${S.cloud_stride}"></div>
       </section>
 
@@ -189,7 +195,7 @@ function renderHand(sel) {
   const dot = (i) => {
     const req = REQUIRED_LM.has(i);
     const cls = `${set.has(i) ? 'on' : ''} ${req ? 'req' : ''}`.trim();
-    return `<circle data-lm="${i}" class="${cls}" cx="${HAND_XY[i][0]}" cy="${HAND_XY[i][1]}" r="3.6">
+    return `<circle data-lm="${i}" class="${cls}" cx="${HAND_XY[i][0]}" cy="${HAND_XY[i][1]}" r="4.4">
       <title>${i} ${LM_NAMES[i]}${req ? ' (locked)' : ''}</title></circle>`;
   };
   root.querySelector('[data-role="handmap"]').innerHTML =
@@ -226,8 +232,11 @@ function renderLayers() {
 // back keeps every setting.
 function persist() {
   if (!root) return;
+  const o = opts();
   sessionSet('perceive', {
-    ...opts(),
+    ...o,
+    regen_cloud: o.build_cloud,
+    cloud_bbox: root.querySelector('[data-role="cloud-bbox"]').value || '',
     model: root.querySelector('[data-role="model"]').value || '',
     dataset: root.querySelector('[data-role="dataset"]').value || '',
   });
@@ -282,8 +291,10 @@ function syncAllCheckbox() {
 // ── run + queue ───────────────────────────────────────────────────────
 
 function opts() {
+  const bbox = (root.querySelector('[data-role="cloud-bbox"]').value || '')
+    .split(',').map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
   return {
-    model: root.querySelector('[data-role="model"]').value || 'mediapipe',
+    model: root.querySelector('[data-role="model"]').value || 'rtmpose-m-hand5',
     hand: root.querySelector('[data-role="hand"]').value,
     flip: root.querySelector('[data-role="flip"]').checked,
     track_lm: trackSelection(),
@@ -291,8 +302,9 @@ function opts() {
     interp_max_gap: +root.querySelector('[data-role="gap"]').value,
     sg_window: +root.querySelector('[data-role="sgwin"]').value,
     sg_polyorder: +root.querySelector('[data-role="sgpoly"]').value,
-    build_cloud: root.querySelector('[data-role="cloud"]').checked,
+    build_cloud: root.querySelector('[data-role="regen-cloud"]').checked,
     cloud_stride: +root.querySelector('[data-role="stride"]').value,
+    cloud_bbox: bbox.length === 6 ? bbox : null,
   };
 }
 

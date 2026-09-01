@@ -86,8 +86,12 @@ async def perceive(req: _PerceiveReq):
     for ep_ref in req.episodes:
         ep = _episode(ep_ref)
         opts = dict(req.opts)
+        # The cloud is built right after recording; Extract only rebuilds it when
+        # the "regenerate cloud" box is ticked (e.g. to widen the workspace AABB).
         want_cloud = bool(opts.pop("build_cloud", False))
-        cloud_stride = opts.get("cloud_stride")
+        cloud_stride = opts.pop("cloud_stride", None)
+        cloud_bbox = opts.pop("cloud_bbox", None)
+        cloud_voxel = opts.pop("cloud_voxel", None)
 
         def _job(report, log, ep=ep, opts=opts):
             from viki.perception.run import perceive_episode
@@ -98,11 +102,12 @@ async def perceive(req: _PerceiveReq):
         ids.append(jobs.submit("perceive", _job, episode=ep.id))
 
         if want_cloud:
-            def _cloud_job(report, log, ep=ep, stride=cloud_stride):
+            def _cloud_job(report, log, ep=ep, stride=cloud_stride,
+                           bbox=cloud_bbox, voxel=cloud_voxel):
                 from viki.perception.cloud import build_cloud
 
-                log(f"cloud {ep.id}")
-                return build_cloud(ep, stride=stride, report=report)
+                log(f"cloud {ep.id} (regenerate, bbox={bbox})")
+                return build_cloud(ep, stride=stride, bbox=bbox, voxel=voxel, report=report)
 
             ids.append(jobs.submit("cloud", _cloud_job, episode=ep.id, lane="cloud"))
     return {"job_ids": ids}
