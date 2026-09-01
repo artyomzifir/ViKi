@@ -322,23 +322,29 @@ class ArucoWorker(_CalibrationWorker):
             self._logger.debug(msg)
             raise RuntimeError(msg)
 
+        obj_v, img_v = np.vstack(obj_pts), np.vstack(img_pts)
         ret, rvec, tvec = cv2.solvePnP(
-            np.vstack(obj_pts),
-            np.vstack(img_pts),
-            camera_matrix,
-            dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE,
+            obj_v, img_v, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE,
         )
         if not ret:
             msg = f"{self.device_id} extrinsics: pose estimation failed"
             self._logger.debug(msg)
             raise RuntimeError(msg)
 
+        # Reprojection RMS — a healthy solve is ~1 px. A large value means the
+        # intrinsics don't match the images (wrong resolution) or the board
+        # moved between captures; either way the pose is not trustworthy.
+        proj, _ = cv2.projectPoints(obj_v, rvec, tvec, camera_matrix, dist_coeffs)
+        rms = float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - img_v) ** 2, axis=1))))
+        msg = (f"{self.device_id} extrinsics: {len(obj_v)} pts from {len(obj_pts)} "
+               f"set(s), reproj RMS {rms:.2f} px")
+        (self._logger.warning if rms > 3.0 else self._logger.info)(
+            msg + ("  — POSE UNRELIABLE, check intrinsics resolution / board" if rms > 3.0 else "")
+        )
+
         rvec, tvec = canonical_board_extrinsics(
             rvec, tvec, self.board_params.board_size, self.board_params.square_size
         )
-
-        self._logger.debug(f"{self.device_id} extrinsics: success")
         return CalibrationExtrinsics(rvec=rvec, tvec=tvec)
 
     def mark_board(self, frame: Frame) -> np.ndarray:

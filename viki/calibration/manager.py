@@ -288,33 +288,43 @@ class CalibrationManager:
             self.write_intrinsics(device_id, intrinsics, path)
         self._intrinsics[device_id] = intrinsics
 
+    def _live_intrinsics(self, device_id: str) -> CalibrationIntrinsics | None:
+        """The running camera's SDK-reported colour intrinsics, if any. These
+        match the resolution actually in use; the stored file may be stale
+        (solved at another resolution → a wrong-scale K makes the extrinsics
+        solve land the board tens of cm off)."""
+        frame = self._mgr.latest_frame(device_id)
+        ci = getattr(frame, "color_intrinsics", None) if frame else None
+        if ci is None or not (ci.fx > 0 and ci.fy > 0):
+            return None
+        import numpy as np
+
+        return CalibrationIntrinsics(
+            fx=float(ci.fx), fy=float(ci.fy), cx=float(ci.cx), cy=float(ci.cy),
+            dist_coeffs=np.asarray(getattr(ci, "dist_coeffs", np.zeros(5)), dtype=np.float64),
+        )
+
     def get_intrinsics(
         self, device_id: str, path: str = ""
     ) -> CalibrationIntrinsics | None:
         """
         Retrieve intrinsics for a device.
 
-        If `path` is provided, it loads from that file first.
-        Otherwise, it checks the internal cache, then falls back to the
-        default intrinsics file (`INTRINSICS_FILENAME`).
-
-        Parameters
-        ----------
-        device_id : str
-            Camera identifier.
-        path : str
-            Optional specific file to load from.
-
-        Returns
-        -------
-        Optional[CalibrationIntrinsics]
-            Intrinsics or None if not found.
+        Resolution order: an explicit ``path`` → the **live SDK intrinsics** of
+        the running camera → the internal cache → the default intrinsics file.
+        The live path is preferred because the stored file can be from a session
+        at a different colour resolution, which corrupts the extrinsics solve.
         """
         if path != "":
             self.load_intrinsics(device_id, path)
-        elif device_id not in self._intrinsics:
+            return self._intrinsics.get(device_id)
+
+        live = self._live_intrinsics(device_id)
+        if live is not None:
+            return live
+
+        if device_id not in self._intrinsics:
             self.load_intrinsics(device_id, INTRINSICS_FILENAME)
-            
         return self._intrinsics.get(device_id)
 
     def extrinsics_calibration(
