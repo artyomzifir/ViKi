@@ -143,7 +143,7 @@ class SceneRecorder:
         """Snapshot everything an offline run needs: SDK intrinsics, the active
         extrinsics, and each camera's capture config. Written once, before the
         first frame."""
-        from viki.calibration.file import read_device_extrinsics, read_device_intrinsics
+        from viki.calibration.file import read_device_extrinsics
 
         intr: dict = {}
         extr: dict = {}
@@ -152,17 +152,16 @@ class SceneRecorder:
             frame = self._mgr.latest_frame(dev_id)
             ci = frame.color_intrinsics if frame else None
             di = frame.depth_intrinsics if frame else None
-            # Prefer the live SDK-reported intrinsics; fall back to a stored file.
-            file_i = read_device_intrinsics(dev_id)
+            # SDK-reported intrinsics only — no stored-file fallback.
             depth_intr = self._intr_dict(di)
             if depth_intr and frame is not None and frame.has_depth():
                 # Stamp the *actual* frame size, not the nominal-from-mode value.
                 dh, dw = frame.depth.shape[:2]
                 depth_intr["width"], depth_intr["height"] = int(dw), int(dh)
             intr[dev_id] = {
-                "color": self._intr_dict(ci) or self._intr_dict(file_i),
+                "color": self._intr_dict(ci),
                 "depth": depth_intr,
-                "source": "sdk" if ci is not None else ("file" if file_i else "none"),
+                "source": "sdk" if ci is not None else "none",
             }
             e = read_device_extrinsics(dev_id)
             if e is not None:

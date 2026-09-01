@@ -40,41 +40,8 @@ class ArucoBoardParametersData(BoardParametersData):
     aruco_dict: str
 
 
-class IntrinsicsResponse(BaseModel):
-    """
-    Response model for camera intrinsic parameters.
-
-    Attributes
-    ----------
-    fx, fy : float
-        Focal lengths in pixels.
-    cx, cy : float
-        Principal point coordinates.
-    dist_coeffs : List[float]
-        Distortion coefficients (k1, k2, p1, p2, k3).
-    """
-    fx: float
-    fy: float
-    cx: float
-    cy: float
-    dist_coeffs: List[float]
-
-    @property
-    def camera_matrix(self) -> np.ndarray:
-        """3x3 camera matrix."""
-        return np.array(
-            [
-                [self.fx, 0.0, self.cx],
-                [0.0, self.fy, self.cy],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-
-    @property
-    def dist_coeffs_np(self) -> np.ndarray:
-        """Distortion coefficients as a numpy array."""
-        return np.array(self.dist_coeffs, dtype=np.float32)
+# (IntrinsicsResponse removed — intrinsics come straight from the camera SDK,
+# there is no calibration/storage endpoint for them any more.)
 
 
 class ExtrinsicsResponse(BaseModel):

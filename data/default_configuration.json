@@ -1,5 +1,4 @@
 {
-  "INTRINSICS_FILENAME": "data/intrinsics_calibration.json",
   "EXTRINSICS_FILENAME": "data/extrinsics_calibration.json",
   "ACTIVE_CALIBRATION": "",
   "DEFAULT_FPS": 30,
@@ -17,7 +16,14 @@
   "RECORD_DEPTH": false,
   "CLOUD_STRIDE": 1,
   "CLOUD_VOXEL_M": 0.005,
-  "CLOUD_WORKSPACE_BBOX": [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2],
+  "CLOUD_WORKSPACE_BBOX": [
+    -0.6,
+    0.6,
+    -0.6,
+    0.6,
+    -0.2,
+    1.2
+  ],
   "CLOUD_MAX_POINTS_PER_FRAME": 40000,
   "CLOUD_BG_SUBTRACT": true,
   "CLOUD_BG_TOLERANCE_MM": 50.0,

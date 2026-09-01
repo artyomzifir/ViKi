@@ -20,7 +20,6 @@ from viki.contracts import (
     CalibrationExtrinsics,
 )
 from viki.config import (
-    INTRINSICS_FILENAME,
     EXTRINSICS_FILENAME,
     CALIB_MODE,
     CALIB_BOARD_TYPE,
@@ -32,9 +31,7 @@ from viki.config import (
     CALIB_ARUCO_DICT,
 )
 from viki.calibration.file import (
-    read_device_intrinsics,
     read_device_extrinsics,
-    write_device_intrinsics,
     write_device_extrinsics,
 )
 from viki.calibration.worker import _CalibrationWorker
@@ -53,9 +50,7 @@ class CalibrationManager:
     Attributes
     ----------
     _mgr : CameraManager
-        CameraManager used to fetch frames.
-    _intrinsics : Dict[str, CalibrationIntrinsics]
-        Dict mapping device_id to loaded/computed intrinsics.
+        CameraManager used to fetch frames (and their SDK intrinsics).
     _extrinsics : Dict[str, CalibrationExtrinsics]
         Dict mapping device_id to loaded/computed extrinsics.
     _workers : Dict[str, _CalibrationWorker]
@@ -70,7 +65,6 @@ class CalibrationManager:
         """
         self._mgr = mgr
         self._logger = logging.getLogger(__name__)
-        self._intrinsics: Dict[str, CalibrationIntrinsics] = {}
         self._extrinsics: Dict[str, CalibrationExtrinsics] = {}
         self._workers: Dict[str, _CalibrationWorker] = {}
 
@@ -203,96 +197,11 @@ class CalibrationManager:
             return
         worker.clear()
 
-    def intrinsics_calibration(
-        self,
-        device_id: str,
-        results_path: str = INTRINSICS_FILENAME,
-        samples: List[CalibrationSample] | None = None,
-    ) -> CalibrationIntrinsics:
-        """
-        Compute intrinsic parameters for the given device and persist them.
-
-        The computed intrinsics are saved to `results_path` (JSON) and also
-        stored in the internal cache (`_intrinsics`).
-
-        Parameters
-        ----------
-        device_id : str
-            Camera identifier.
-        results_path : str
-            Path to the JSON file for saving.
-        samples : Optional[List[CalibrationSample]]
-            Optional list of samples; if None, uses the worker's internal samples.
-
-        Returns
-        -------
-        CalibrationIntrinsics
-            The computed intrinsics.
-
-        Raises
-        ------
-        RuntimeError
-            If no worker exists or calibration fails.
-        """
-        worker = self._workers.get(device_id)
-        if not worker:
-            msg = f"CalibrationManager intrinsics_calibration: {device_id} is not in worker list"
-            self._logger.warning(msg)
-            raise RuntimeError(msg)
-
-        intrinsics = (
-            worker.intrinsics_calibration(samples)
-            if samples
-            else worker.intrinsics_calibration()
-        )
-
-        write_device_intrinsics(device_id, intrinsics, results_path)
-
-        return intrinsics
-
-    def write_intrinsics(
-        self,
-        device_id: str,
-        intrinsics: CalibrationIntrinsics,
-        path: str = INTRINSICS_FILENAME,
-    ):
-        """Write intrinsics to a JSON file without recomputing."""
-        write_device_intrinsics(device_id, intrinsics, path)
-
-    def load_intrinsics(self, device_id: str, path: str = INTRINSICS_FILENAME) -> None:
-        """Load intrinsics from a JSON file into the internal cache."""
-        intrinsics = read_device_intrinsics(device_id, path)
-        if not intrinsics:
-            return
-        self._intrinsics[device_id] = intrinsics
-
-    def set_intrinsics(
-        self, device_id: str, intrinsics: CalibrationIntrinsics, path: str = ""
-    ) -> None:
-        """
-        Manually set intrinsics (and optionally persist them).
-
-        If `path` is non‑empty, the intrinsics are written to that file.
-        The intrinsics are also stored in the internal cache.
-
-        Parameters
-        ----------
-        device_id : str
-            Camera identifier.
-        intrinsics : CalibrationIntrinsics
-            The intrinsic parameters to set.
-        path : str
-            If provided, save to this JSON file.
-        """
-        if path != "":
-            self.write_intrinsics(device_id, intrinsics, path)
-        self._intrinsics[device_id] = intrinsics
-
-    def _live_intrinsics(self, device_id: str) -> CalibrationIntrinsics | None:
-        """The running camera's SDK-reported colour intrinsics, if any. These
-        match the resolution actually in use; the stored file may be stale
-        (solved at another resolution → a wrong-scale K makes the extrinsics
-        solve land the board tens of cm off)."""
+    def get_intrinsics(self, device_id: str, path: str = "") -> CalibrationIntrinsics | None:
+        """The running camera's SDK-reported colour intrinsics, or ``None`` if
+        the camera isn't live. There is no stored intrinsics file any more — the
+        SDK is the single source of truth, always matching the resolution in
+        use. ``path`` is accepted and ignored for call-site compatibility."""
         frame = self._mgr.latest_frame(device_id)
         ci = getattr(frame, "color_intrinsics", None) if frame else None
         if ci is None or not (ci.fx > 0 and ci.fy > 0):
@@ -303,29 +212,6 @@ class CalibrationManager:
             fx=float(ci.fx), fy=float(ci.fy), cx=float(ci.cx), cy=float(ci.cy),
             dist_coeffs=np.asarray(getattr(ci, "dist_coeffs", np.zeros(5)), dtype=np.float64),
         )
-
-    def get_intrinsics(
-        self, device_id: str, path: str = ""
-    ) -> CalibrationIntrinsics | None:
-        """
-        Retrieve intrinsics for a device.
-
-        Resolution order: an explicit ``path`` → the **live SDK intrinsics** of
-        the running camera → the internal cache → the default intrinsics file.
-        The live path is preferred because the stored file can be from a session
-        at a different colour resolution, which corrupts the extrinsics solve.
-        """
-        if path != "":
-            self.load_intrinsics(device_id, path)
-            return self._intrinsics.get(device_id)
-
-        live = self._live_intrinsics(device_id)
-        if live is not None:
-            return live
-
-        if device_id not in self._intrinsics:
-            self.load_intrinsics(device_id, INTRINSICS_FILENAME)
-        return self._intrinsics.get(device_id)
 
     def extrinsics_calibration(
         self,
@@ -370,7 +256,8 @@ class CalibrationManager:
         if not intrinsics:
             intrinsics = self.get_intrinsics(device_id)
             if not intrinsics:
-                msg = f"CalibrationManager extrinsics_calibration: no intrinsics"
+                msg = (f"{device_id} extrinsics: no SDK intrinsics — the camera "
+                       f"must be running to read them")
                 self._logger.warning(msg)
                 raise RuntimeError(msg)
 

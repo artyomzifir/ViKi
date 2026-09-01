@@ -25,13 +25,9 @@ from viki.server.streams import marked_camera_stream
 from viki.server.routes.models import (
     ArucoBoardParametersData,
     BoardParametersData,
-    IntrinsicsResponse,
     ExtrinsicsResponse,
 )
-from viki.config import (
-    INTRINSICS_FILENAME,
-    EXTRINSICS_FILENAME,
-)
+from viki.config import EXTRINSICS_FILENAME
 
 router = APIRouter(prefix="/calibration", tags=["calibration"])
 
@@ -318,73 +314,20 @@ async def clear(device_id: str, cal: CalibrationManager = Depends(get_calibrator
     return {"status": "cleared"}
 
 
-@router.post("/intrinsics/{device_id}", response_model=IntrinsicsResponse)
-async def intrinsics_post(
-    device_id: str, cal: CalibrationManager = Depends(get_calibrator)
-):
-    """
-    Compute and save intrinsic parameters for a device (POST).
-
-    Uses the collected samples to run the calibration solve and persists the
-    result to the default intrinsics file.
-
-    Parameters
-    ----------
-    device_id : str
-        Camera ID.
-
-    Returns
-    -------
-    IntrinsicsResponse
-        Focal lengths, principal point, distortion coefficients.
-
-    Raises
-    ------
-    RuntimeError
-        If calibration fails (propagated as HTTP 500).
-    """
-    intrinsics = cal.intrinsics_calibration(device_id, INTRINSICS_FILENAME)
-    return IntrinsicsResponse(
-        fx=intrinsics.fx,
-        fy=intrinsics.fy,
-        cx=intrinsics.cx,
-        cy=intrinsics.cy,
-        dist_coeffs=intrinsics.dist_coeffs.tolist(),
-    )
-
-
-@router.get("/intrinsics/{device_id}", response_model=IntrinsicsResponse)
+@router.get("/intrinsics/{device_id}")
 async def intrinsics(device_id: str, cal: CalibrationManager = Depends(get_calibrator)):
+    """The running camera's SDK colour intrinsics (read-only, for inspection).
+
+    There is no intrinsics calibration / storage any more — the SDK is the only
+    source of truth. 404 when the camera isn't live.
     """
-    Retrieve previously computed intrinsic parameters (GET).
-
-    Parameters
-    ----------
-    device_id : str
-        Camera ID.
-
-    Returns
-    -------
-    IntrinsicsResponse
-        Focal lengths, principal point, distortion coefficients.
-
-    Raises
-    ------
-    HTTPException 404
-        If intrinsics not found.
-    """
-    intrinsics = cal.get_intrinsics(device_id)
-    if not intrinsics:
-        raise HTTPException(
-            status_code=404, detail="Intrinsics not found for this device"
-        )
-    return IntrinsicsResponse(
-        fx=intrinsics.fx,
-        fy=intrinsics.fy,
-        cx=intrinsics.cx,
-        cy=intrinsics.cy,
-        dist_coeffs=intrinsics.dist_coeffs.tolist(),
-    )
+    intr = cal.get_intrinsics(device_id)
+    if not intr:
+        raise HTTPException(404, f"{device_id} is not running — no SDK intrinsics")
+    return {
+        "fx": intr.fx, "fy": intr.fy, "cx": intr.cx, "cy": intr.cy,
+        "dist_coeffs": intr.dist_coeffs.tolist(), "source": "sdk",
+    }
 
 
 @router.post("/extrinsics", response_model=list[ExtrinsicsResponse])

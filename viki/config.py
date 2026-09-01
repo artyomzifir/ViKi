@@ -18,7 +18,6 @@ DEFAULT_CONFIG_PATH = "data/default_configuration.json"
 USER_CONFIG_PATH = "data/user_configuration.json"
 
 # Duck variables which LSP can catch and use
-INTRINSICS_FILENAME: str
 EXTRINSICS_FILENAME: str
 ACTIVE_CALIBRATION: str  # name of the active preset under data/calibrations/, or ""
 DEFAULT_FPS: int
