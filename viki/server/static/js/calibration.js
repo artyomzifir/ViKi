@@ -19,6 +19,10 @@ let countPoll = null;
 let onCamerasChanged = null;
 let builtIds = '';
 let openedPreset = null;   // name of the preset whose sets are shown, or null (live)
+// Picker selection: null = follow the active preset; "" = user parked on
+// "current, unsaved" (a fresh solve, will Save as a NEW preset); "<name>" = a
+// specific preset the user picked.
+let presetChoice = null;
 
 // ── template ──────────────────────────────────────────────────────────────
 
@@ -222,6 +226,7 @@ async function solve() {
       catch (e) { log(`Base depth capture failed for ${id}: ${e}`, 'error'); }
     }));
     log('Extrinsics solved — name it below and Save to keep it as a preset', 'ok');
+    presetChoice = '';   // park the picker on "current, unsaved" — this is a fresh solve
     view?.querySelector('#calib-preset-name')?.focus();
     refreshPresets();
   } catch (e) {
@@ -313,17 +318,30 @@ async function refreshPresets() {
   if (!sel) return;
   try {
     const presets = await api('GET', '/api/calibration/presets');
-    sel.innerHTML = '<option value="">(current, unsaved)</option>' +
-      presets.map(p => `<option value="${p.name}" ${p.active ? 'selected' : ''}>${p.name}</option>`).join('');
     const active = presets.find(p => p.active);
+    // Which option to show: the user's explicit pick (if it still exists),
+    // else the active preset, else "current, unsaved".
+    let choice = presetChoice;
+    if (choice === null) choice = active ? active.name : '';
+    if (choice && !presets.some(p => p.name === choice)) choice = '';
+
+    sel.innerHTML =
+      `<option value=""${choice === '' ? ' selected' : ''}>— current, unsaved (Save → new preset) —</option>` +
+      presets.map(p =>
+        `<option value="${p.name}"${p.name === choice ? ' selected' : ''}>` +
+        `${p.name}${p.active ? ' ✓' : ''}</option>`).join('');
+
     const sel_p = presets.find(p => p.name === sel.value);
-    const k4a = sel_p && sel_p.k4a && sel_p.k4a.length
-      ? ` · k4a ✓ (${sel_p.k4a.length})` : ' · k4a ✗';
-    const bg = sel_p && sel_p.background && sel_p.background.length
-      ? ` · bg ✓ (${sel_p.background.length})` : ' · bg ✗';
-    info.textContent = (active
-      ? `active: ${active.cameras.length} cam · ${active.sets} sets · ${new Date(active.solved_at * 1000).toLocaleString()}`
-      : `${presets.length} saved preset(s)`) + (sel_p ? k4a + bg : '');
+    if (!sel.value) {
+      info.textContent = 'unsaved live solve — "4 · Save" keeps it as a NEW preset'
+        + (active ? ` · "${active.name}" stays active until you save & switch` : '');
+    } else {
+      const k4a = sel_p && sel_p.k4a && sel_p.k4a.length ? ` · k4a ✓ (${sel_p.k4a.length})` : ' · k4a ✗';
+      const bg = sel_p && sel_p.background && sel_p.background.length ? ` · bg ✓ (${sel_p.background.length})` : ' · bg ✗';
+      info.textContent = (sel_p && sel_p.active
+        ? `active: ${sel_p.cameras.length} cam · ${sel_p.sets} sets · ${new Date(sel_p.solved_at * 1000).toLocaleString()}`
+        : `${sel_p ? sel_p.sets + ' sets — pick to activate' : ''}`) + k4a + bg;
+    }
     view.querySelector('#calib-preset-open').hidden = !(sel_p && sel_p.sets > 0);
     const real = !!sel.value;
     view.querySelector('#calib-preset-rename').disabled = !real;
@@ -357,6 +375,7 @@ async function deletePreset() {
     log(`Deleted preset "${name}"`, 'ok');
   } catch (e) { log(`Delete preset failed: ${e}`, 'error'); }
   if (openedPreset === name) backToLive();
+  presetChoice = null;   // fall back to whatever is active
   refreshPresets();
 }
 
@@ -368,6 +387,7 @@ async function renamePreset() {
     const r = await api('PATCH', `/api/calibration/presets/${encodeURIComponent(name)}`, { new: nn });
     log(`Renamed "${name}" → "${r.name}"`, 'ok');
     if (openedPreset === name) openedPreset = r.name;
+    if (presetChoice === name) presetChoice = r.name;
   } catch (e) { log(`Rename preset failed: ${e}`, 'error'); }
   refreshPresets();
 }
@@ -397,8 +417,10 @@ async function savePreset() {
   if (!name) { input.focus(); return; }
   try {
     await api('POST', '/api/calibration/save-as', { name });
-    log(`Saved preset "${name}"`, 'ok');
+    await api('POST', '/api/calibration/activate', { name });   // saved → make it active + selected
+    log(`Saved preset "${name}" and activated it`, 'ok');
     input.value = '';
+    presetChoice = name;
     refreshPresets();
   } catch (e) { log('Save preset failed: ' + e, 'error'); }
 }
@@ -410,6 +432,7 @@ export function mount(container) {
   builtIds = '';
   _setsSig = '';
   openedPreset = null;
+  presetChoice = null;   // start by following the active preset
   view.innerHTML = template();
   syncBoardFieldVisibility();
   syncParams();          // push the (session-remembered) board params to the server
@@ -472,7 +495,11 @@ function onChange(e) {
   if (el.id === 'board-type') { syncBoardFieldVisibility(); syncParams(); }
   else if (['board-width', 'board-height', 'square-size', 'marker-size'].includes(el.id)
     || el.id === 'aruco-dict') { syncParams(); }
-  else if (el.id === 'calib-preset') { activatePreset(el.value); refreshPresets(); }
+  else if (el.id === 'calib-preset') {
+    presetChoice = el.value;                 // remember what the user parked on
+    if (el.value) activatePreset(el.value);  // real preset → activate it
+    else { log('On the unsaved solve — "4 · Save" keeps it as a new preset'); refreshPresets(); }
+  }
   else if (['res', 'fps', 'depthmode'].includes(el.dataset.role)) {
     cameras.noteCardChange(view, el.dataset.id);   // session-wide camera config
     renderCards();
