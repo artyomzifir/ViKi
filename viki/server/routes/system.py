@@ -163,6 +163,7 @@ async def save_config(config: dict):
     try:
         with open(USER_CONFIG_PATH, "w") as f:
             json.dump(config, f, indent=2)
+        logger.info("user configuration saved (%d keys)", len(config))
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Failed to save config: {e}")
@@ -189,6 +190,7 @@ async def reset_config():
         if not os.path.exists(DEFAULT_CONFIG_PATH):
             raise HTTPException(status_code=404, detail="Default configuration file not found")
         shutil.copy(DEFAULT_CONFIG_PATH, USER_CONFIG_PATH)
+        logger.info("user configuration reset to default")
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Failed to reset config: {e}")

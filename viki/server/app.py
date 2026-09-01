@@ -10,6 +10,7 @@ here only through thin job endpoints.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -34,8 +35,22 @@ from viki.server.routes import (
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 logging.getLogger("matplotlib").setLevel(logging.WARNING)
+
+_log = logging.getLogger("viki.api")
+
+# Endpoints hit by the frontend's poll loops — logging every call floods the log
+# and drowns the events that matter. Uvicorn's access log still records them.
+_QUIET_PATHS = (
+    "/api/system/stats", "/api/health", "/api/pipeline/jobs",
+    "/api/calibration/status/", "/api/calibration/samples_count/",
+    "/api/record/jobs/", "/api/replay/jobs/", "/api/export/jobs/",
+)
 
 
 @asynccontextmanager
@@ -57,15 +72,31 @@ app = FastAPI(title="ViKi Server", lifespan=lifespan)
 
 
 @app.middleware("http")
-async def _no_cache_frontend(request: Request, call_next):
-    """The frontend is bind-mounted and has no build step / content hashing, so a
-    browser that cached an older ``index.html`` keeps serving a stale bundle.
-    Force revalidation on the page and its assets (ETag still makes it a cheap
-    304 when nothing changed)."""
-    response = await call_next(request)
+async def _observe(request: Request, call_next):
+    """Two things: (1) force frontend revalidation — the static bundle is
+    bind-mounted with no content hashing, so a stale ``index.html`` would keep
+    serving old JS; (2) log every state-changing API call (method, path, status,
+    duration) plus any 4xx/5xx, so the server log carries a record of what was
+    done, not just uvicorn's access lines. Poll endpoints are skipped."""
     path = request.url.path
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        _log.exception("%s %s -> unhandled exception (%.0f ms)",
+                       request.method, path, (time.perf_counter() - t0) * 1e3)
+        raise
+    dt_ms = (time.perf_counter() - t0) * 1e3
+
     if path == "/" or path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
+
+    if path.startswith("/api/") and not any(path.startswith(q) for q in _QUIET_PATHS):
+        action = request.method != "GET"
+        if action or response.status_code >= 400:
+            lvl = logging.WARNING if response.status_code >= 400 else logging.INFO
+            _log.log(lvl, "%s %s -> %s (%.0f ms)",
+                     request.method, path, response.status_code, dt_ms)
     return response
 
 

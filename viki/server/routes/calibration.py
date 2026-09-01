@@ -147,7 +147,9 @@ async def capture_all(
             400,
             "Calibration session not started. Please click 'Sync Parameters' first.",
         )
-    return cal.capture_all()
+    res = cal.capture_all()
+    logger.info("calibration capture-all: %s", res)
+    return res
 
 
 @router.post("/clear")
@@ -412,6 +414,7 @@ async def extrinsics_post_all(
     if not active_devices:
         raise HTTPException(400, "No active cameras to calibrate")
 
+    logger.info("extrinsics solve: devices=%s", sorted(active_devices))
     results = []
     for device_id in active_devices:
         try:
@@ -430,11 +433,13 @@ async def extrinsics_post_all(
     if not results:
         # If we got here, it means all active devices failed to calibrate
         # (e.g. due to lack of samples)
+        logger.warning("extrinsics solve failed for every device")
         raise HTTPException(
             422,
             "Extrinsics calibration failed for all devices. Make sure you have captured enough samples.",
         )
 
+    logger.info("extrinsics solved for %s", [r.device_id for r in results])
     return results
 
 
@@ -644,7 +649,9 @@ async def save_preset(
             board=cal.board_cfg(),
         )
     except ValueError as exc:
+        logger.warning("save-as %r -> 400 %s", body.name, exc)
         raise HTTPException(400, str(exc)) from exc
+    logger.info("calibration preset %r saved (%d cams)", path.stem, len(extr))
     # Cameras are live during calibration, so grab both device/scene snapshots
     # now — no separate button. k4a raw calibration is a device property; the
     # background depth is the static scene as it sits during the solve (the
@@ -740,8 +747,10 @@ async def activate_preset(
     try:
         _presets.activate(body.name)
     except (ValueError, FileNotFoundError) as exc:
+        logger.warning("activate preset %r -> 404 %s", body.name, exc)
         raise HTTPException(404, str(exc)) from exc
     cal.load_all_extrinsics()
+    logger.info("calibration preset %r activated", body.name)
     return {"status": "success", "name": body.name}
 
 

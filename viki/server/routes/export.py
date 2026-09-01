@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from viki.server import jobs
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/export", tags=["export"])
 
 
@@ -20,6 +23,8 @@ class ExportRequest(BaseModel):
 async def start_export(req: ExportRequest):
     if not req.episodes:
         raise HTTPException(400, "no episodes given")
+
+    logger.info("export: %d episode(s) -> %s @ %d fps", len(req.episodes), req.out_dir, req.fps)
 
     def _job():
         from viki.export import export_dataset

@@ -12,12 +12,15 @@ once, at the smooth stage, not here.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from viki.config import MODELS_DIR
 import viki.config as viki_config
@@ -704,10 +707,11 @@ def _run_ik_and_write(
     if orientation_valid is not None:
         summary["orientation_valid_frames"] = int(orientation_valid.sum())
         summary["orientation_total_frames"] = int(len(orientation_valid))
-    print(
-        f"Saved trajectory: {out_path} "
-        f"(mean error={summary['mean_not_aligned_pos_error_mm']:.1f} mm, "
-        f"orientation={summary['mean_not_aligned_orientation_error_deg']:.1f} deg)"
+    logger.info(
+        "retarget: saved %s (%d frames, mean pos err %.1f mm, orient %.1f deg)",
+        out_path, len(q_scene_smooth),
+        summary["mean_not_aligned_pos_error_mm"],
+        summary["mean_not_aligned_orientation_error_deg"],
     )
     return summary
 
@@ -859,6 +863,8 @@ def retarget_episode(ep, robot: str | None = None) -> str:
 
     if not ep.cln_npz.exists():
         raise FileNotFoundError(f"no cln.npz for episode {ep.id}; run prepare first")
+
+    logger.info("retarget: episode=%s robot=%s", ep.id, robot or getattr(_cfg, "RETARGET_DEFAULT_ROBOT", "ur10"))
 
     with np.load(ep.cln_npz) as d:
         positions = np.asarray(d["positions"])

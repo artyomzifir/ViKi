@@ -9,7 +9,6 @@ and to ``viki.server.streams``.
 from __future__ import annotations
 
 import logging
-import traceback
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -120,9 +119,12 @@ async def start_camera(
             synchronized_images_only=req.synchronized_images_only,
         )
     except Exception as e:
-        traceback.print_exc()
+        logger.exception("camera %s start failed", device_id)
         raise HTTPException(status_code=500, detail=str(e))
     # outcome: "started" | "restarted" (config changed) | "unchanged"
+    logger.info("camera %s %s @ %dx%d/%dfps %s%s", device_id, outcome or "started",
+                req.color_width, req.color_height, req.fps, req.depth_mode,
+                f" sync={wired_sync_mode}" if wired_sync_mode else "")
     return {"status": outcome or "started", "device_id": device_id}
 
 
@@ -142,6 +144,7 @@ async def stop_camera(device_id: str, mgr: CameraManager = Depends(get_manager))
         {"status": "stopped", "device_id": device_id}
     """
     mgr.stop(device_id)
+    logger.info("camera %s stopped", device_id)
     return {"status": "stopped", "device_id": device_id}
 
 

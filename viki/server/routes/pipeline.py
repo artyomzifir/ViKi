@@ -9,6 +9,7 @@ viewer.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,7 @@ from viki.contracts import Episode
 from viki.episode import read_status
 from viki.server import jobs
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _ep = APIRouter(prefix="/pipeline", tags=["pipeline"])
@@ -78,6 +80,8 @@ async def perceive(req: _PerceiveReq):
     → cln.npz) for one or more episodes. When ``opts.build_cloud`` is set the
     point cloud is queued as a **separate** job on the ``cloud`` lane so it
     computes in parallel with the model run."""
+    logger.info("perceive: %d episode(s) %s opts=%s",
+                len(req.episodes), [str(e).split('/')[-1] for e in req.episodes], req.opts)
     ids: list[str] = []
     for ep_ref in req.episodes:
         ep = _episode(ep_ref)
@@ -113,6 +117,8 @@ async def list_models():
 
 @_ep.post("/models/download")
 async def download_model(req: _ModelReq):
+    logger.info("model download requested: %s", req.model)
+
     def _job(report, log):
         from viki.perception.backends.registry import download
 
@@ -131,18 +137,20 @@ async def cancel_job(job_id: str):
 @_ep.post("/extract")
 async def extract(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("extract: episode=%s model=%s", ep.id, req.model)
 
     def _job():
         from viki.perception.extract import extract_episode
 
         return extract_episode(ep, model=req.model)
 
-    return {"job_id": jobs.submit("extract", _job)}
+    return {"job_id": jobs.submit("extract", _job, episode=ep.id)}
 
 
 @_ep.post("/cloud")
 async def cloud(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("cloud: episode=%s", ep.id)
 
     def _job(report, log):
         from viki.perception.cloud import build_cloud
@@ -155,25 +163,27 @@ async def cloud(req: _EpReq):
 @_ep.post("/prepare")
 async def prepare(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("prepare: episode=%s sg=%s/%s", ep.id, req.window, req.polyorder)
 
     def _job():
         from viki.prepare.run import prepare_episode
 
         return prepare_episode(ep, req.window, req.polyorder)
 
-    return {"job_id": jobs.submit("prepare", _job)}
+    return {"job_id": jobs.submit("prepare", _job, episode=ep.id)}
 
 
 @_ep.post("/retarget")
 async def retarget(req: _EpReq):
     ep = _episode(req.episode)
+    logger.info("retarget: episode=%s robot=%s", ep.id, req.robot)
 
     def _job():
         from viki.retarget.run import retarget_episode
 
         return retarget_episode(ep, robot=req.robot)
 
-    return {"job_id": jobs.submit("retarget", _job)}
+    return {"job_id": jobs.submit("retarget", _job, episode=ep.id)}
 
 
 @_ep.get("/jobs/{job_id}")

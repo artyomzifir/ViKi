@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from viki.contracts import Episode, EpisodeLabels, Segment
 from viki.labeling import load_labels, save_labels, validate_labels
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/label", tags=["label"])
 
 
@@ -59,6 +61,9 @@ async def set_labels(episode: str, body: LabelsIn):
     try:
         validate_labels(labels, n_frames=n or 10**9)
     except ValueError as exc:
+        logger.warning("labels %s -> 400 %s", ep.id, exc)
         raise HTTPException(400, str(exc)) from exc
     save_labels(ep, labels)
+    logger.info("labels saved: episode=%s task=%r outcome=%s segments=%d",
+                ep.id, labels.task, labels.outcome, len(labels.segments))
     return {"status": "ok"}

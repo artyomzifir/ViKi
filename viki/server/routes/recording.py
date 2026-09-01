@@ -8,6 +8,7 @@ thread; poll the returned job id.
 
 from __future__ import annotations
 
+import logging
 import threading
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,7 @@ from viki.cameras.manager import CameraManager
 from viki.server import jobs
 from viki.server.deps import get_manager
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/record", tags=["recording"])
 
 # Set by POST /record/stop to end the in-progress capture early (Stop button).
@@ -69,6 +71,11 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
     if not mgr.active_device_ids():
         raise HTTPException(400, "no cameras are active — start cameras first")
 
+    logger.info(
+        "recording: dataset=%s cameras=%s max=%.0fs fps=%d task=%r cloud=%s",
+        req.dataset or "(flat)", sorted(mgr.active_device_ids()), req.seconds, req.fps,
+        req.task, "on" if req.cloud is not None else "default",
+    )
     meta = {"task": req.task, "demonstrator": req.demonstrator, "hand": req.hand}
     episodes_dir = None if req.dataset else getattr(config, "EPISODES_DIR", "data/episodes")
     cloud_opts = req.cloud.model_dump() if req.cloud is not None else {}
@@ -100,6 +107,7 @@ async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_m
 async def stop_recording():
     """End the in-progress capture now (the recorder still finalises the file)."""
     _stop_evt.set()
+    logger.info("recording: stop requested")
     return {"status": "stopping"}
 
 

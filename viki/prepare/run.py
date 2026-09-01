@@ -10,6 +10,7 @@ computes end-effector poses (rotation + position) for the retarget stage.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import List
 
@@ -18,6 +19,8 @@ from viki.dsp import smooth_landmark_sequence, interpolate_nans
 from viki.perception.hand_angles import compute_end_effector_pose
 from viki.contracts import HAND_LM_COUNT, LM
 import viki.config as config
+
+logger = logging.getLogger(__name__)
 
 
 _PALM_MIN_LENGTH_RATIO = 0.5
@@ -423,4 +426,5 @@ def prepare_episode(
         n = len(d["positions"])
         obj_rel = "T_obj_hand" in d
     mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel))
+    logger.info("prepare %s: %d frames -> %s", ep.id, n, ep.cln_npz)
     return str(ep.cln_npz)
