@@ -107,9 +107,10 @@ class PreparationPipeline:
         # timestamps, so cln.npz shares one index with the point cloud. None →
         # fuse onto the union of the per-camera detection timestamps.
         self.grid_ts: np.ndarray | None = None
-
-        self.recs_dir.mkdir(parents=True, exist_ok=True)
-        self.smoothed_dir.mkdir(parents=True, exist_ok=True)
+        # No mkdir here: the episode flow (prepare_episode) overrides recs_dir /
+        # smoothed_dir to a tempdir right after construction, so eagerly creating
+        # data/skeleton_{recs,smoothed}/ just litters (root-owned under Docker).
+        # smooth_recording() creates the output dir it actually writes to.
 
     def list_recordings(self, page: int = 0, page_size: int = 10) -> List[str]:
         """
@@ -320,6 +321,7 @@ class PreparationPipeline:
 
         # 5. Save to smoothed directory as cln-*.npz
         output_filename = filename.replace("rec-", "cln-")
+        self.smoothed_dir.mkdir(parents=True, exist_ok=True)
         output_path = self.smoothed_dir / output_filename
 
         _extra = {}
