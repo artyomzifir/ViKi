@@ -7,6 +7,7 @@ calibration solve, status, and clearing collected samples.
 
 from __future__ import annotations
 
+import asyncio
 import cv2
 import logging
 
@@ -644,7 +645,12 @@ async def save_preset(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    _grab_k4a_best_effort(path.stem, mgr)  # cameras are live during calibration
+    # Cameras are live during calibration, so grab both device/scene snapshots
+    # now — no separate button. k4a raw calibration is a device property; the
+    # background depth is the static scene as it sits during the solve (the
+    # ChArUco board included — it's part of the fixed workspace).
+    await asyncio.to_thread(_grab_k4a_best_effort, path.stem, mgr)
+    await asyncio.to_thread(_grab_background_best_effort, path.stem, mgr)  # ~1.5 s of depth median
     return {"status": "success", "name": path.stem}
 
 
@@ -678,25 +684,13 @@ def _grab_k4a_best_effort(name: str, mgr: CameraManager) -> None:
         logger.warning("grab k4a for preset %r failed", name, exc_info=True)
 
 
-@router.post("/presets/{name}/grab-k4a")
-async def grab_preset_k4a(
-    name: str, mgr: CameraManager = Depends(get_manager)
-):
-    """Attach the running Kinects' raw calibration blob to an existing preset,
-    so recordings made against it can do offline colour↔depth lifting without a
-    re-record. Requires the Kinect cameras to be running."""
+def _grab_background_best_effort(name: str, mgr: CameraManager) -> None:
     try:
-        _presets.read_detail(name)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    blobs, di, ci = _collect_k4a_blobs(mgr)
-    if not blobs:
-        raise HTTPException(400, "no raw calibration from running cameras — start the Kinects first")
-    try:
-        detail = _presets.attach_k4a(name, blobs, di, ci)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return {"status": "success", "devices": sorted(blobs), "detail": detail}
+        depths = _collect_background(mgr)
+        if depths:
+            _presets.attach_background(name, depths)
+    except Exception:  # noqa: BLE001 — never break save-as on this
+        logger.warning("grab background for preset %r failed", name, exc_info=True)
 
 
 def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
@@ -723,27 +717,6 @@ def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
             med = np.nanmedian(arr, axis=0)
         out[dev] = np.nan_to_num(med, nan=0.0).astype(np.float32)
     return out
-
-
-@router.post("/presets/{name}/grab-background")
-async def grab_preset_background(
-    name: str, mgr: CameraManager = Depends(get_manager)
-):
-    """Snapshot the empty scene's depth (per running camera) onto the preset so
-    recordings made against it can subtract the static background from the point
-    cloud. Run this during calibration, before the operator / objects enter."""
-    try:
-        _presets.read_detail(name)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    depths = _collect_background(mgr)
-    if not depths:
-        raise HTTPException(400, "no depth from running cameras — start the Kinects first")
-    try:
-        detail = _presets.attach_background(name, depths)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return {"status": "success", "devices": sorted(depths), "detail": detail}
 
 
 @router.post("/activate")

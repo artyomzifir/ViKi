@@ -79,8 +79,6 @@ function template() {
         <select id="calib-preset"></select>
         <div class="hint" id="calib-preset-info">—</div>
         <button id="calib-preset-open" hidden>Open sets</button>
-        <button id="calib-preset-k4a" hidden title="attach the running Kinects' raw depth↔colour calibration to this preset">Grab k4a calibration for this preset</button>
-        <button id="calib-preset-bg" hidden title="snapshot the empty scene's depth so recordings can subtract the static background from the point cloud">Grab background depth (empty scene)</button>
       </section>
 
       <section class="calib-sec">
@@ -94,7 +92,8 @@ function template() {
           <input type="text" id="calib-preset-name" placeholder="preset name">
           <button id="calib-preset-save" class="primary">4 · Save</button>
         </div>
-        <div class="hint">Save also grabs the Kinects' depth↔colour calibration.
+        <div class="hint">Save also grabs the Kinects' depth↔colour calibration and
+          the empty-scene background depth (the scene as it sits now).
           Delete bad sets on the left before step 3.</div>
         <button id="calib-clear" class="danger">Clear samples</button>
       </section>
@@ -312,8 +311,6 @@ async function refreshPresets() {
       ? `active: ${active.cameras.length} cam · ${active.sets} sets · ${new Date(active.solved_at * 1000).toLocaleString()}`
       : `${presets.length} saved preset(s)`) + (sel_p ? k4a + bg : '');
     view.querySelector('#calib-preset-open').hidden = !(sel_p && sel_p.sets > 0);
-    view.querySelector('#calib-preset-k4a').hidden = !sel_p;
-    view.querySelector('#calib-preset-bg').hidden = !sel_p;
   } catch (e) {
     info.textContent = 'presets unavailable';
     log('Failed to load calibration presets: ' + e, 'error');
@@ -349,29 +346,6 @@ async function savePreset() {
     input.value = '';
     refreshPresets();
   } catch (e) { log('Save preset failed: ' + e, 'error'); }
-}
-
-async function grabPresetK4a() {
-  const name = view.querySelector('#calib-preset').value;
-  if (!name) { log('Pick a preset first', 'error'); return; }
-  try {
-    const r = await api('POST', `/api/calibration/presets/${encodeURIComponent(name)}/grab-k4a`);
-    log(`Preset "${name}": k4a calibration attached for ${r.devices.join(', ')}`, 'ok');
-    refreshPresets();
-  } catch (e) { log('Grab k4a failed: ' + e, 'error'); }
-}
-
-async function grabPresetBackground() {
-  const name = view.querySelector('#calib-preset').value;
-  if (!name) { log('Pick a preset first', 'error'); return; }
-  const btn = view.querySelector('#calib-preset-bg');
-  btn.disabled = true; btn.textContent = 'Capturing empty scene…';
-  try {
-    const r = await api('POST', `/api/calibration/presets/${encodeURIComponent(name)}/grab-background`);
-    log(`Preset "${name}": background depth captured for ${r.devices.join(', ')}`, 'ok');
-    refreshPresets();
-  } catch (e) { log('Grab background failed: ' + e, 'error'); }
-  finally { btn.disabled = false; btn.textContent = 'Grab background depth (empty scene)'; }
 }
 
 // ── mount / unmount ───────────────────────────────────────────────────────
@@ -423,8 +397,6 @@ function onClick(e) {
     case 'calib-clear': clearSamples(); break;
     case 'calib-preset-save': savePreset(); break;
     case 'calib-preset-open': openPreset(); break;
-    case 'calib-preset-k4a': grabPresetK4a(); break;
-    case 'calib-preset-bg': grabPresetBackground(); break;
     case 'calib-sets-live': backToLive(); break;
     case 'set-del':
       openedPreset ? deletePresetSet(+btn.dataset.i) : deleteLiveSet(+btn.dataset.i);
