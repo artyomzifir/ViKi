@@ -561,17 +561,22 @@ def refine_cln(ep, cfg=None, report=None) -> str:
         # so measure divergence against the *landmark* wrist (pos[t] is the value
         # we're trying to correct — it can't be the reference).
         w_lm = frames[t].get(LM.WRIST)
-        diverged = (w_lm is not None and np.all(np.isfinite(w_lm))
-                    and float(np.linalg.norm(p - np.asarray(w_lm, float))) > 1.5 * fc.roi_m)
-        good = (not info["skipped"]) and info["accepted"] and not diverged
-        if good:
+        diverged = info["skipped"] or (
+            w_lm is not None and np.all(np.isfinite(w_lm))
+            and float(np.linalg.norm(p - np.asarray(w_lm, float))) > 1.5 * fc.roi_m)
+        if not diverged:
+            # a plausible fit (wrist stayed in the ROI): keep the joint vector and
+            # draw the capsule hand …
             q_traj[t] = q
             caps[t] = hm.fk_capsule_endpoints(hand, q)
-            pos[t] = p
-            rot[t] = R
-            n_acc += 1
-        # chain the warm start only from a clean fit — never ratchet off a bad one
-        q_prev = q if good else None
+            if info["accepted"]:
+                # … but only let a *tight* fit override the landmark EE pose.
+                pos[t] = p
+                rot[t] = R
+                n_acc += 1
+        # warm-start the next frame from any non-diverged fit (bounded to the ROI);
+        # a diverged / skipped frame resets to the landmark warm start.
+        q_prev = None if diverged else q
         if t % 5 == 0:
             report(stage="hand_fit", frame=t, total=T)
 
