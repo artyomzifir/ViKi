@@ -110,8 +110,9 @@ class Frame:
     timestamp_us      : device monotonic clock, microseconds
     device_id         : serial or ``kinect_<n>``
     aligned_depth     : HxW uint16 SDK-aligned depth (optional)
-    host_timestamp_us : host clock stamped by the worker on arrival; used for
-                        cross-camera sync
+    host_timestamp_us : host **monotonic** clock (µs, arbitrary epoch) stamped by
+                        the worker on arrival; used for cross-camera sync — only
+                        ever compared as a difference, never as wall time
     color_intrinsics / depth_intrinsics : CameraIntrinsics | None
     """
 
@@ -131,8 +132,9 @@ class Frame:
 @dataclass
 class SyncedFrameGroup:
     """
-    One frame per camera, aligned to a common host-clock tick.
+    One frame per camera, aligned to a common host monotonic-clock tick.
 
+    ``sync_timestamp_us`` is ``time.monotonic_ns() // 1000`` at the tick;
     ``offsets_us[device_id] = frame.host_timestamp_us - sync_timestamp_us``
     (negative = frame arrived before the tick).
     """
