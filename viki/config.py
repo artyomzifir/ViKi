@@ -47,6 +47,7 @@ PERCEPTION_HAND_FIT_W_ACC: float  # λ_acc — temporal acceleration regulariser
 PERCEPTION_HAND_FIT_W_PRIOR: float  # λ_prior — joint-limit barrier weight
 PERCEPTION_HAND_FIT_W_POSTURE: float  # λ_posture — pull fingers toward the rest pose
 PERCEPTION_HAND_FIT_W_LANDMARK: float  # λ_landmark — anchor the model joints to the fused landmarks
+PERCEPTION_HAND_FIT_MAX_POINTS: int  # random-subsample the hand-ROI cloud to this many points before the fit
 KINECT_SYNC: dict  # {"master": "kinect_0", "subordinates": [...], "subordinate_delay_us": 160}; {} = software sync only
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
@@ -184,6 +185,7 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_W_PRIOR": 200.0,
     "PERCEPTION_HAND_FIT_W_POSTURE": 2.0,
     "PERCEPTION_HAND_FIT_W_LANDMARK": 20.0,
+    "PERCEPTION_HAND_FIT_MAX_POINTS": 2500,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
 }

@@ -65,8 +65,9 @@ class FitConfig:
     w_posture: float = 2.0        # pull fingers toward rest
     w_landmark: float = 20.0      # anchor the model's joints to the fused landmarks
     min_points: int = 60
+    max_points: int = 2500        # random-subsample the ROI cloud to this (speed)
     accept_median_resid_m: float = 0.020
-    max_nfev: int = 60
+    max_nfev: int = 45
     calib_frames: int = 8
 
     @classmethod
@@ -82,6 +83,7 @@ class FitConfig:
             w_prior=g("PERCEPTION_HAND_FIT_W_PRIOR", 200.0),
             w_posture=g("PERCEPTION_HAND_FIT_W_POSTURE", 2.0),
             w_landmark=g("PERCEPTION_HAND_FIT_W_LANDMARK", 20.0),
+            max_points=int(g("PERCEPTION_HAND_FIT_MAX_POINTS", 2500)),
         )
 
 
@@ -108,6 +110,34 @@ def point_capsule_signed_distance(
     return point_segment_distance(pts, a, b) - float(r)
 
 
+def nearest_capsule_geom(
+    pts: np.ndarray, endpoints: np.ndarray, radii: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Nearest-capsule assignment *plus* the bits the analytic Jacobian needs.
+
+    Returns ``(dist (N,), idx (N,), t (N,), n (N,3))`` where, for each point's
+    chosen capsule, ``t`` is the clamped projection parameter along the segment
+    and ``n`` is the *unit* vector from the closest segment point to the point
+    (``d dist / d(closest point) = -n``). Fully vectorised over points × capsules
+    — the fit's hot path.
+    """
+    pts = np.asarray(pts, float).reshape(-1, 3)          # (N, 3)
+    a = np.asarray(endpoints, float)[:, 0]               # (C, 3)
+    b = np.asarray(endpoints, float)[:, 1]               # (C, 3)
+    ab = b - a                                           # (C, 3)
+    L2 = np.einsum("cd,cd->c", ab, ab)                   # (C,)
+    L2 = np.where(L2 < 1e-12, 1.0, L2)
+    ap = pts[:, None, :] - a[None, :, :]                 # (N, C, 3)
+    tt = np.clip(np.einsum("ncd,cd->nc", ap, ab) / L2, 0.0, 1.0)  # (N, C)
+    perp = ap - tt[..., None] * ab[None, :, :]           # (N, C, 3)
+    pn = np.linalg.norm(perp, axis=2)                    # (N, C)
+    D = pn - np.asarray(radii, float)[None, :]           # (N, C)
+    idx = np.argmin(np.abs(D), axis=1)                   # (N,)
+    rows = np.arange(len(pts))
+    n = perp[rows, idx] / np.maximum(pn[rows, idx], 1e-9)[:, None]  # (N, 3) unit
+    return D[rows, idx], idx, tt[rows, idx], n
+
+
 def nearest_capsule(
     pts: np.ndarray, endpoints: np.ndarray, radii: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -115,13 +145,8 @@ def nearest_capsule(
 
     ``endpoints`` (C, 2, 3), ``radii`` (C,). Returns ``(dist (N,), idx (N,))``.
     """
-    pts = np.asarray(pts, float).reshape(-1, 3)
-    C = len(endpoints)
-    D = np.empty((C, len(pts)), float)
-    for c in range(C):
-        D[c] = point_segment_distance(pts, endpoints[c, 0], endpoints[c, 1]) - radii[c]
-    idx = np.argmin(np.abs(D), axis=0)
-    return D[idx, np.arange(len(pts))], idx
+    d, idx, _t, _n = nearest_capsule_geom(pts, endpoints, radii)
+    return d, idx
 
 
 # ── residual assembly ────────────────────────────────────────────────────
@@ -143,18 +168,19 @@ def assemble_residuals(
     anchor + regularisers."""
     import pinocchio as pin
 
-    ep = hm.fk_capsule_endpoints(hand, q)
+    order = []
+    if lm_anchor and fc.w_landmark > 0:
+        order = [int(lm) for lm, p in lm_anchor.items()
+                 if int(lm) in hand.lm_frames and np.all(np.isfinite(p))]
+
+    ep, model_p = hm.fk_capsule_and_landmarks(hand, q, order)   # one FK pass
     radii = hm.capsule_radii(hand)
     d, _ = nearest_capsule(cloud, ep, radii)
     parts = [np.sqrt(np.asarray(weights, float).reshape(-1)) * d]
 
-    if lm_anchor and fc.w_landmark > 0:
-        order = [int(lm) for lm, p in lm_anchor.items()
-                 if int(lm) in hand.lm_frames and np.all(np.isfinite(p))]
-        if order:
-            model_p = hm.fk_landmark_positions(hand, q, order)
-            obs = np.array([lm_anchor[LM(i)] for i in order], float)
-            parts.append(np.sqrt(fc.w_landmark) * (model_p - obs).reshape(-1))
+    if order:
+        obs = np.array([lm_anchor[LM(i)] for i in order], float)
+        parts.append(np.sqrt(fc.w_landmark) * (model_p - obs).reshape(-1))
 
     if q_prev is not None and fc.w_vel > 0:
         parts.append(np.sqrt(fc.w_vel) * pin.difference(hand.model, q_prev, q))
@@ -171,6 +197,114 @@ def assemble_residuals(
         parts.append(np.sqrt(fc.w_posture) * (qv[7:] - rest[7:]))
 
     return np.concatenate(parts)
+
+
+def residual_and_jac(
+    dtheta: np.ndarray,
+    hand: "hm.CapsuleHand",
+    q0: np.ndarray,
+    cloud: np.ndarray,
+    weights: np.ndarray,
+    fc: FitConfig,
+    *,
+    q_prev: np.ndarray | None,
+    q_pred: np.ndarray | None,
+    q_rest: np.ndarray | None,
+    order: list[int],
+    obs_lm: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Residual vector **and** its analytic Jacobian w.r.t. the tangent
+    increment ``dtheta`` (``q = integrate(q0, dtheta)``).
+
+    Row order matches :func:`assemble_residuals` exactly. The point→capsule and
+    landmark rows are differentiated through Pinocchio frame Jacobians; the
+    temporal rows through ``dDifference``; the barrier / posture rows act on the
+    revolute config block directly. Each geometric block is mapped from the
+    tangent space at ``q`` back to ``dtheta`` via ``dIntegrate``'s ARG1 Jacobian.
+
+    Replacing scipy's 2-point finite differences (``nv+1`` FK passes per solver
+    iteration) with one FK + one Jacobian pass is the fit's main speed lever.
+    """
+    import pinocchio as pin
+
+    model, data = hand.model, hand.data
+    nv = model.nv
+    q = pin.integrate(model, q0, np.asarray(dtheta, float))
+    pin.computeJointJacobians(model, data, q)
+    pin.updateFramePlacements(model, data)
+    Jint = pin.dIntegrate(model, q0, np.asarray(dtheta, float))[1]   # nv×nv, ARG1
+    P = data.oMf
+    LWA = pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+
+    _jc: dict[int, np.ndarray] = {}
+
+    def frameJ(fid: int) -> np.ndarray:            # translational rows, 3×nv
+        J = _jc.get(fid)
+        if J is None:
+            J = np.asarray(pin.getFrameJacobian(model, data, fid, LWA))[:3]
+            _jc[fid] = J
+        return J
+
+    r_parts: list[np.ndarray] = []
+    Jg_parts: list[np.ndarray] = []               # rows in tangent-at-q space
+
+    # ── data term: sqrt(w) * signed point→capsule distance ──────────────
+    ep = np.empty((len(hand.capsules), 2, 3), float)
+    for i, (fa, fb, _r) in enumerate(hand.capsules):
+        ep[i, 0], ep[i, 1] = P[fa].translation, P[fb].translation
+    radii = np.array([r for _a, _b, r in hand.capsules], float)
+    dist, cidx, tparam, nrm = nearest_capsule_geom(cloud, ep, radii)
+    sw = np.sqrt(np.asarray(weights, float).reshape(-1))
+    r_parts.append(sw * dist)
+    Jd = np.zeros((len(cloud), nv), float)
+    for c in range(len(hand.capsules)):
+        m = cidx == c
+        if not m.any():
+            continue
+        fa, fb, _r = hand.capsules[c]
+        n_c = nrm[m]                               # (k,3) unit
+        t_c = tparam[m][:, None]                   # (k,1)
+        # d dist/dv = -(1-t) nᵀ Jₐ - t nᵀ J_b
+        Jd[m] = -((1.0 - t_c) * (n_c @ frameJ(fa)) + t_c * (n_c @ frameJ(fb)))
+    Jg_parts.append(sw[:, None] * Jd)
+
+    # ── landmark anchor ────────────────────────────────────────────────
+    if order:
+        slm = np.sqrt(fc.w_landmark)
+        model_p = np.array([P[hand.lm_frames[i]].translation for i in order], float)
+        r_parts.append((slm * (model_p - obs_lm)).reshape(-1))
+        Jg_parts.append(slm * np.concatenate([frameJ(hand.lm_frames[i]) for i in order], 0))
+
+    r = np.concatenate(r_parts)
+    J_parts = [np.vstack(Jg_parts) @ Jint]        # geometric → dtheta space
+
+    # ── temporal (velocity / acceleration) ────────────────────────────
+    if q_prev is not None and fc.w_vel > 0:
+        s = np.sqrt(fc.w_vel)
+        r = np.concatenate([r, s * pin.difference(model, q_prev, q)])
+        J_parts.append(s * (pin.dDifference(model, q_prev, q)[1] @ Jint))
+    if q_pred is not None and fc.w_acc > 0:
+        s = np.sqrt(fc.w_acc)
+        r = np.concatenate([r, s * pin.difference(model, q_pred, q)])
+        J_parts.append(s * (pin.dDifference(model, q_pred, q)[1] @ Jint))
+
+    # ── joint-limit barrier + posture (revolute config block) ─────────
+    qv = np.asarray(q, float)
+    Jq_rev = Jint[6:, :]                           # d q[7:] / d dtheta, (nq-7)×nv
+    if fc.w_prior > 0:
+        s = np.sqrt(fc.w_prior)
+        over = np.maximum(0.0, qv - hand.q_hi)[7:]
+        under = np.maximum(0.0, hand.q_lo - qv)[7:]
+        r = np.concatenate([r, s * over, s * under])
+        J_parts.append(s * (over > 0).astype(float)[:, None] * Jq_rev)
+        J_parts.append(-s * (under > 0).astype(float)[:, None] * Jq_rev)
+    if fc.w_posture > 0:
+        s = np.sqrt(fc.w_posture)
+        rest = pin.neutral(model) if q_rest is None else np.asarray(q_rest, float)
+        r = np.concatenate([r, s * (qv[7:] - rest[7:])])
+        J_parts.append(s * Jq_rev)
+
+    return r, np.vstack(J_parts)
 
 
 def fit_frame(
@@ -197,14 +331,44 @@ def fit_frame(
     if len(cloud) < fc.min_points:
         return q0, {"skipped": True, "n_points": int(len(cloud))}
     w = np.ones(len(cloud)) if weights is None else np.asarray(weights, float).reshape(-1)
+    if len(cloud) > fc.max_points:                       # subsample for speed
+        sel = np.random.default_rng(0).choice(len(cloud), fc.max_points, replace=False)
+        cloud, w = cloud[sel], w[sel]
 
-    def f(dtheta):
-        q = pin.integrate(hand.model, q0, dtheta)
-        return assemble_residuals(q, hand, cloud, w, fc, q_prev=q_prev, q_pred=q_pred,
-                                  lm_anchor=lm_anchor)
+    order: list[int] = []
+    obs_lm = None
+    if lm_anchor and fc.w_landmark > 0:
+        order = [int(lm) for lm, p in lm_anchor.items()
+                 if int(lm) in hand.lm_frames and np.all(np.isfinite(p))]
+        obs_lm = np.array([lm_anchor[LM(i)] for i in order], float) if order else None
+
+    cache: dict[bytes, tuple[np.ndarray, np.ndarray]] = {}
+
+    def _eval(dtheta):
+        key = np.asarray(dtheta, float).tobytes()
+        out = cache.get(key)
+        if out is None:
+            out = residual_and_jac(
+                dtheta, hand, q0, cloud, w, fc, q_prev=q_prev, q_pred=q_pred,
+                q_rest=None, order=order, obs_lm=obs_lm)
+            if len(cache) > 4:
+                cache.clear()
+            cache[key] = out
+        return out
+
+    # Hard box on the tangent step: the revolute block can't leave the joint
+    # limits, the free-flyer can't jump more than a hand's width / ~1 rad per
+    # frame. Without this the analytic-Jacobian solve can walk the wrist into a
+    # far-off cloud lobe through the wrist↔finch nullspace.
+    lb = np.empty(hand.nv); ub = np.empty(hand.nv)
+    lb[:6] = [-0.15, -0.15, -0.15, -1.0, -1.0, -1.0]
+    ub[:6] = -lb[:6]
+    lb[6:] = np.minimum(hand.q_lo[7:] - q0[7:], -1e-6)
+    ub[6:] = np.maximum(hand.q_hi[7:] - q0[7:], 1e-6)
 
     res = least_squares(
-        f, np.zeros(hand.nv), method="trf", loss="huber",
+        lambda d: _eval(d)[0], np.zeros(hand.nv), jac=lambda d: _eval(d)[1],
+        bounds=(lb, ub), method="trf", loss="huber",
         f_scale=fc.huber_delta_m, x_scale="jac", max_nfev=fc.max_nfev,
     )
     q = pin.integrate(hand.model, q0, res.x)
@@ -392,14 +556,22 @@ def refine_cln(ep, cfg=None, report=None) -> str:
             q_pred = pin.integrate(hand.model, q_prev, dv)
         q, info = fit_frame(hand, cloud, wts, q0, fc, q_prev=q_prev, q_pred=q_pred,
                             lm_anchor=frames[t])
-        q_traj[t] = q
-        caps[t] = hm.fk_capsule_endpoints(hand, q)
-        if not info["skipped"] and info["accepted"]:
-            p, R = wrist_pose(hand, q)
+        p, R = wrist_pose(hand, q)
+        # the true wrist sits inside the ROI we cropped around the landmark wrist,
+        # so measure divergence against the *landmark* wrist (pos[t] is the value
+        # we're trying to correct — it can't be the reference).
+        w_lm = frames[t].get(LM.WRIST)
+        diverged = (w_lm is not None and np.all(np.isfinite(w_lm))
+                    and float(np.linalg.norm(p - np.asarray(w_lm, float))) > 1.5 * fc.roi_m)
+        good = (not info["skipped"]) and info["accepted"] and not diverged
+        if good:
+            q_traj[t] = q
+            caps[t] = hm.fk_capsule_endpoints(hand, q)
             pos[t] = p
             rot[t] = R
             n_acc += 1
-        q_prev = q
+        # chain the warm start only from a clean fit — never ratchet off a bad one
+        q_prev = q if good else None
         if t % 5 == 0:
             report(stage="hand_fit", frame=t, total=T)
 

@@ -120,6 +120,39 @@ def test_assemble_residuals_shapes():
     assert np.median(np.abs(r[: len(cloud)])) < 0.01
 
 
+def test_analytic_jacobian_matches_finite_difference():
+    """The hand-written Jacobian in ``residual_and_jac`` must agree with a
+    central finite difference of the residual (this is the fit's speed lever —
+    a sign error here silently wrecks convergence)."""
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame(), _open_hand_frame()]))
+    q0 = pin.neutral(hand.model).copy()
+    q0[:7] = pin.SE3ToXYZQUAT(pin.SE3(pin.exp3(np.array([0.1, -0.2, 0.15])),
+                                      np.array([0.12, -0.03, 0.85])))
+    cloud = _sample_cloud(hand, q0, per_capsule=25, noise=0.003, seed=5)
+    w = np.linspace(0.5, 1.5, len(cloud))
+    q_prev = pin.integrate(hand.model, q0, 0.05 * np.ones(hand.nv))
+    q_pred = pin.integrate(hand.model, q0, -0.03 * np.ones(hand.nv))
+    fr = _open_hand_frame(w=np.array([0.12, -0.03, 0.85]))
+    order = [0, 5, 9, 17, 8]
+    obs = np.array([fr[LM(i)] + 0.004 for i in order])
+    fc = hf.FitConfig()
+
+    dt0 = 0.02 * np.cos(np.arange(hand.nv))
+    args = dict(q_prev=q_prev, q_pred=q_pred, q_rest=None, order=order, obs_lm=obs)
+    r0, J = hf.residual_and_jac(dt0, hand, q0, cloud, w, fc, **args)
+
+    eps = 1e-6
+    Jfd = np.empty_like(J)
+    for k in range(hand.nv):
+        d = dt0.copy(); d[k] += eps
+        rp, _ = hf.residual_and_jac(d, hand, q0, cloud, w, fc, **args)
+        d = dt0.copy(); d[k] -= eps
+        rm, _ = hf.residual_and_jac(d, hand, q0, cloud, w, fc, **args)
+        Jfd[:, k] = (rp - rm) / (2 * eps)
+
+    assert np.allclose(J, Jfd, atol=2e-4, rtol=2e-3)
+
+
 def test_fit_recovers_wrist_pose():
     params = hm.calibrate_from_frames([_open_hand_frame(), _open_hand_frame()])
     hand = hm.build(params)

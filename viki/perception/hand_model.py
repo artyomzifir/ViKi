@@ -304,6 +304,25 @@ def fk_landmark_positions(hand: CapsuleHand, q: np.ndarray, lm_order: list[int])
     return np.array([P[hand.lm_frames[int(lm)]].translation for lm in lm_order], float)
 
 
+def fk_capsule_and_landmarks(
+    hand: CapsuleHand, q: np.ndarray, lm_order: list[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """One FK pass, both readouts: ``((C, 2, 3) capsule endpoints, (L, 3) LM frames)``.
+
+    The residual assembly needs both every iteration; folding them into a single
+    ``forwardKinematics`` call halves the FK cost on the fit's hot path.
+    """
+    _fk(hand, q)
+    P = hand.data.oMf
+    ep = np.empty((len(hand.capsules), 2, 3), float)
+    for i, (a, b, _r) in enumerate(hand.capsules):
+        ep[i, 0] = P[a].translation
+        ep[i, 1] = P[b].translation
+    lm = np.array([P[hand.lm_frames[int(i)]].translation for i in lm_order], float) \
+        if lm_order else np.empty((0, 3), float)
+    return ep, lm
+
+
 def capsule_radii(hand: CapsuleHand) -> np.ndarray:
     return np.array([r for _a, _b, r in hand.capsules], float)
 
