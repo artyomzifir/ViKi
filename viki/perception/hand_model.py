@@ -339,6 +339,34 @@ def fk_capsule_and_landmarks(
     return ep, lm
 
 
+def joint_capsule_support(hand: CapsuleHand) -> np.ndarray:
+    """``(nq-7, C)`` bool: which capsules carry evidence about each revolute joint.
+
+    A depth sample only constrains the joints *upstream* of the phalanx it lies
+    on: a point on a proximal phalanx says nothing about that finger's PIP or
+    DIP angle. The posture prior uses this to stay a fallback for genuinely
+    unobserved joints instead of a force acting on well-measured ones.
+    """
+    nrev = hand.nq - 7
+    support = np.zeros((nrev, len(hand.capsules)), bool)
+    # capsule order follows build(): palm first, then prox/mid/dist per finger
+    frame_level = {}
+    for i, (a, _b, _r) in enumerate(hand.capsules):
+        frame_level[i] = hand.model.frames[a].name
+    for f in FINGERS:
+        levels = {f"{f}_prox": 0, f"{f}_mid": 1, f"{f}_dist": 2}
+        caps = {lvl: i for i, name in frame_level.items()
+                if (lvl := levels.get(name)) is not None}
+        # abd + mcp see every phalanx, pip sees mid+dist, dip only dist
+        for jname, first in zip(_JOINTS[f], (0, 0, 1, 2)):
+            jid = hand.model.getJointId(jname)
+            row = hand.model.joints[jid].idx_q - 7
+            for lvl, cap in caps.items():
+                if lvl >= first:
+                    support[row, cap] = True
+    return support
+
+
 def capsule_radii(hand: CapsuleHand) -> np.ndarray:
     return np.array([r for _a, _b, r in hand.capsules], float)
 

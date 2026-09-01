@@ -426,3 +426,137 @@ def test_refine_cln_writes_new_keys_without_overwriting_pose(tmp_path, monkeypat
     assert d["hand_fit_positions"].shape == (T, 3)
     assert np.array_equal(d["positions"], np.tile(fr[LM.WRIST], (T, 1)).astype(np.float32))
     assert "hand_fit_metrics_json" in d.files
+
+
+def _bend(hand, q, joints_deg):
+    q = np.asarray(q, float).copy()
+    for name, deg in joints_deg.items():
+        jid = hand.model.getJointId(name)
+        q[hand.model.joints[jid].idx_q] = np.deg2rad(deg)
+    return q
+
+
+def _joint_deg(hand, q, name):
+    jid = hand.model.getJointId(name)
+    return float(np.degrees(q[hand.model.joints[jid].idx_q]))
+
+
+def test_fit_preserves_finger_bend_against_the_posture_prior():
+    """A correctly bent hand must survive the fit, not be pulled straight.
+
+    This is the balance regression guard, and it runs the *shipped* weights on
+    purpose. With a flat rest pose and a quadratic prior that ignores whether a
+    joint is measured, the prior grows with the very bend it is meant to
+    regularise: the same case used to converge to 31 deg and drag the wrist
+    16 mm off. The depth cloud has to win on joints it actually observes.
+
+    Note what this does *not* claim: starting from a straight hand the fit
+    cannot find a 50 deg bend at all, because a curled fingertip lies inside
+    the broad palm capsule and is assigned to it, leaving the finger joints
+    with no correspondences. That basin is the warm start's job, and widening
+    it needs the palm geometry reworked.
+    """
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    bent = {f"{f}_{j}": deg for f in ("index", "middle", "ring")
+            for j, deg in (("mcp", 40.0), ("pip", 50.0), ("dip", 35.0))}
+    q_true = _bend(hand, pin.neutral(hand.model), bent)
+    cloud = _sample_cloud(hand, q_true, per_capsule=140, noise=0.0015, seed=11)
+
+    T = 3
+    fc = hf.FitConfig(min_points=10, max_points=1600, outer_iterations=4)
+    q_flat = pin.neutral(hand.model).copy()      # rest pose pulls the wrong way
+    fitted, info = hf.fit_trajectory(
+        hand, [cloud] * T, [None] * T, np.tile(q_true, (T, 1)), fc, q_rest=q_flat,
+    )
+
+    for name in ("index_pip", "middle_pip", "ring_pip"):
+        got = _joint_deg(hand, fitted[1], name)
+        assert got > 40.0, (
+            f"{name} was straightened to {got:.1f}° from a correct 50°; "
+            "the posture prior is outweighing the depth cloud"
+        )
+    p_true, _ = hf.wrist_pose(hand, q_true)
+    p_fit, _ = hf.wrist_pose(hand, fitted[1])
+    assert np.linalg.norm(p_fit - p_true) < 0.008   # no wrist drift to absorb the prior
+    assert info["median_resid_m"] < 0.002
+    assert info["energy_frac_data"] > 0.5
+    assert info["energy_frac_posture"] < 0.30
+
+
+def test_partially_bent_warm_start_moves_toward_the_cloud():
+    """From half the true bend the fit must close the gap, not fall back."""
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    bent = {f"{f}_{j}": deg for f in ("index", "middle", "ring")
+            for j, deg in (("mcp", 40.0), ("pip", 50.0), ("dip", 35.0))}
+    q_true = _bend(hand, pin.neutral(hand.model), bent)
+    q_half = _bend(hand, pin.neutral(hand.model), {k: v / 2 for k, v in bent.items()})
+    cloud = _sample_cloud(hand, q_true, per_capsule=140, noise=0.0015, seed=11)
+
+    T = 3
+    fc = hf.FitConfig(min_points=10, max_points=1600, outer_iterations=4)
+    fitted, _ = hf.fit_trajectory(
+        hand, [cloud] * T, [None] * T, np.tile(q_half, (T, 1)), fc,
+        q_rest=pin.neutral(hand.model).copy(),
+    )
+    for name in ("index_pip", "middle_pip", "ring_pip"):
+        assert _joint_deg(hand, fitted[1], name) > _joint_deg(hand, q_half, name)
+
+
+def test_posture_prior_is_released_by_data_support():
+    """Observed joints get a weak prior, unobserved ones keep the full weight."""
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    q = pin.neutral(hand.model)
+    cloud = _sample_cloud(hand, q, per_capsule=60, seed=2)
+    fc = hf.FitConfig(min_points=10, max_points=2000)
+    obs = hf._make_observations([cloud], [None], None, None, hand, fc)
+    frozen = hf.freeze_correspondences(hand, np.stack([q]), obs, fc.inside_scale)[0]
+
+    support = hm.joint_capsule_support(hand)
+    assert support.shape == (hand.nq - 7, len(hand.capsules))
+    # a DIP joint is only informed by its own distal capsule
+    dip_row = hand.model.joints[hand.model.getJointId("index_dip")].idx_q - 7
+    assert support[dip_row].sum() == 1
+    mcp_row = hand.model.joints[hand.model.getJointId("index_mcp")].idx_q - 7
+    assert support[mcp_row].sum() == 3
+
+    assert frozen.posture_weight.shape == (hand.nq - 7,)
+    # every joint is measured here, so every prior is heavily discounted
+    assert (frozen.posture_weight < 0.05).all()
+    # a frame with no depth at all keeps the prior at full strength
+    empty = hf.freeze_correspondences(
+        hand, np.stack([q]),
+        hf._make_observations([np.empty((0, 3))], [None], None, None, hand, fc),
+        fc.inside_scale,
+    )[0]
+    assert np.allclose(empty.posture_weight, 1.0)
+
+
+def test_unobserved_fingers_hold_the_calibrated_rest_pose():
+    """Capsules with no points follow ``q_rest``, never ``pin.neutral``.
+
+    ``q_rest`` was accepted but never filled in by the caller for a while, so
+    unobserved joints silently relaxed to the fully-extended neutral pose.
+    """
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    relaxed = {f"{f}_{j}": deg for f in hm.FINGERS
+               for j, deg in (("pip" if f != "thumb" else "mcp", 32.0),
+                              ("dip" if f != "thumb" else "ip", 28.0))}
+    q_rest = _bend(hand, pin.neutral(hand.model), relaxed)
+
+    # a cloud that only covers the palm proxy — every phalanx is unobserved
+    palm_only = hf.deterministic_voxel_subsample(
+        _sample_cloud(hand, q_rest, per_capsule=120, noise=0.001, seed=4)[:120],
+        None, 0.002, 400,
+    )[0]
+
+    T = 3
+    q0 = np.tile(pin.neutral(hand.model), (T, 1))    # start fully extended
+    fc = hf.FitConfig(min_points=10, max_points=800, outer_iterations=3)
+    fitted, _ = hf.fit_trajectory(
+        hand, [palm_only] * T, [None] * T, q0, fc, q_rest=q_rest,
+    )
+
+    for name in ("index_dip", "middle_dip", "ring_dip", "pinky_dip"):
+        got = _joint_deg(hand, fitted[1], name)
+        assert abs(got - 28.0) < 10.0, f"{name} relaxed to {got:.1f}°, not to rest"
+        assert got > 15.0, f"{name} collapsed toward pin.neutral ({got:.1f}°)"

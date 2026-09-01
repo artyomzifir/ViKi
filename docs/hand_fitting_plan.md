@@ -1,7 +1,8 @@
 # Plan — articulated hand-to-point-cloud fitting
 
-> Historical per-frame design. The implemented trajectory-level design and
-> target-host measurements are in `hand_fit_batch_design.md`.
+> Historical per-frame design. The implemented trajectory-level design, the
+> measured functional balance (before/after) and the target-host measurements
+> are in `hand_fit_batch_design.md`.
 
 ## Goal
 

@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -45,14 +45,15 @@ class FitConfig:
     forearm_cut_m: float = 0.010
     voxel_m: float = 0.004
     huber_delta_m: float = 0.010
+    w_data: float = 500.0
     w_vel_translation: float = 40.0
-    w_vel_rotation: float = 8.0
-    w_vel_joints: float = 2.0
+    w_vel_rotation: float = 4.0
+    w_vel_joints: float = 0.8
     w_acc_translation: float = 120.0
-    w_acc_rotation: float = 20.0
-    w_acc_joints: float = 4.0
+    w_acc_rotation: float = 10.0
+    w_acc_joints: float = 1.6
     w_prior: float = 100.0
-    w_posture: float = 0.02
+    w_posture: float = 0.004
     w_landmark: float = 4.0
     landmark_decay: float = 0.35
     inside_scale: float = 0.15
@@ -75,14 +76,15 @@ class FitConfig:
             forearm_cut_m=gf("PERCEPTION_HAND_FIT_FOREARM_CUT_M", 0.010),
             voxel_m=gf("PERCEPTION_HAND_FIT_VOXEL_M", 0.004),
             huber_delta_m=gf("PERCEPTION_HAND_FIT_HUBER_M", 0.010),
+            w_data=gf("PERCEPTION_HAND_FIT_W_DATA", 500.0),
             w_vel_translation=gf("PERCEPTION_HAND_FIT_W_VEL_TRANSLATION", 40.0),
-            w_vel_rotation=gf("PERCEPTION_HAND_FIT_W_VEL_ROTATION", 8.0),
-            w_vel_joints=gf("PERCEPTION_HAND_FIT_W_VEL_JOINTS", 2.0),
+            w_vel_rotation=gf("PERCEPTION_HAND_FIT_W_VEL_ROTATION", 4.0),
+            w_vel_joints=gf("PERCEPTION_HAND_FIT_W_VEL_JOINTS", 0.8),
             w_acc_translation=gf("PERCEPTION_HAND_FIT_W_ACC_TRANSLATION", 120.0),
-            w_acc_rotation=gf("PERCEPTION_HAND_FIT_W_ACC_ROTATION", 20.0),
-            w_acc_joints=gf("PERCEPTION_HAND_FIT_W_ACC_JOINTS", 4.0),
+            w_acc_rotation=gf("PERCEPTION_HAND_FIT_W_ACC_ROTATION", 10.0),
+            w_acc_joints=gf("PERCEPTION_HAND_FIT_W_ACC_JOINTS", 1.6),
             w_prior=gf("PERCEPTION_HAND_FIT_W_PRIOR", 100.0),
-            w_posture=gf("PERCEPTION_HAND_FIT_W_POSTURE", 0.02),
+            w_posture=gf("PERCEPTION_HAND_FIT_W_POSTURE", 0.004),
             w_landmark=gf("PERCEPTION_HAND_FIT_W_LANDMARK", 4.0),
             landmark_decay=gf("PERCEPTION_HAND_FIT_LANDMARK_DECAY", 0.35),
             inside_scale=gf("PERCEPTION_HAND_FIT_INSIDE_SCALE", 0.15),
@@ -115,7 +117,7 @@ def point_capsule_signed_distance(
 
 def nearest_capsule_geom(
     pts: np.ndarray, endpoints: np.ndarray, radii: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return signed distance, capsule id, clamped segment t, and surface normal."""
     pts = np.asarray(pts, float).reshape(-1, 3)
     if len(pts) == 0:
@@ -189,6 +191,30 @@ class FrameObservation:
     lm_points: np.ndarray
     lm_confidence: np.ndarray
     capsule_ids: np.ndarray
+    # One-sided attenuation for samples that fall inside the model surface,
+    # frozen together with the correspondences. Freezing it keeps the residual
+    # differentiable through the inner solve (the factor no longer jumps at
+    # d = 0, where the analytic Jacobian could not see the step) and lets the
+    # robust loss below use exactly the same alpha the residual was built from.
+    data_scale: np.ndarray = field(default_factory=lambda: np.ones(0))
+    # Per-revolute-joint posture multiplier, frozen with the correspondences.
+    posture_weight: np.ndarray = field(default_factory=lambda: np.ones(0))
+
+
+def data_alpha(obs: FrameObservation, fc: FitConfig) -> np.ndarray:
+    """Per-point data weight alpha, shared by the residual and the robust loss.
+
+    ``alpha = w_data * scale^2 * w / sum(w)``. Dividing by ``sum(w)`` makes the
+    block invariant to how many depth pixels survived the ROI, and ``w_data``
+    restores its magnitude: without it the data block is a per-frame *mean* of
+    squared distances while every other term is a *sum*, which on real episodes
+    left the depth cloud contributing 0.1% of the functional.
+    """
+    if not len(obs.cloud):
+        return np.empty(0)
+    scale = obs.data_scale if len(obs.data_scale) == len(obs.cloud) else np.ones(len(obs.cloud))
+    return (fc.w_data * scale ** 2 * obs.weights
+            / max(float(obs.weights.sum()), 1e-12))
 
 
 def _make_observations(
@@ -217,22 +243,34 @@ def _make_observations(
         out.append(FrameObservation(
             c, ww, np.asarray(order, int),
             np.asarray(points, float).reshape(-1, 3), np.clip(np.asarray(conf, float), 0.0, 1.0),
-            np.zeros(len(c), dtype=int),
+            np.zeros(len(c), dtype=int), np.ones(len(c)),
         ))
     return out
 
 
 def freeze_correspondences(
-    hand: "hm.CapsuleHand", q_traj: np.ndarray, observations: Sequence[FrameObservation]
+    hand: "hm.CapsuleHand", q_traj: np.ndarray, observations: Sequence[FrameObservation],
+    fc_inside_scale: float = 0.15,
 ) -> list[FrameObservation]:
     radii = hm.capsule_radii(hand)
+    support_map = hm.joint_capsule_support(hand)
+    n_caps = len(hand.capsules)
     frozen = []
     for q, obs in zip(q_traj, observations):
         if len(obs.cloud):
-            _, idx = nearest_capsule(obs.cloud, hm.fk_capsule_endpoints(hand, q), radii)
+            dist, idx = nearest_capsule(obs.cloud, hm.fk_capsule_endpoints(hand, q), radii)
+            scale = np.where(dist < 0.0, fc_inside_scale, 1.0)
+            per_capsule = np.bincount(idx, minlength=n_caps)
         else:
-            idx = np.empty(0, int)
-        frozen.append(replace(obs, capsule_ids=idx))
+            idx, scale = np.empty(0, int), np.empty(0)
+            per_capsule = np.zeros(n_caps)
+        # A joint measured by many samples needs no prior; an unobserved one
+        # keeps the full weight. Without this the quadratic prior grows with
+        # the bend it is supposed to merely regularise and straightens fingers
+        # that the depth cloud has already resolved.
+        support = support_map @ per_capsule
+        frozen.append(replace(obs, capsule_ids=idx, data_scale=scale,
+                              posture_weight=1.0 / (1.0 + support)))
     return frozen
 
 
@@ -247,8 +285,8 @@ def _component_sqrt_weights(fc: FitConfig, kind: str, nv: int) -> np.ndarray:
 def _frame_geometry(
     dtheta: np.ndarray, hand: "hm.CapsuleHand", q0: np.ndarray,
     obs: FrameObservation, fc: FitConfig, q_rest: np.ndarray, lm_scale: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Frame-local residual/Jacobian plus q and dIntegrate Jacobian."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Frame-local residual/Jacobian, q, dIntegrate Jacobian, wrist pos + its Jacobian."""
     import pinocchio as pin
 
     model, data, nv = hand.model, hand.data, hand.nv
@@ -275,10 +313,7 @@ def _frame_geometry(
     if len(obs.cloud):
         dist, tparam, nrm = _assigned_capsule_geom(
             obs.cloud, endpoints, hm.capsule_radii(hand), obs.capsule_ids)
-        # One-sided inside treatment: deep interior samples retain only a small
-        # fraction of their force instead of expanding the model toward them.
-        side = np.where(dist < 0.0, fc.inside_scale, 1.0)
-        sw = np.sqrt(obs.weights / max(float(obs.weights.sum()), 1e-12)) * side
+        sw = np.sqrt(data_alpha(obs, fc))
         residuals.append(sw * dist)
         jd = np.zeros((len(obs.cloud), nv), float)
         for capsule_id, (fa, fb, _) in enumerate(hand.capsules):
@@ -310,15 +345,19 @@ def _frame_geometry(
         jacobians.extend((s * (over > 0)[:, None] * jq_rev,
                           -s * (under > 0)[:, None] * jq_rev))
     if fc.w_posture > 0:
-        s = np.sqrt(fc.w_posture)
+        pw = obs.posture_weight
+        if len(pw) != len(qv) - 7:
+            pw = np.ones(len(qv) - 7)
+        s = np.sqrt(fc.w_posture * pw)
         residuals.append(s * (qv[7:] - q_rest[7:]))
-        jacobians.append(s * jq_rev)
+        jacobians.append(s[:, None] * jq_rev)
 
     wrist_fid = hand.lm_frames[int(LM.WRIST)]
     wrist_position = np.asarray(placements[wrist_fid].translation, float).copy()
     wrist_position_jac = frame_jac(wrist_fid) @ jint
-    return (np.concatenate(residuals), np.vstack(jacobians), q, jint,
-            wrist_position, wrist_position_jac)
+    r = np.concatenate(residuals) if residuals else np.empty(0)
+    j = np.vstack(jacobians) if jacobians else np.zeros((0, nv))
+    return r, j, q, jint, wrist_position, wrist_position_jac
 
 
 def batch_residual_and_jac(
@@ -401,19 +440,13 @@ def batch_residual_and_jac(
 def batch_jac_sparsity(
     hand: "hm.CapsuleHand", q0_traj: np.ndarray,
     observations: Sequence[FrameObservation], fc: FitConfig, *, q_rest=None,
+    lm_scale: float = 1.0,
 ):
     """Boolean block-banded structure, including currently inactive barriers."""
     from scipy.sparse import lil_matrix
 
     T, nv = len(q0_traj), hand.nv
-    nrev = hand.nq - 7
-    frame_rows = [
-        len(obs.cloud)
-        + (3 * len(obs.lm_order) if fc.w_landmark > 0 else 0)
-        + (2 * nrev if fc.w_prior > 0 else 0)
-        + (nrev if fc.w_posture > 0 else 0)
-        for obs in observations
-    ]
+    frame_rows = [sum(frame_row_counts(hand, obs, fc, lm_scale)) for obs in observations]
     total_rows = sum(frame_rows) + max(T - 1, 0) * nv + max(T - 2, 0) * nv
     pattern = lil_matrix((total_rows, T * nv), dtype=bool)
     row = 0
@@ -429,29 +462,40 @@ def batch_jac_sparsity(
     return pattern.tocsr()
 
 
-def _data_row_weights(
-    hand: "hm.CapsuleHand", observations: Sequence[FrameObservation], fc: FitConfig
-) -> np.ndarray:
-    """Per-row data normalization α=w/sum(w); zero for non-data rows."""
+def frame_row_counts(
+    hand: "hm.CapsuleHand", obs: FrameObservation, fc: FitConfig, lm_scale: float = 1.0
+) -> tuple[int, int, int, int]:
+    """(data, landmark, barrier, posture) row counts emitted by ``_frame_geometry``.
+
+    Every consumer of the residual layout derives it here. The landmark guard
+    must repeat ``lm_scale > 0`` exactly: with ``landmark_decay = 0`` the anchor
+    rows vanish after the first outer iteration, and a stale count would shift
+    the robust-loss weights onto the wrong rows.
+    """
     nrev = hand.nq - 7
+    n_lm = 3 * len(obs.lm_order) if (fc.w_landmark > 0 and lm_scale > 0) else 0
+    return (len(obs.cloud), n_lm,
+            2 * nrev if fc.w_prior > 0 else 0,
+            nrev if fc.w_posture > 0 else 0)
+
+
+def _data_row_weights(
+    hand: "hm.CapsuleHand", observations: Sequence[FrameObservation], fc: FitConfig,
+    lm_scale: float = 1.0,
+) -> np.ndarray:
+    """Per-row data alpha; zero for every non-data row."""
     chunks: list[np.ndarray] = []
     for obs in observations:
-        local = (
-            len(obs.cloud)
-            + (3 * len(obs.lm_order) if fc.w_landmark > 0 else 0)
-            + (2 * nrev if fc.w_prior > 0 else 0)
-            + (nrev if fc.w_posture > 0 else 0)
-        )
-        alpha = np.zeros(local, float)
-        if len(obs.cloud):
-            alpha[:len(obs.cloud)] = obs.weights / max(float(obs.weights.sum()), 1e-12)
+        counts = frame_row_counts(hand, obs, fc, lm_scale)
+        alpha = np.zeros(sum(counts), float)
+        alpha[:counts[0]] = data_alpha(obs, fc)
         chunks.append(alpha)
     chunks.append(np.zeros(max(len(observations) - 1, 0) * hand.nv))
     chunks.append(np.zeros(max(len(observations) - 2, 0) * hand.nv))
     return np.concatenate(chunks)
 
 
-def _data_huber_loss(data_alpha: np.ndarray):
+def _data_huber_loss(alpha: np.ndarray):
     """SciPy loss callable: Huber on depth rows, exact L2 elsewhere.
 
     The written functional applies ``rho`` only to point→surface distances.
@@ -459,7 +503,7 @@ def _data_huber_loss(data_alpha: np.ndarray):
     metre translations at the same threshold, effectively turning the very
     constraints that bridge long gaps from quadratic into weak linear forces.
     """
-    data_alpha = np.asarray(data_alpha, float)
+    alpha = np.asarray(alpha, float)
 
     def loss(z: np.ndarray) -> np.ndarray:
         z = np.asarray(z, float)
@@ -469,15 +513,69 @@ def _data_huber_loss(data_alpha: np.ndarray):
         # squares is normalized. To keep Huber's breakpoint at |distance|=δ,
         # rather than at |sqrt(alpha)*distance|=δ, use
         # alpha * huber(z/alpha) with its exact first/second derivatives.
-        robust = (data_alpha > 0.0) & (z > data_alpha)
-        scaled = z[robust] / data_alpha[robust]
+        robust = (alpha > 0.0) & (z > alpha)
+        scaled = z[robust] / alpha[robust]
         root = np.sqrt(scaled)
-        rho[0, robust] = data_alpha[robust] * (2.0 * root - 1.0)
+        rho[0, robust] = alpha[robust] * (2.0 * root - 1.0)
         rho[1, robust] = 1.0 / root
-        rho[2, robust] = -0.5 / (data_alpha[robust] * scaled * root)
+        rho[2, robust] = -0.5 / (alpha[robust] * scaled * root)
         return rho
 
     return loss
+
+
+ENERGY_TERMS: tuple[str, ...] = (
+    "data", "landmark", "barrier", "posture",
+    "vel_translation", "vel_rotation", "vel_joints",
+    "acc_translation", "acc_rotation", "acc_joints",
+)
+
+
+def energy_split(
+    hand: "hm.CapsuleHand", q_traj: np.ndarray,
+    observations: Sequence[FrameObservation], fc: FitConfig, *,
+    q_rest: np.ndarray, lm_scale: float = 1.0,
+) -> dict[str, float]:
+    """Sum of squares contributed by each term of the functional.
+
+    Weight tuning without this is guesswork: on the target episode the depth
+    cloud was contributing 0.1% of the energy while the temporal and posture
+    terms carried 93%, which straightens the fingers no matter how good the
+    point cloud is. ``fit_trajectory`` reports it for every episode.
+    """
+    import pinocchio as pin
+
+    q_traj = np.asarray(q_traj, float)
+    energy = {name: 0.0 for name in ENERGY_TERMS}
+    for q, obs in zip(q_traj, observations):
+        r = _frame_geometry(np.zeros(hand.nv), hand, q, obs, fc, q_rest, lm_scale)[0]
+        start = 0
+        for name, count in zip(("data", "landmark", "barrier", "posture"),
+                               frame_row_counts(hand, obs, fc, lm_scale)):
+            block = r[start:start + count]
+            energy[name] += float(block @ block)
+            start += count
+
+    wrist = np.asarray([wrist_pose(hand, q)[0] for q in q_traj])
+    diff = [np.asarray(pin.difference(hand.model, q_traj[t - 1], q_traj[t]))
+            for t in range(1, len(q_traj))]
+    for t, v in enumerate(diff):
+        v[:3] = wrist[t + 1] - wrist[t]
+    blocks = {"vel": np.asarray(diff) if diff else np.zeros((0, hand.nv)),
+              "acc": (np.diff(np.asarray(diff), axis=0) if len(diff) > 1
+                      else np.zeros((0, hand.nv)))}
+    for kind, rows in blocks.items():
+        scaled = _component_sqrt_weights(fc, kind, hand.nv) * rows
+        for name, sl in (("translation", slice(0, 3)), ("rotation", slice(3, 6)),
+                         ("joints", slice(6, None))):
+            energy[f"{kind}_{name}"] = float(np.sum(scaled[:, sl] ** 2))
+
+    total = sum(energy.values())
+    out = {f"energy_{k}": v for k, v in energy.items()}
+    out["energy_total"] = total
+    out.update({f"energy_frac_{k}": (v / total if total > 0 else 0.0)
+                for k, v in energy.items()})
+    return out
 
 
 def _bounds(hand: "hm.CapsuleHand", q0_traj: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -527,8 +625,8 @@ def fit_trajectory(
     q_rest = np.asarray(q_rest if q_rest is not None else pin.neutral(hand.model), float)
     n_outer = 0; total_nfev = 0
     for outer in range(fc.outer_iterations):
-        frozen = freeze_correspondences(hand, q_ref, observations)
         lm_scale = fc.landmark_decay ** outer
+        frozen = freeze_correspondences(hand, q_ref, observations, fc.inside_scale)
         cache: dict[bytes, tuple[np.ndarray, object]] = {}
 
         def evaluate(x):
@@ -544,8 +642,9 @@ def fit_trajectory(
         lower, upper = _bounds(hand, q_ref)
         # A callable sparse Jacobian is authoritative; jac_sparsity documents
         # and protects the intended band if scipy internally finite-differences.
-        sparsity = batch_jac_sparsity(hand, q_ref, frozen, fc, q_rest=q_rest)
-        robust_data_weights = _data_row_weights(hand, frozen, fc)
+        sparsity = batch_jac_sparsity(hand, q_ref, frozen, fc, q_rest=q_rest,
+                                      lm_scale=lm_scale)
+        robust_data_weights = _data_row_weights(hand, frozen, fc, lm_scale)
         result = least_squares(
             lambda x: evaluate(x)[0], np.zeros(T * nv),
             jac=lambda x: evaluate(x)[1], jac_sparsity=sparsity,
@@ -569,16 +668,24 @@ def fit_trajectory(
             d, _ = nearest_capsule(obs.cloud, hm.fk_capsule_endpoints(hand, q), radii)
             residuals.append(np.abs(d))
     all_resid = np.concatenate(residuals) if residuals else np.empty(0)
+    counts = np.asarray([len(o.cloud) for o in observations], float)
     info = {
         "median_resid_m": float(np.median(all_resid)) if len(all_resid) else float("nan"),
         "p90_resid_m": float(np.percentile(all_resid, 90)) if len(all_resid) else float("nan"),
         "jerk_before_m": initial_jerk,
         "jerk_after_m": _jerk_norm(q_ref),
-        "empty_frame_fraction": float(np.mean([len(o.cloud) == 0 for o in observations])),
+        "empty_frame_fraction": float(np.mean(counts == 0)),
+        "mean_roi_points": float(counts.mean()) if len(counts) else 0.0,
         "outer_iterations": n_outer,
         "nfev": total_nfev,
         "elapsed_s": float(time.perf_counter() - started),
     }
+    # Reported at the converged trajectory and the final landmark decay, i.e.
+    # the balance the solution actually settled on.
+    info.update(energy_split(
+        hand, q_ref, freeze_correspondences(hand, q_ref, observations, fc.inside_scale),
+        fc, q_rest=q_rest, lm_scale=fc.landmark_decay ** max(n_outer - 1, 0),
+    ))
     return q_ref, info
 
 
@@ -591,15 +698,17 @@ def residual_and_jac(
     import pinocchio as pin
 
     order = np.asarray(order or [], int)
+    cloud = np.asarray(cloud, float)
     obs = FrameObservation(
-        np.asarray(cloud, float), np.asarray(weights, float), order,
+        cloud, np.asarray(weights, float), order,
         np.asarray(obs_lm if obs_lm is not None else [], float).reshape(-1, 3),
-        np.ones(len(order)), np.zeros(len(cloud), int),
+        np.ones(len(order)), np.zeros(len(cloud), int), np.ones(len(cloud)),
     )
     q_now = pin.integrate(hand.model, q0, np.asarray(dtheta, float))
     if len(cloud):
-        _, idx = nearest_capsule(cloud, hm.fk_capsule_endpoints(hand, q_now), hm.capsule_radii(hand))
+        dist, idx = nearest_capsule(cloud, hm.fk_capsule_endpoints(hand, q_now), hm.capsule_radii(hand))
         obs.capsule_ids = idx
+        obs.data_scale = np.where(dist < 0.0, fc.inside_scale, 1.0)
     return _frame_geometry(
         dtheta, hand, q0, obs, fc,
         np.asarray(q_rest if q_rest is not None else pin.neutral(hand.model)), 1.0,
@@ -947,8 +1056,14 @@ def refine_cln(ep, cfg=None, report=None) -> str:
     np.savez_compressed(cln_path, **data)
     logger.info(
         "hand_fit %s: median=%.4fm p90=%.4fm jerk %.6g→%.6g empty=%.1f%% "
-        "outer=%d elapsed=%.2fs", ep.id, info["median_resid_m"], info["p90_resid_m"],
-        info["jerk_before_m"], info["jerk_after_m"], 100 * info["empty_frame_fraction"],
+        "roi_pts=%.0f outer=%d elapsed=%.2fs", ep.id, info["median_resid_m"],
+        info["p90_resid_m"], info["jerk_before_m"], info["jerk_after_m"],
+        100 * info["empty_frame_fraction"], info["mean_roi_points"],
         info["outer_iterations"], info["elapsed_s"],
+    )
+    logger.info(
+        "hand_fit %s: energy %s", ep.id,
+        "  ".join("%s=%.1f%%" % (name, 100 * info["energy_frac_" + name])
+                  for name in ENERGY_TERMS),
     )
     return str(cln_path)
