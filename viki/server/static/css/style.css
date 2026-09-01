@@ -253,6 +253,9 @@ header h1 {
 .calib-sec details[open] > summary::before { content: '▾'; }
 .calib-sec details > *:not(summary) { margin-top: 7px; }
 .calib-sec-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+.calib-preset-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.calib-preset-acts button { padding: 3px 9px; font-size: 11px; }
+.calib-preset-acts button:disabled { opacity: 0.4; cursor: not-allowed; }
 .calib-sec select, .calib-sec button { width: 100%; }
 .calib-sec .cfg-row { justify-content: space-between; }
 .calib-sec .cfg-row input, .calib-sec .cfg-row select { width: 120px; }

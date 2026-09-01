@@ -70,6 +70,53 @@ def test_v2_save_read_activate_roundtrip():
     assert isinstance(written, list) and written[0]["device_id"] == "cam0"
 
 
+def _save(name):
+    presets.save_as(
+        name, extrinsics=[_extr("cam0")],
+        sets={"cam0": [{"corners": [[1, 2]], "c_ids": [0], "resolution": [640, 480]}]},
+        intrinsics={"cam0": {"fx": 600, "fy": 600, "cx": 320, "cy": 240}},
+        board={"type": "aruco", "board_size": [8, 10], "square_size": 0.05,
+               "marker_size": 0.035, "aruco_dict": 4},
+    )
+
+
+def test_preset_rename_keeps_active_and_moves_dir():
+    _save("rigA")
+    presets.attach_background("rigA", {"cam0": np.zeros((4, 4), np.float32)})  # makes rigA/ dir
+    presets.activate("rigA")
+
+    presets.rename("rigA", "rigB")
+
+    assert not presets.preset_path("rigA").exists()
+    assert presets.preset_path("rigB").exists()
+    assert (presets.PRESETS_DIR / "rigB").is_dir()
+    assert presets.current_active() == "rigB"
+    assert "cam0" in presets.read_detail("rigB")["background_devices"]
+
+
+def test_preset_rename_conflict_and_missing():
+    _save("rigA")
+    _save("rigC")
+    with pytest.raises(FileExistsError):
+        presets.rename("rigA", "rigC")
+    with pytest.raises(FileNotFoundError):
+        presets.rename("nope", "rigX")
+
+
+def test_preset_delete_clears_active_and_dir():
+    _save("rigA")
+    presets.attach_background("rigA", {"cam0": np.zeros((4, 4), np.float32)})
+    presets.activate("rigA")
+
+    presets.delete("rigA")
+
+    assert not presets.preset_path("rigA").exists()
+    assert not (presets.PRESETS_DIR / "rigA").exists()
+    assert presets.current_active() == ""
+    with pytest.raises(FileNotFoundError):
+        presets.delete("rigA")
+
+
 def test_attach_and_read_k4a_blob(monkeypatch):
     import base64
 

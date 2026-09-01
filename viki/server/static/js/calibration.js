@@ -78,7 +78,21 @@ function template() {
         <div class="calib-sec-title">Load a saved preset</div>
         <select id="calib-preset"></select>
         <div class="hint" id="calib-preset-info">—</div>
-        <button id="calib-preset-open" hidden>Open sets</button>
+        <div class="calib-preset-acts">
+          <button id="calib-preset-open" hidden>Open sets</button>
+          <button id="calib-preset-rename">Rename</button>
+          <button id="calib-preset-del" class="danger">Delete</button>
+        </div>
+        <div class="inline-add" id="calib-preset-rename-row" hidden>
+          <input type="text" id="calib-preset-newname" placeholder="new name">
+          <button id="calib-preset-rename-go">OK</button>
+          <button id="calib-preset-rename-cancel">✕</button>
+        </div>
+        <div class="inline-add" id="calib-preset-del-row" hidden>
+          <span class="hint">delete this preset (sets + k4a + background)?</span>
+          <button id="calib-preset-del-yes" class="danger">yes</button>
+          <button id="calib-preset-del-no">no</button>
+        </div>
       </section>
 
       <section class="calib-sec">
@@ -311,10 +325,51 @@ async function refreshPresets() {
       ? `active: ${active.cameras.length} cam · ${active.sets} sets · ${new Date(active.solved_at * 1000).toLocaleString()}`
       : `${presets.length} saved preset(s)`) + (sel_p ? k4a + bg : '');
     view.querySelector('#calib-preset-open').hidden = !(sel_p && sel_p.sets > 0);
+    const real = !!sel.value;
+    view.querySelector('#calib-preset-rename').disabled = !real;
+    view.querySelector('#calib-preset-del').disabled = !real;
+    showPresetRow(null);
   } catch (e) {
     info.textContent = 'presets unavailable';
     log('Failed to load calibration presets: ' + e, 'error');
   }
+}
+
+function currentPresetName() { return view?.querySelector('#calib-preset')?.value || ''; }
+
+function showPresetRow(which) {   // 'rename' | 'del' | null
+  const rn = view?.querySelector('#calib-preset-rename-row');
+  const dl = view?.querySelector('#calib-preset-del-row');
+  if (!rn || !dl) return;
+  rn.hidden = which !== 'rename';
+  dl.hidden = which !== 'del';
+  if (which === 'rename') {
+    const inp = view.querySelector('#calib-preset-newname');
+    inp.value = currentPresetName(); inp.focus(); inp.select();
+  }
+}
+
+async function deletePreset() {
+  const name = currentPresetName();
+  if (!name) return;
+  try {
+    await api('DELETE', `/api/calibration/presets/${encodeURIComponent(name)}`);
+    log(`Deleted preset "${name}"`, 'ok');
+  } catch (e) { log(`Delete preset failed: ${e}`, 'error'); }
+  if (openedPreset === name) backToLive();
+  refreshPresets();
+}
+
+async function renamePreset() {
+  const name = currentPresetName();
+  const nn = (view.querySelector('#calib-preset-newname').value || '').trim();
+  if (!name || !nn || nn === name) { showPresetRow(null); return; }
+  try {
+    const r = await api('PATCH', `/api/calibration/presets/${encodeURIComponent(name)}`, { new: nn });
+    log(`Renamed "${name}" → "${r.name}"`, 'ok');
+    if (openedPreset === name) openedPreset = r.name;
+  } catch (e) { log(`Rename preset failed: ${e}`, 'error'); }
+  refreshPresets();
 }
 
 async function activatePreset(name) {
@@ -366,6 +421,8 @@ export function mount(container) {
   view.addEventListener('change', onChange);
   view.addEventListener('keydown', e => {
     if (e.key === 'Enter' && e.target.id === 'calib-preset-name') savePreset();
+    else if (e.key === 'Enter' && e.target.id === 'calib-preset-newname') renamePreset();
+    else if (e.key === 'Escape' && ['calib-preset-newname'].includes(e.target.id)) showPresetRow(null);
   });
   onCamerasChanged = () => renderCards();
   document.addEventListener('cameras:changed', onCamerasChanged);
@@ -397,6 +454,12 @@ function onClick(e) {
     case 'calib-clear': clearSamples(); break;
     case 'calib-preset-save': savePreset(); break;
     case 'calib-preset-open': openPreset(); break;
+    case 'calib-preset-rename': showPresetRow('rename'); break;
+    case 'calib-preset-rename-go': renamePreset(); break;
+    case 'calib-preset-del': showPresetRow('del'); break;
+    case 'calib-preset-del-yes': deletePreset(); break;
+    case 'calib-preset-rename-cancel':
+    case 'calib-preset-del-no': showPresetRow(null); break;
     case 'calib-sets-live': backToLive(); break;
     case 'set-del':
       openedPreset ? deletePresetSet(+btn.dataset.i) : deleteLiveSet(+btn.dataset.i);

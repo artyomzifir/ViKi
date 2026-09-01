@@ -701,9 +701,30 @@ async def activate_preset(
 async def delete_preset(name: str):
     try:
         _presets.delete(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    logger.info("calibration preset %r deleted", name)
     return {"status": "deleted", "name": name}
+
+
+class _PresetRename(BaseModel):
+    new: str
+
+
+@router.patch("/presets/{name}")
+async def rename_preset(name: str, body: _PresetRename):
+    try:
+        path = _presets.rename(name, body.new)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    logger.info("calibration preset %r renamed to %r", name, path.stem)
+    return {"status": "renamed", "name": path.stem}
 
 
 @router.delete("/presets/{name}/sets/{index}")
