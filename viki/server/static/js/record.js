@@ -9,6 +9,7 @@ let view = null;
 let onCamerasChanged = null;
 let cloudPoll = null;            // interval id for the post-capture cloud-build bar
 let cloudProg = null;            // { id, status, pct, label } — bar shown on that episode row
+let activeCalib = '';            // name of the active calibration preset ('' = none → can't record)
 let recording = false;
 let builtIds = '';               // csv of device ids currently rendered as cards
 let editingPath = null;          // episode row in inline metadata-edit mode
@@ -23,6 +24,11 @@ function template() {
   return `
   <div class="record-tab">
     <aside class="record-leftcol">
+      <section class="calib-sec">
+        <div class="calib-sec-title">Calibration</div>
+        <select id="rec-calib"></select>
+        <div class="hint" id="rec-calib-hint">the active preset — its extrinsics get baked into the take</div>
+      </section>
       <section class="calib-sec">
         <div class="calib-sec-title">Dataset</div>
         <select id="rec-dataset"></select>
@@ -131,13 +137,48 @@ function updateHint() {
   const ds = view.querySelector('#rec-dataset')?.value;
   const go = view.querySelector('#rec-go');
   // while recording the button becomes Stop (always clickable)
-  go.disabled = recording ? false : (!anyRunning || !ds);
+  go.disabled = recording ? false : (!anyRunning || !ds || !activeCalib);
   go.textContent = recording ? '■ Stop' : '● Record';
   go.classList.toggle('danger', recording);
   hint.textContent = recording ? 'Recording… (stops at max seconds or Stop)'
     : !anyRunning ? 'Start ≥1 camera first.'
-      : !ds ? 'Pick or create a dataset.'
-        : 'Ready.';
+      : !activeCalib ? 'Select a calibration preset (or make one in the Calibration tab).'
+        : !ds ? 'Pick or create a dataset.'
+          : 'Ready.';
+}
+
+// ── calibration preset ───────────────────────────────────────────────────
+// The take can't be built into a cloud without the rig's extrinsics, so a
+// preset must be active before recording. Selecting one here activates it
+// (same POST the Calibration tab uses).
+
+async function loadCalibrations() {
+  const sel = view?.querySelector('#rec-calib');
+  if (!sel) return;
+  let list = [];
+  try { list = await api('GET', '/api/calibration/presets'); }
+  catch (e) { log('Failed to load calibrations: ' + e, 'error'); }
+  const act = list.find(p => p.active);
+  activeCalib = act ? act.name : '';
+  if (!list.length) {
+    sel.innerHTML = '<option value="">— none — calibrate first (Calibration tab)</option>';
+  } else {
+    sel.innerHTML = (act ? '' : '<option value="">— select a calibration —</option>')
+      + list.map(p =>
+        `<option value="${p.name}"${p.active ? ' selected' : ''}>${p.name}${p.active ? ' ✓' : ''}`
+        + `${p.background && p.background.length ? '' : '  (no background)'}</option>`).join('');
+  }
+  updateHint();
+}
+
+async function activateCalib(name) {
+  if (!name) { activeCalib = ''; updateHint(); return; }
+  try {
+    await api('POST', '/api/calibration/activate', { name });
+    log(`Calibration "${name}" active`, 'ok');
+    activeCalib = name;
+  } catch (e) { log('Activate calibration failed: ' + e, 'error'); activeCalib = ''; }
+  loadCalibrations();   // reflect the ✓ / drop the "select" placeholder
 }
 
 // ── datasets ──────────────────────────────────────────────────────────────
@@ -229,6 +270,7 @@ async function record() {
     fps: +view.querySelector('#rec-fps').value || 15,
     cloud: cloudOpts(),
   };
+  if (!activeCalib) { log('Select a calibration preset first', 'error'); return; }
   if (!body.dataset) { log('Pick a dataset first', 'error'); return; }
   const box = view.querySelector('#record-cards');
   const stale = Object.keys(state).filter(id => state[id].running && cameras.configMismatch(box, id));
@@ -302,7 +344,8 @@ function onKeydown(e) {
 }
 
 function onChange(e) {
-  if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
+  if (e.target.id === 'rec-calib') activateCalib(e.target.value);
+  else if (e.target.id === 'rec-dataset') { persistRec(); onDatasetChange(); }
   else if (e.target.id === 'rec-seconds' || e.target.id === 'rec-fps') persistRec();
   else if (['rec-cl-stride', 'rec-cl-voxel', 'rec-cl-max', 'rec-cl-bbox', 'rec-cl-bg'].includes(e.target.id)) persistCloud();
   else if (['res', 'fps', 'depthmode'].includes(e.target.dataset.role)) {
@@ -397,6 +440,7 @@ export function mount(container) {
   builtIds = '';
   view.innerHTML = template();
   renderCards();
+  loadCalibrations();
   loadDatasets();
   view.addEventListener('click', onClick);
   view.addEventListener('change', onChange);
@@ -410,6 +454,7 @@ export function unmount() {
   onCamerasChanged = null;
   if (cloudPoll) { clearInterval(cloudPoll); cloudPoll = null; }
   cloudProg = null;
+  activeCalib = '';
   view?.querySelectorAll('.streams img').forEach(img => { img.src = ''; });
   recording = false;
   cameras.setRecording(false);
