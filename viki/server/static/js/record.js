@@ -17,7 +17,7 @@ let confirmDeletePath = null;    // episode row in inline delete-confirm mode
 function template() {
   const cfg = FRONTEND_CONFIG.recording || { duration: 10, fps: 15 };
   const rec = { duration: cfg.duration ?? 10, fps: cfg.fps ?? 15, ...sessionGet('record', {}) };
-  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [] }), ...sessionGet('cloud', {}) };
+  const cl = { ...(FRONTEND_CONFIG.cloud || { stride: 1, voxel: 0.005, maxPoints: 40000, bbox: [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2] }), ...sessionGet('cloud', {}) };
   return `
   <div class="record-tab">
     <aside class="record-leftcol">

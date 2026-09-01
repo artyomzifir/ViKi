@@ -478,7 +478,7 @@ REC_KEYS: tuple[str, ...] = (
     "timestamps",
     "points",  # (N, 21, 3)
     "landmark_ids",  # (21,)
-    "confidence",  # (N, 21)  — stub: detector visibility only
+    "confidence",  # (N, 21)  — per-landmark fusion weight w (paper §3.5 eq. 2)
 )
 
 CLN_KEYS: tuple[str, ...] = (
@@ -486,7 +486,7 @@ CLN_KEYS: tuple[str, ...] = (
     "positions",  # (T, 3)
     "rotations",  # (T, 3, 3)
     "valid",  # (T,)
-    "omega",  # (T,)  — per-frame confidence weight ω_t  (stub)
+    "omega",  # (T,)  — per-frame confidence weight ω_t (paper §3.5 eq. 5)
     "gripper",  # (T,)  bool
     "coordinate_frame",
     "raw_points",

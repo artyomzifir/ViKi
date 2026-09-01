@@ -259,8 +259,14 @@ class PreparationPipeline:
             if _cols
             else np.ones(len(grid), dtype=np.float64)
         )
+        # Normalise to [0, 1] across the episode (eq. 2's w is unbounded through
+        # the d^-2 factor, so ω_t is only meaningful relative to the episode's
+        # best-observed frame), then sharpen with the α exponent (eq. 5): α > 1
+        # discounts low-confidence frames harder, α = 1 leaves the ratio linear.
         _omax = float(omega.max()) or 1.0
-        omega = np.clip(omega / _omax, 0.0, 1.0).astype(np.float32)
+        _alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
+        omega = np.clip(omega / _omax, 0.0, 1.0) ** _alpha
+        omega = omega.astype(np.float32)
 
         # 4. Compute end-effector poses on the smoothed fused trajectory.
         T = fused_points.shape[0]

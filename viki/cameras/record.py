@@ -196,8 +196,63 @@ class SceneRecorder:
         for w in self._writers.values():
             w.release()
         (self._raw() / "timestamps.json").write_text(json.dumps(self._timestamps, indent=2))
+        stats = _sync_stats(self._timestamps)
+        (self._raw() / "sync_stats.json").write_text(json.dumps(stats, indent=2))
+        logger.info(
+            "sync: %s (%s)",
+            "bounded drift" if stats["bounded"] else "DRIFT EXCEEDS BOUND",
+            ", ".join(
+                f"{d}: |off|<={s['max_abs_offset_us'] / 1000:.1f}ms "
+                f"drift={s['drift_ms_per_min']:+.2f}ms/min"
+                for d, s in stats["per_device"].items()
+            ) or "single camera",
+        )
         mark_stage(
             self.episode, "record",
             frames=self._n, fps=fps, cameras=sorted(self._writers),
+            sync_bounded=stats["bounded"],
         )
         logger.info("recorded %d frames → %s", self._n, self.episode.root)
+
+
+# Residual alignment jitter is measured, not assumed (paper §3.3): every frame
+# carries its offset from the shared host monotonic tick, so a linear fit of that
+# offset over the recording gives each camera's clock drift relative to the host,
+# and the peak |offset| is the worst-case grouping error.
+_DRIFT_BOUND_MS_PER_MIN = 1.0  # ridgerun: a healthy Kinect pair drifts < 1 ms/min
+
+
+def _sync_stats(timestamps: list[dict]) -> dict:
+    """Per-camera offset jitter + linear clock drift from the recorded ticks."""
+    per_device: dict[str, dict] = {}
+    t0 = timestamps[0]["sync_us"] if timestamps else 0
+    series: dict[str, list[tuple[float, float]]] = {}
+    for row in timestamps:
+        t_rel = float(row["sync_us"] - t0)
+        for dev, off in (row.get("offsets_us") or {}).items():
+            series.setdefault(dev, []).append((t_rel, float(off)))
+
+    worst_drift = 0.0
+    for dev, pairs in series.items():
+        ts = np.asarray([p[0] for p in pairs], dtype=np.float64)
+        off = np.asarray([p[1] for p in pairs], dtype=np.float64)
+        # slope [µs offset / µs elapsed] → ms per minute
+        drift = 0.0
+        if ts.size >= 2 and np.ptp(ts) > 0:
+            slope = float(np.polyfit(ts, off, 1)[0])
+            drift = slope * 60_000_000.0 / 1000.0
+        per_device[dev] = {
+            "samples": int(off.size),
+            "mean_offset_us": float(off.mean()) if off.size else 0.0,
+            "std_offset_us": float(off.std()) if off.size else 0.0,
+            "max_abs_offset_us": float(np.abs(off).max()) if off.size else 0.0,
+            "drift_ms_per_min": drift,
+        }
+        worst_drift = max(worst_drift, abs(drift))
+
+    return {
+        "per_device": per_device,
+        "worst_drift_ms_per_min": worst_drift,
+        "drift_bound_ms_per_min": _DRIFT_BOUND_MS_PER_MIN,
+        "bounded": worst_drift <= _DRIFT_BOUND_MS_PER_MIN,
+    }

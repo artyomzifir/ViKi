@@ -39,6 +39,8 @@ CLOUD_BG_SUBTRACT: bool  # drop cloud points matching the calibrated empty-scene
 CLOUD_BG_TOLERANCE_MM: float  # |depth - background| below this = static scene, dropped
 PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
+PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
+KINECT_SYNC: dict  # {"master": "kinect_0", "subordinates": [...], "subordinate_delay_us": 160}; {} = software sync only
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
 SKELETON_COORDINATE_FRAME: str
@@ -65,6 +67,7 @@ RETARGET_IK_POSITION_COST: float
 RETARGET_IK_ORIENTATION_COST: float
 RETARGET_IK_POSTURE_COST: float
 RETARGET_IK_ACCEL_COST: float  # λ_a: in-solver acceleration regulariser weight (replaces joint SG)
+RETARGET_IK_CONF_FLOOR: float  # lower clamp on ω_t when it scales the IK data term (0 disables the ω_t weighting)
 RETARGET_TARGET_MODE: str
 RETARGET_IK_SUBSTEPS: int
 RETARGET_IK_SOLVER: str
@@ -159,12 +162,15 @@ _DEFAULTS: dict[str, Any] = {
     "ACTIVE_CALIBRATION": "",
     "CLOUD_STRIDE": 1,
     "CLOUD_VOXEL_M": 0.005,
-    "CLOUD_WORKSPACE_BBOX": [],
+    "CLOUD_WORKSPACE_BBOX": [-0.6, 0.6, -0.6, 0.6, -0.2, 1.2],
     "CLOUD_MAX_POINTS_PER_FRAME": 40000,
     "CLOUD_BG_SUBTRACT": True,
     "CLOUD_BG_TOLERANCE_MM": 50.0,
     "PERCEPTION_TRACK_LM": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 17],
     "PERCEPTION_INTERP_MAX_GAP": 0,
+    "PERCEPTION_CONF_ALPHA": 1.0,
+    "KINECT_SYNC": {},
+    "RETARGET_IK_CONF_FLOOR": 0.05,
 }
 
 
