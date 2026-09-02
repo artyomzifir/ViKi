@@ -102,6 +102,23 @@ class CameraManager:
     def __init__(self) -> None:
         self._workers: dict[str, _CameraWorker] = {}
         self.calibration: dict[str, dict] = {}
+        # FastAPI runs sync route handlers on a threadpool, so two clients (or two
+        # browser tabs) can land concurrent start/stop for the *same* device.
+        # Without mutual exclusion the second start races the first: both build a
+        # backend, the second ``self._workers[id] = worker`` overwrites the first
+        # without stopping it, and the orphaned worker keeps the USB/k4a handle
+        # claimed forever — the next start then fails with k4a_device_open=1.
+        # One reentrant lock per device (start() may re-enter via stop()); calls
+        # for different devices still run in parallel.
+        self._locks_guard = threading.Lock()
+        self._dev_locks: dict[str, threading.RLock] = {}
+
+    def _dev_lock(self, device_id: str) -> "threading.RLock":
+        with self._locks_guard:
+            lk = self._dev_locks.get(device_id)
+            if lk is None:
+                lk = self._dev_locks[device_id] = threading.RLock()
+            return lk
 
     # ── Device discovery ──────────────────────────────────────────────────────
 
@@ -151,28 +168,29 @@ class CameraManager:
             "fps": int(fps),
             "depth_mode": depth_mode,
         }
-        existing = self._workers.get(device_id)
-        if existing is not None:
-            have = existing.backend.config
-            # only the keys we set here, and only where the backend actually
-            # reports one — a ``None`` means "this backend has no such knob"
-            # (RealSense has no depth-mode enum), so it must not force a restart.
-            if all(
-                have.get(k) == v
-                for k, v in want.items()
-                if k in have and have.get(k) is not None
-            ):
-                return "unchanged"
-            # config changed → restart so the request actually takes effect
-            self.stop(device_id)
+        with self._dev_lock(device_id):
+            existing = self._workers.get(device_id)
+            if existing is not None:
+                have = existing.backend.config
+                # only the keys we set here, and only where the backend actually
+                # reports one — a ``None`` means "this backend has no such knob"
+                # (RealSense has no depth-mode enum), so it must not force a restart.
+                if all(
+                    have.get(k) == v
+                    for k, v in want.items()
+                    if k in have and have.get(k) is not None
+                ):
+                    return "unchanged"
+                # config changed → restart so the request actually takes effect
+                self.stop(device_id)
 
-        backend = self._make_backend(
-            device_id, fps, color_width, color_height, depth_mode, **kwargs
-        )
-        worker = _CameraWorker(backend)
-        worker.start()
-        self._workers[device_id] = worker
-        return "restarted" if existing is not None else "started"
+            backend = self._make_backend(
+                device_id, fps, color_width, color_height, depth_mode, **kwargs
+            )
+            worker = _CameraWorker(backend)
+            worker.start()
+            self._workers[device_id] = worker
+            return "restarted" if existing is not None else "started"
 
     def start_kinect_sync(
         self,
@@ -226,10 +244,15 @@ class CameraManager:
         )
 
     def stop(self, device_id: str) -> None:
-        worker = self._workers.pop(device_id, None)
-        if worker:
-            worker.stop()
-            worker.join()
+        # Hold the device lock across the full teardown: a concurrent start() for
+        # the same device must wait until the old backend has actually released
+        # its handle, or KinectBackend.start() hits k4a_device_open=1. Different
+        # devices have different locks, so stop_all() still tears down in parallel.
+        with self._dev_lock(device_id):
+            worker = self._workers.pop(device_id, None)
+            if worker:
+                worker.stop()
+                worker.join()
 
     def stop_all(self) -> None:
         with ThreadPoolExecutor() as executor:

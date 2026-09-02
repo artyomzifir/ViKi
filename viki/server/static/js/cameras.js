@@ -68,7 +68,12 @@ export async function stopCamera(id) {
 }
 
 export async function startAll() {
-  for (const id of Object.keys(state)) if (!state[id].running) await startCamera(id);
+  // Send each card's session config (res / fps / depth mode), same as the
+  // per-card Start button. With an empty body every camera would fall back to
+  // the Kinect-shaped API defaults — wrong resolution for a RealSense.
+  for (const id of Object.keys(state)) {
+    if (!state[id].running) await startCamera(id, readCardConfig(null, id));
+  }
 }
 
 export async function stopAll() {
