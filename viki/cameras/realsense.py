@@ -8,11 +8,14 @@ Dependency: pyrealsense2 >= 2.58
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import numpy as np
 
 from .base import CameraBackend, CameraIntrinsics, Frame
+
+logger = logging.getLogger(__name__)
 
 try:
     import pyrealsense2 as rs
@@ -33,7 +36,13 @@ class RealSenseBackend(CameraBackend):
     color_resolution : tuple[int, int]
         (width, height) for the colour stream. Default: 640x480.
     depth_resolution : tuple[int, int]
-        (width, height) for the depth stream. Default: 640x480.
+        (width, height) for the raw depth stream. Default: 848x480 — the D4xx
+        depth sweet spot. Keep this modest even when colour is 1080p: with
+        ``align_to_color`` the per-frame ``rs.align`` reprojection cost scales
+        with the *depth* pixel count and runs on the capture thread, so 1280x720
+        depth drags the stream to ~5 fps. The aligned output is still upsampled
+        to the colour plane, so downstream sees colour-resolution depth either
+        way.
     fps : int
         Frame rate. Default: 30.
     align_to_color : bool
@@ -47,7 +56,7 @@ class RealSenseBackend(CameraBackend):
         self,
         serial: Optional[str] = None,
         color_resolution: tuple[int, int] = (640, 480),
-        depth_resolution: tuple[int, int] = (640, 480),
+        depth_resolution: tuple[int, int] = (848, 480),
         fps: int = 30,
         align_to_color: bool = True,
         timeout_ms: int = 5000,
@@ -90,15 +99,38 @@ class RealSenseBackend(CameraBackend):
             rs.format.bgr8,
             self._fps,
         )
-        config.enable_stream(
-            rs.stream.depth,
-            self._depth_res[0],
-            self._depth_res[1],
-            rs.format.z16,
-            self._fps,
-        )
+        dw, dh = self._depth_res
+        config.enable_stream(rs.stream.depth, dw, dh, rs.format.z16, self._fps)
 
-        profile = self._pipeline.start(config)
+        try:
+            profile = self._pipeline.start(config)
+        except RuntimeError:
+            # This unit doesn't offer the requested depth profile — retry with
+            # the depth stream matched to the colour resolution (always valid).
+            logger.warning(
+                "RealSense %s: depth %dx%d@%d unavailable, matching colour res",
+                self._serial or "?", dw, dh, self._fps,
+            )
+            config = rs.config()
+            if self._serial:
+                config.enable_device(self._serial)
+            config.enable_stream(
+                rs.stream.color, self._color_res[0], self._color_res[1],
+                rs.format.bgr8, self._fps,
+            )
+            config.enable_stream(
+                rs.stream.depth, self._color_res[0], self._color_res[1],
+                rs.format.z16, self._fps,
+            )
+            self._depth_res = self._color_res
+            profile = self._pipeline.start(config)
+
+        if self._align_to_color and self._depth_res[0] * self._depth_res[1] > 900_000:
+            logger.warning(
+                "RealSense %s: depth %dx%d with align-to-colour — the reprojection "
+                "runs on the capture thread and may cap the stream well below %d fps",
+                self._serial or "?", self._depth_res[0], self._depth_res[1], self._fps,
+            )
 
         dev = profile.get_device()
         self._resolved_serial = dev.get_info(rs.camera_info.serial_number)

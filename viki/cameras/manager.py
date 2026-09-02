@@ -326,9 +326,13 @@ class CameraManager:
         else:
             from .realsense import RealSenseBackend
 
+            # Don't mirror the colour resolution into the depth stream: with
+            # align-to-colour the reprojection cost scales with depth pixels and
+            # runs on the capture thread, so 720p+ depth throttles the RealSense
+            # to a few fps while the Kinects run 30. The backend's default depth
+            # res (848x480) keeps align cheap; align still upsamples to colour.
             return RealSenseBackend(
                 serial=device_id,
                 color_resolution=(color_width, color_height),
-                depth_resolution=(color_width, color_height),
                 fps=fps,
             )
