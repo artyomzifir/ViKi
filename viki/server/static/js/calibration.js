@@ -129,7 +129,11 @@ function renderCards() {
   if (key !== builtIds) {
     builtIds = key;
     box.innerHTML = ids.length
-      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running, { depth: true })).join('')
+      // No DEPTH panel: calibration only needs the colour + board-overlay
+      // stream. Chrome allows 6 connections per host and every MJPEG stream
+      // holds one open forever — with 3 cameras, colour+depth = 6 streams eats
+      // the whole budget and every other request (incl. "Start session") hangs.
+      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running, { depth: false })).join('')
       : `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
   }
   for (const id of ids) {
