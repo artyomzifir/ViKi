@@ -103,6 +103,8 @@ class RealSenseBackend(CameraBackend):
         # raw stream intrinsics + depth→colour extrinsic, captured at start().
         self._color_intr: dict | None = None
         self._depth_intr: dict | None = None
+        self._color_ci: CameraIntrinsics | None = None
+        self._depth_ci: CameraIntrinsics | None = None
         self._d2c_R: np.ndarray | None = None   # 3x3, depth→colour rotation
         self._d2c_t: np.ndarray | None = None   # 3, metres
         # metres per raw z16 unit, read from the device at start(). D4xx ships
@@ -175,11 +177,18 @@ class RealSenseBackend(CameraBackend):
         except Exception:  # noqa: BLE001 — fall back to the D4xx default
             self._depth_units_m = 0.001
 
-        # Freeze the registration so the offline stages can replay it.
+        # Freeze the registration so the offline stages can replay it. Cache the
+        # per-stream intrinsics as CameraIntrinsics now — rebuilding them from
+        # the profile on every get_frame() is pure Python/SDK-wrapper work on the
+        # capture thread, and under recording load (3× mp4 encode contending for
+        # the GIL) that lag is enough to drop framesets and judder the stream.
         cprof = profile.get_stream(rs.stream.color).as_video_stream_profile()
         dprof = profile.get_stream(rs.stream.depth).as_video_stream_profile()
-        self._color_intr = _intr_dict(cprof.get_intrinsics())
-        self._depth_intr = _intr_dict(dprof.get_intrinsics())
+        ci, di = cprof.get_intrinsics(), dprof.get_intrinsics()
+        self._color_intr = _intr_dict(ci)
+        self._depth_intr = _intr_dict(di)
+        self._color_ci = self._camera_intrinsics(ci)
+        self._depth_ci = self._camera_intrinsics(di)
         ext = dprof.get_extrinsics_to(cprof)
         self._d2c_R, self._d2c_t = extrinsic_matrix(ext.rotation, ext.translation)
 
@@ -226,8 +235,11 @@ class RealSenseBackend(CameraBackend):
             # low-confidence 10–30 m tail the raw stream keeps.
             depth_frame = self._threshold.process(depth_frame)
 
-        color = np.asanyarray(color_frame.get_data())  # HxWx3 BGR uint8
-        depth = np.asanyarray(depth_frame.get_data())  # HxW uint16, raw z16 units
+        # copy out of librealsense's frame pool immediately — get_frame's frame
+        # handles go out of scope on return and the buffers get recycled, so a
+        # bare asanyarray view would tear once the recorder reads it later.
+        color = np.array(color_frame.get_data(), copy=True)  # HxWx3 BGR uint8
+        depth = np.array(depth_frame.get_data(), copy=True)  # HxW uint16 z16 units
         if self._depth_units_m != 0.001:
             # normalise to millimetres so the pipeline's fixed /1000 stays right
             depth = np.rint(
@@ -236,16 +248,13 @@ class RealSenseBackend(CameraBackend):
 
         timestamp_us = int(color_frame.get_timestamp() * 1000)  # ms -> us
 
-        color_intr = self._get_intrinsics(color_frame.profile)
-        depth_intr = self._get_intrinsics(depth_frame.profile)
-
         return Frame(
             color=color,
             depth=depth,
             timestamp_us=timestamp_us,
             device_id=self._resolved_serial,
-            color_intrinsics=color_intr,
-            depth_intrinsics=depth_intr,
+            color_intrinsics=self._color_ci,
+            depth_intrinsics=self._depth_ci,
         )
 
     @property
@@ -302,16 +311,18 @@ class RealSenseBackend(CameraBackend):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_intrinsics(stream_profile) -> CameraIntrinsics:
-        intr = stream_profile.as_video_stream_profile().get_intrinsics()
+    def _camera_intrinsics(intr) -> CameraIntrinsics:
+        """``rs2_intrinsics`` → :class:`CameraIntrinsics`."""
         return CameraIntrinsics(
-            fx=intr.fx,
-            fy=intr.fy,
-            cx=intr.ppx,
-            cy=intr.ppy,
-            width=intr.width,
-            height=intr.height,
+            fx=intr.fx, fy=intr.fy, cx=intr.ppx, cy=intr.ppy,
+            width=intr.width, height=intr.height,
             dist_coeffs=np.array(intr.coeffs),
+        )
+
+    @staticmethod
+    def _get_intrinsics(stream_profile) -> CameraIntrinsics:
+        return RealSenseBackend._camera_intrinsics(
+            stream_profile.as_video_stream_profile().get_intrinsics()
         )
 
     @staticmethod
