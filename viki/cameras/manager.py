@@ -154,8 +154,14 @@ class CameraManager:
         existing = self._workers.get(device_id)
         if existing is not None:
             have = existing.backend.config
-            # only the keys we set here — ignore backend extras
-            if all(have.get(k) == v for k, v in want.items() if k in have):
+            # only the keys we set here, and only where the backend actually
+            # reports one — a ``None`` means "this backend has no such knob"
+            # (RealSense has no depth-mode enum), so it must not force a restart.
+            if all(
+                have.get(k) == v
+                for k, v in want.items()
+                if k in have and have.get(k) is not None
+            ):
                 return "unchanged"
             # config changed → restart so the request actually takes effect
             self.stop(device_id)
