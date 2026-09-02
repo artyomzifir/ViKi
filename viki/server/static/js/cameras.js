@@ -24,8 +24,12 @@ export async function scanDevices() {
     for (const [type, ids] of [['realsense', data.realsense], ['kinect', data.kinect]]) {
       for (const id of ids) {
         seen.add(id);
-        state[id] = { running: (data.active || []).includes(id), type, fresh: false,
-                      ...(state[id] || {}) };
+        // keep any per-session extras (want config, cfg) but always take
+        // `running` from the server — the spread must not re-apply a stale flag,
+        // or a camera the server dropped (e.g. after a web restart) still shows
+        // as running and "Start session" acts on a dead device.
+        state[id] = { fresh: false, ...(state[id] || {}),
+                      type, running: (data.active || []).includes(id) };
         state[id].type = type;
       }
     }
