@@ -752,6 +752,7 @@ def wrist_pose(hand: "hm.CapsuleHand", q: np.ndarray) -> tuple[np.ndarray, np.nd
 def _cameras(raw: Path, meta: dict, preset: str | None, bg_subtract: bool):
     from viki.contracts import CalibrationExtrinsics
     from viki.perception.k4a_offline import K4ACalibration
+    from viki.perception.rs_offline import RealSenseCalibration
 
     extr = json.loads((raw / "extrinsics.json").read_text()) if (raw / "extrinsics.json").exists() else {}
     bg_by_dev: dict = {}
@@ -773,7 +774,8 @@ def _cameras(raw: Path, meta: dict, preset: str | None, bg_subtract: bool):
             rvec=np.asarray(extrinsic["rvec"], float),
             tvec=np.asarray(extrinsic["tvec"], float),
         ).transform_matrix
-        calibration = K4ACalibration.from_episode(raw, dev, meta)
+        calibration = (K4ACalibration.from_episode(raw, dev, meta)
+                       or RealSenseCalibration.from_episode(raw, dev, meta))
         if calibration is not None:
             cams.append({"dev": dev, "cal": calibration, "T": transform,
                          "depth_dir": raw / f"{dev}_depth", "bg": bg_by_dev.get(dev)})

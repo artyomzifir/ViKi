@@ -3,6 +3,14 @@ viki.cameras.realsense
 ----------------------
 Backend for Intel RealSense D435i (and compatible D4xx models).
 
+Like the Kinect backend it records **raw** colour + depth and leaves the
+colour↔depth registration to the offline stages: ``get_rs_calibration()`` hands
+the recorder both stream intrinsics + the depth→colour extrinsic, which
+``viki.perception.rs_offline.RealSenseCalibration`` replays without a device.
+On-device ``rs.align`` is opt-in (``align_to_color=True``) — it runs a full
+depth→colour reprojection on the capture thread every frame and throttles the
+stream badly at 720p+.
+
 Dependency: pyrealsense2 >= 2.58
 """
 
@@ -14,8 +22,20 @@ from typing import Optional
 import numpy as np
 
 from .base import CameraBackend, CameraIntrinsics, Frame
+from .rs_math import deproject_pixel, extrinsic_matrix, project_point
 
 logger = logging.getLogger(__name__)
+
+
+def _intr_dict(intr) -> dict:
+    """``rs2_intrinsics`` → the plain dict :mod:`viki.cameras.rs_math` wants."""
+    return {
+        "fx": float(intr.fx), "fy": float(intr.fy),
+        "ppx": float(intr.ppx), "ppy": float(intr.ppy),
+        "width": int(intr.width), "height": int(intr.height),
+        "model": str(intr.model).split(".")[-1].lower(),
+        "coeffs": [float(c) for c in intr.coeffs],
+    }
 
 try:
     import pyrealsense2 as rs
@@ -37,17 +57,16 @@ class RealSenseBackend(CameraBackend):
         (width, height) for the colour stream. Default: 640x480.
     depth_resolution : tuple[int, int]
         (width, height) for the raw depth stream. Default: 848x480 — the D4xx
-        depth sweet spot. Keep this modest even when colour is 1080p: with
-        ``align_to_color`` the per-frame ``rs.align`` reprojection cost scales
-        with the *depth* pixel count and runs on the capture thread, so 1280x720
-        depth drags the stream to ~5 fps. The aligned output is still upsampled
-        to the colour plane, so downstream sees colour-resolution depth either
-        way.
+        depth sweet spot. Recorded as-is; the offline stages reproject it onto
+        the colour plane from the stored calibration. (With ``align_to_color``
+        this also bounds the on-thread ``rs.align`` cost — 1280x720 depth there
+        throttles the stream to ~5 fps.)
     fps : int
         Frame rate. Default: 30.
     align_to_color : bool
-        If True, depth is aligned to the colour camera frame (same resolution,
-        per-pixel correspondence). Default: True.
+        If True, resample depth onto the colour plane on the capture thread
+        every frame (``project_color_to_depth`` then becomes the identity).
+        Default: False — record raw and align offline, like the Kinect.
     timeout_ms : int
         Frame wait timeout in milliseconds.
     """
@@ -58,7 +77,7 @@ class RealSenseBackend(CameraBackend):
         color_resolution: tuple[int, int] = (640, 480),
         depth_resolution: tuple[int, int] = (848, 480),
         fps: int = 30,
-        align_to_color: bool = True,
+        align_to_color: bool = False,
         timeout_ms: int = 5000,
     ) -> None:
         self._serial = serial
@@ -72,6 +91,11 @@ class RealSenseBackend(CameraBackend):
         self._align: Optional[rs.align] = None
         self._resolved_serial: str = serial or ""
         self._running = False
+        # raw stream intrinsics + depth→colour extrinsic, captured at start().
+        self._color_intr: dict | None = None
+        self._depth_intr: dict | None = None
+        self._d2c_R: np.ndarray | None = None   # 3x3, depth→colour rotation
+        self._d2c_t: np.ndarray | None = None   # 3, metres
         # metres per raw z16 unit, read from the device at start(). D4xx ships
         # 0.001 (1 unit == 1 mm), but the High-Accuracy preset and the D405
         # default to 0.0001 — the rest of the pipeline assumes millimetres, so
@@ -141,6 +165,14 @@ class RealSenseBackend(CameraBackend):
             )
         except Exception:  # noqa: BLE001 — fall back to the D4xx default
             self._depth_units_m = 0.001
+
+        # Freeze the registration so the offline stages can replay it.
+        cprof = profile.get_stream(rs.stream.color).as_video_stream_profile()
+        dprof = profile.get_stream(rs.stream.depth).as_video_stream_profile()
+        self._color_intr = _intr_dict(cprof.get_intrinsics())
+        self._depth_intr = _intr_dict(dprof.get_intrinsics())
+        ext = dprof.get_extrinsics_to(cprof)
+        self._d2c_R, self._d2c_t = extrinsic_matrix(ext.rotation, ext.translation)
 
         if self._align_to_color:
             self._align = rs.align(rs.stream.color)
@@ -215,14 +247,36 @@ class RealSenseBackend(CameraBackend):
         }
 
     def project_color_to_depth(self, u: float, v: float, z: float) -> tuple[float, float] | None:
-        """Colour pixel -> depth pixel.
+        """Colour pixel + expected range ``z`` (metres) → depth-image pixel.
 
-        This backend always starts the pipeline with ``rs.align(rs.stream.color)``
-        (see :meth:`get_frame`), so the depth frame is resampled onto the colour
-        image plane pixel-for-pixel. The mapping is therefore the identity; ``z``
-        is unused. Mirrors ``perception._IdentityProjector``.
+        Identity when ``align_to_color`` is on (depth is already on the colour
+        plane). Otherwise deproject the colour pixel at ``z``, apply the inverse
+        depth→colour extrinsic, and reproject with the depth intrinsics — the
+        same maths ``rs_offline.RealSenseCalibration`` uses offline.
         """
-        return (u, v)
+        if self._align is not None:
+            return (float(u), float(v))
+        if self._color_intr is None or self._d2c_R is None:
+            return None
+        p_col = deproject_pixel(self._color_intr, float(u), float(v), float(z))
+        p_dep = self._d2c_R.T @ (p_col - self._d2c_t)
+        uv = project_point(self._depth_intr, p_dep)
+        return (float(uv[0]), float(uv[1]))
+
+    def get_rs_calibration(self) -> dict | None:
+        """Stream intrinsics + the depth→colour extrinsic, for the recorder to
+        persist (``raw/<dev>_rs_calib.json``). ``None`` before :meth:`start`."""
+        if self._color_intr is None or self._d2c_R is None:
+            return None
+        return {
+            "color": self._color_intr,
+            "depth": self._depth_intr,
+            "depth_to_color": {
+                "rotation": self._d2c_R.T.reshape(-1).tolist(),  # back to col-major
+                "translation": self._d2c_t.tolist(),
+            },
+            "aligned": self._align is not None,
+        }
 
     # ------------------------------------------------------------------
     # Helpers

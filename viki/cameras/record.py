@@ -5,11 +5,11 @@ Record synchronised RGB-D scenes into an episode directory.
 
 Pipeline stage 1. Writes ``<dataset>/<id>/raw/`` — one colour ``.mp4`` and one
 folder of raw ``uint16`` depth ``.npy`` per camera, plus ``timestamps.json``, the
-SDK-reported intrinsics + active extrinsics in force at capture time, and (Kinect
-only) the raw calibration blob ``<dev>_k4a_calib.bin`` for offline depth↔colour
-projection — then marks ``status.json``. ``raw/`` is written once and never touched again; every
-later stage writes new artifacts alongside it, so re-processing can never
-corrupt the recording.
+SDK-reported intrinsics + active extrinsics in force at capture time, and the
+offline colour↔depth calibration (Kinect: ``<dev>_k4a_calib.bin``; RealSense:
+``<dev>_rs_calib.json``) — then marks ``status.json``. ``raw/`` is written once and
+never touched again; every later stage writes new artifacts alongside it, so
+re-processing can never corrupt the recording.
 
 There is no live skeleton path: you record as many scenes as you want, then run
 ``viki extract`` / ``prepare`` / ``retarget`` offline.
@@ -119,25 +119,34 @@ class SceneRecorder:
             "dist_coeffs": np.asarray(intr.dist_coeffs).tolist(),
         }
 
-    def _stamp_k4a_calibration(self, dev_id: str, backend, cam_entry: dict) -> None:
-        """Save the k4a raw calibration blob + the enum ints an offline
-        ``k4a_calibration_get_from_raw`` rebuild needs. No-op for backends that
-        don't expose one (RealSense, or a Kinect that failed the size query)."""
-        blob = getattr(backend, "get_raw_calibration", lambda: None)() if backend else None
-        if not blob:
+    def _stamp_depth_calibration(self, dev_id: str, backend, cam_entry: dict) -> None:
+        """Persist whatever the offline colour↔depth reprojection needs for this
+        camera: the Kinect's raw k4a blob (+ enum ints), or the RealSense's
+        stream intrinsics + depth→colour extrinsic as ``<dev>_rs_calib.json``.
+        No-op for a backend that exposes neither."""
+        if backend is None:
             return
-        (self._raw() / f"{dev_id}_k4a_calib.bin").write_bytes(blob)
-        cam_entry["k4a_calib"] = f"{dev_id}_k4a_calib.bin"
-        try:
-            from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
 
-            cfg = backend.config or {}
-            cam_entry["k4a_depth_mode_int"] = _DEPTH_MODE_MAP.get(cfg.get("depth_mode"))
-            cam_entry["k4a_color_res_int"] = _COLOR_RES_MAP.get(
-                (int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        blob = getattr(backend, "get_raw_calibration", lambda: None)()
+        if blob:
+            (self._raw() / f"{dev_id}_k4a_calib.bin").write_bytes(blob)
+            cam_entry["k4a_calib"] = f"{dev_id}_k4a_calib.bin"
+            try:
+                from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
+
+                cfg = backend.config or {}
+                cam_entry["k4a_depth_mode_int"] = _DEPTH_MODE_MAP.get(cfg.get("depth_mode"))
+                cam_entry["k4a_color_res_int"] = _COLOR_RES_MAP.get(
+                    (int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return
+
+        rs_cal = getattr(backend, "get_rs_calibration", lambda: None)()
+        if rs_cal:
+            (self._raw() / f"{dev_id}_rs_calib.json").write_text(json.dumps(rs_cal, indent=2))
+            cam_entry["rs_calib"] = f"{dev_id}_rs_calib.json"
 
     def _write_sensor_meta(self) -> None:
         """Snapshot everything an offline run needs: SDK intrinsics, the active
@@ -176,7 +185,7 @@ class SceneRecorder:
                 "color_shape": list(frame.color.shape) if frame is not None else None,
                 "depth_shape": list(frame.depth.shape) if frame is not None and frame.has_depth() else None,
             }
-            self._stamp_k4a_calibration(dev_id, backend, cams[dev_id])
+            self._stamp_depth_calibration(dev_id, backend, cams[dev_id])
 
         (self._raw() / "intrinsics.json").write_text(json.dumps(intr, indent=2))
         (self._raw() / "extrinsics.json").write_text(json.dumps(extr, indent=2))
