@@ -118,16 +118,8 @@ function syncCard(box, id) {
     if (m) warn.textContent = `⚠ running as ${(state[id].cfg.depth_mode || '')} `
       + `${state[id].cfg.color_width}×${state[id].cfg.color_height}@${state[id].cfg.fps} — Start to apply`;
   }
-  const color = box.querySelector(`img[data-role="color"][data-id="${id}"]`);
-  const depth = box.querySelector(`img[data-role="depth"][data-id="${id}"]`);
-  // (re)point the stream only when its on/off state flips
-  const want = on ? '1' : '';
-  if (color && color.dataset.on !== want) {
-    cameras.setStream(color, on ? `/api/cameras/${id}/stream` : null); color.dataset.on = want;
-  }
-  if (depth && depth.dataset.on !== want) {
-    cameras.setStream(depth, on ? `/api/cameras/${id}/depth` : null); depth.dataset.on = want;
-  }
+  const card = box.querySelector(`.cam-card[data-id="${id}"]`);
+  if (card) cameras.syncCardStream(card, id, on, `/api/cameras/${id}/stream`);
 }
 
 function updateHint() {
@@ -314,6 +306,7 @@ function onClick(e) {
   switch (btn.id || btn.dataset.role) {
     case 'start': cameras.startCamera(id, cameras.readCardConfig(view, id)); break;
     case 'stop': cameras.stopCamera(id); break;
+    case 'view': cameras.setCardView(btn, `/api/cameras/${id}/stream`); break;
     case 'rec-ds-create': createDataset(); break;
     case 'rec-eps-refresh': loadEpisodes(); break;
     case 'rec-go': recording ? stopRecording() : record(); break;
