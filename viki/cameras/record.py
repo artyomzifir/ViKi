@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 import time
 from pathlib import Path
 
@@ -61,24 +63,52 @@ class SceneRecorder:
         self._depth_dirs: dict[str, Path] = {}
         self._timestamps: list[dict] = []
         self._n = 0
+        self._dropped = 0
 
     def record(self, seconds: float, fps: int = 15, stop_event=None) -> Episode:
         """Write every synced group until ``seconds`` elapse or ``stop_event``
-        is set (the Stop button). ``seconds`` is the safety cap. Returns the episode."""
+        is set (the Stop button). ``seconds`` is the safety cap. Returns the episode.
+
+        The capture loop only samples the synced group and hands it to a writer
+        thread — the mp4 encode + depth ``.npy`` writes never block the loop, so
+        it holds the ``1/fps`` cadence and the constant-fps mp4 stays true to
+        real time. If the writer can't keep up the queue fills and groups are
+        dropped (a shorter clean take beats a juddering full one)."""
         sync = MultiCameraSync(self._mgr, sync_fps=fps)
         self._write_sensor_meta()
+
+        q: queue.Queue = queue.Queue(maxsize=max(4, fps * 3))
+        self._dropped = 0
+        writer = threading.Thread(
+            target=self._writer_loop, args=(q, fps), name="scene-writer", daemon=True
+        )
+        writer.start()
+
         period = 1.0 / fps
         deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if stop_event is not None and stop_event.is_set():
-                break
-            t0 = time.monotonic()
-            group = sync.get_synced_frame()
-            if group is not None:
-                self._save(group, fps)
-            slp = period - (time.monotonic() - t0)
-            if slp > 0:
-                time.sleep(slp)
+        try:
+            while time.monotonic() < deadline:
+                if stop_event is not None and stop_event.is_set():
+                    break
+                t0 = time.monotonic()
+                group = sync.get_synced_frame()
+                if group is not None:
+                    try:
+                        q.put_nowait(group)
+                    except queue.Full:
+                        self._dropped += 1
+                slp = period - (time.monotonic() - t0)
+                if slp > 0:
+                    time.sleep(slp)
+        finally:
+            q.put(None)  # sentinel — drain and stop the writer
+            writer.join(timeout=30.0)
+
+        if self._dropped:
+            logger.warning(
+                "recorder: dropped %d group(s) — writer/disk could not keep up at %d fps",
+                self._dropped, fps,
+            )
         self._finish(fps)
         return self.episode
 
@@ -86,6 +116,19 @@ class SceneRecorder:
 
     def _raw(self) -> Path:
         return self.episode.raw_dir
+
+    def _writer_loop(self, q: "queue.Queue", fps: int) -> None:
+        """Drain synced groups from the capture loop and persist them. Runs on
+        its own thread; ``cv2.VideoWriter.write`` and ``np.save`` release the GIL
+        during the encode/IO so the capture loop keeps its cadence."""
+        while True:
+            group = q.get()
+            if group is None:
+                return
+            try:
+                self._save(group, fps)
+            except Exception:  # noqa: BLE001 — never let one bad group kill the take
+                logger.exception("recorder: failed to write a group")
 
     def _save(self, group, fps: int) -> None:
         for dev_id, frame in group.frames.items():
@@ -218,7 +261,7 @@ class SceneRecorder:
         mark_stage(
             self.episode, "record",
             frames=self._n, fps=fps, cameras=sorted(self._writers),
-            sync_bounded=stats["bounded"],
+            sync_bounded=stats["bounded"], dropped=self._dropped,
         )
         logger.info("recorded %d frames → %s", self._n, self.episode.root)
 

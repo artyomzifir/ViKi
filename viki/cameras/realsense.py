@@ -11,12 +11,19 @@ On-device ``rs.align`` is opt-in (``align_to_color=True``) — it runs a full
 depth→colour reprojection on the capture thread every frame and throttles the
 stream badly at 720p+.
 
+Frames come through librealsense's own dispatch thread via
+``pipeline.start(config, callback)`` — the SDK pairs colour+depth and delivers
+them, ``_on_frame`` copies the newest pair into a slot, and ``get_frame`` blocks
+on it. No Python ``wait_for_frames`` poll loop fighting the GIL (which dropped
+framesets and juddered the stream under recording load).
+
 Dependency: pyrealsense2 >= 2.58
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Optional
 
 import numpy as np
@@ -100,6 +107,13 @@ class RealSenseBackend(CameraBackend):
         self._threshold: Optional["rs.threshold_filter"] = None
         self._resolved_serial: str = serial or ""
         self._running = False
+        # newest (color, depth, ts_us) from the SDK callback, + a monotonically
+        # rising sequence so get_frame() only returns a pair it hasn't seen.
+        self._cv = threading.Condition()
+        self._latest: Optional[tuple] = None
+        self._latest_seq = 0
+        self._last_seq = 0
+        self._cb_error: Optional[str] = None
         # raw stream intrinsics + depth→colour extrinsic, captured at start().
         self._color_intr: dict | None = None
         self._depth_intr: dict | None = None
@@ -137,8 +151,15 @@ class RealSenseBackend(CameraBackend):
         dw, dh = self._depth_res
         config.enable_stream(rs.stream.depth, dw, dh, rs.format.z16, self._fps)
 
+        # SDK processing blocks the callback runs — build them before start()
+        # so an immediate first callback finds them.
+        self._align = rs.align(rs.stream.color) if self._align_to_color else None
+        self._threshold = (
+            rs.threshold_filter(0.1, self._depth_max_m) if self._depth_max_m > 0 else None
+        )
+
         try:
-            profile = self._pipeline.start(config)
+            profile = self._pipeline.start(config, self._on_frame)
         except RuntimeError:
             # This unit doesn't offer the requested depth profile — retry with
             # the depth stream matched to the colour resolution (always valid).
@@ -158,7 +179,7 @@ class RealSenseBackend(CameraBackend):
                 rs.format.z16, self._fps,
             )
             self._depth_res = self._color_res
-            profile = self._pipeline.start(config)
+            profile = self._pipeline.start(config, self._on_frame)
 
         if self._align_to_color and self._depth_res[0] * self._depth_res[1] > 900_000:
             logger.warning(
@@ -192,61 +213,87 @@ class RealSenseBackend(CameraBackend):
         ext = dprof.get_extrinsics_to(cprof)
         self._d2c_R, self._d2c_t = extrinsic_matrix(ext.rotation, ext.translation)
 
-        if self._align_to_color:
-            self._align = rs.align(rs.stream.color)
-
-        if self._depth_max_m > 0:
-            self._threshold = rs.threshold_filter(0.1, self._depth_max_m)
-
         self._running = True
+
+        # Block until the SDK callback has delivered the first usable pair, so a
+        # caller that starts then immediately reads doesn't get a spurious
+        # timeout (matches KinectBackend, which is streaming when start returns).
+        with self._cv:
+            if not self._cv.wait_for(
+                lambda: self._latest is not None or self._cb_error,
+                timeout=self._timeout_ms / 1000.0,
+            ):
+                raise RuntimeError(
+                    f"RealSense {self._resolved_serial or '?'}: no frame within "
+                    f"{self._timeout_ms} ms of start"
+                )
+            if self._cb_error:
+                raise RuntimeError(f"RealSense callback failed: {self._cb_error}")
+
+    def _on_frame(self, frame) -> None:
+        """librealsense dispatch-thread callback: pair colour+depth, run the SDK
+        filter chain, copy the newest pair into the slot. All the per-frame work
+        lives here so ``get_frame`` is just a slot read."""
+        try:
+            fs = frame.as_frameset()
+            if not fs:
+                return
+            if self._align is not None:
+                fs = self._align.process(fs).as_frameset()
+            c = fs.get_color_frame()
+            d = fs.get_depth_frame()
+            if not c or not d:
+                return  # partial frameset — wait for a complete one
+            if self._threshold is not None:
+                d = self._threshold.process(d).as_depth_frame()
+            # copy out of librealsense's frame pool — the frame handles die when
+            # this callback returns and the buffers get recycled.
+            color = np.array(c.get_data(), copy=True)   # HxWx3 BGR uint8
+            depth = np.array(d.get_data(), copy=True)   # HxW uint16 z16 units
+            if self._depth_units_m != 0.001:
+                # normalise to millimetres so the pipeline's fixed /1000 holds
+                depth = np.rint(
+                    depth.astype(np.float32) * (self._depth_units_m * 1000.0)
+                ).astype(np.uint16)
+            ts_us = int(c.get_timestamp() * 1000)  # ms -> us
+        except Exception as exc:  # noqa: BLE001 — surface it through get_frame
+            with self._cv:
+                self._cb_error = str(exc)
+                self._cv.notify_all()
+            return
+        with self._cv:
+            self._latest = (color, depth, ts_us)
+            self._latest_seq += 1
+            self._cv.notify_all()
 
     def stop(self) -> None:
         if self._pipeline and self._running:
-            self._pipeline.stop()
+            self._pipeline.stop()  # SDK joins its dispatch thread
         self._running = False
         self._pipeline = None
         self._align = None
         self._threshold = None
+        with self._cv:
+            self._latest = None
+            self._latest_seq = self._last_seq = 0
+            self._cb_error = None
+            self._cv.notify_all()  # wake any get_frame() blocked on the slot
 
     def get_frame(self) -> Frame:
-        if not self._running or self._pipeline is None:
-            raise RuntimeError("RealSenseBackend is not started. Call start() first.")
-
-        try:
-            frames = self._pipeline.wait_for_frames(timeout_ms=self._timeout_ms)
-        except RuntimeError as exc:
-            # librealsense signals "no frame within timeout_ms" with a plain
-            # RuntimeError; hand _CameraWorker the TimeoutError it treats as a
-            # clean frame drop (same contract as KinectBackend).
-            raise TimeoutError(str(exc)) from exc
-
-        if self._align is not None:
-            frames = self._align.process(frames)
-
-        color_frame = frames.get_color_frame()
-        depth_frame = frames.get_depth_frame()
-
-        if not color_frame or not depth_frame:
-            raise TimeoutError("RealSense capture missing a colour or depth frame — dropped.")
-
-        if self._threshold is not None:
-            # range gate: everything outside [0.1 m, depth_max_m] → 0 (the
-            # "no reading" marker the rest of the pipeline expects). Kills the
-            # low-confidence 10–30 m tail the raw stream keeps.
-            depth_frame = self._threshold.process(depth_frame)
-
-        # copy out of librealsense's frame pool immediately — get_frame's frame
-        # handles go out of scope on return and the buffers get recycled, so a
-        # bare asanyarray view would tear once the recorder reads it later.
-        color = np.array(color_frame.get_data(), copy=True)  # HxWx3 BGR uint8
-        depth = np.array(depth_frame.get_data(), copy=True)  # HxW uint16 z16 units
-        if self._depth_units_m != 0.001:
-            # normalise to millimetres so the pipeline's fixed /1000 stays right
-            depth = np.rint(
-                depth.astype(np.float32) * (self._depth_units_m * 1000.0)
-            ).astype(np.uint16)
-
-        timestamp_us = int(color_frame.get_timestamp() * 1000)  # ms -> us
+        with self._cv:
+            if not self._cv.wait_for(
+                lambda: (not self._running)
+                or self._cb_error
+                or self._latest_seq != self._last_seq,
+                timeout=self._timeout_ms / 1000.0,
+            ):
+                raise TimeoutError("RealSense: no new frame within timeout")
+            if not self._running:
+                raise RuntimeError("RealSenseBackend is not started. Call start() first.")
+            if self._cb_error:
+                raise RuntimeError(f"RealSense callback failed: {self._cb_error}")
+            color, depth, timestamp_us = self._latest
+            self._last_seq = self._latest_seq
 
         return Frame(
             color=color,
