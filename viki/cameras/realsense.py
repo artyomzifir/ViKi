@@ -63,6 +63,11 @@ class RealSenseBackend(CameraBackend):
         self._align: Optional[rs.align] = None
         self._resolved_serial: str = serial or ""
         self._running = False
+        # metres per raw z16 unit, read from the device at start(). D4xx ships
+        # 0.001 (1 unit == 1 mm), but the High-Accuracy preset and the D405
+        # default to 0.0001 — the rest of the pipeline assumes millimetres, so
+        # get_frame() rescales when this isn't 1 mm.
+        self._depth_units_m: float = 0.001
 
     # ------------------------------------------------------------------
     # CameraBackend interface
@@ -98,6 +103,13 @@ class RealSenseBackend(CameraBackend):
         dev = profile.get_device()
         self._resolved_serial = dev.get_info(rs.camera_info.serial_number)
 
+        try:
+            self._depth_units_m = float(
+                dev.first_depth_sensor().get_depth_scale()
+            )
+        except Exception:  # noqa: BLE001 — fall back to the D4xx default
+            self._depth_units_m = 0.001
+
         if self._align_to_color:
             self._align = rs.align(rs.stream.color)
 
@@ -114,7 +126,13 @@ class RealSenseBackend(CameraBackend):
         if not self._running or self._pipeline is None:
             raise RuntimeError("RealSenseBackend is not started. Call start() first.")
 
-        frames = self._pipeline.wait_for_frames(timeout_ms=self._timeout_ms)
+        try:
+            frames = self._pipeline.wait_for_frames(timeout_ms=self._timeout_ms)
+        except RuntimeError as exc:
+            # librealsense signals "no frame within timeout_ms" with a plain
+            # RuntimeError; hand _CameraWorker the TimeoutError it treats as a
+            # clean frame drop (same contract as KinectBackend).
+            raise TimeoutError(str(exc)) from exc
 
         if self._align is not None:
             frames = self._align.process(frames)
@@ -123,10 +141,15 @@ class RealSenseBackend(CameraBackend):
         depth_frame = frames.get_depth_frame()
 
         if not color_frame or not depth_frame:
-            raise RuntimeError("Failed to retrieve frames from RealSense.")
+            raise TimeoutError("RealSense capture missing a colour or depth frame — dropped.")
 
         color = np.asanyarray(color_frame.get_data())  # HxWx3 BGR uint8
-        depth = np.asanyarray(depth_frame.get_data())  # HxW uint16 mm
+        depth = np.asanyarray(depth_frame.get_data())  # HxW uint16, raw z16 units
+        if self._depth_units_m != 0.001:
+            # normalise to millimetres so the pipeline's fixed /1000 stays right
+            depth = np.rint(
+                depth.astype(np.float32) * (self._depth_units_m * 1000.0)
+            ).astype(np.uint16)
 
         timestamp_us = int(color_frame.get_timestamp() * 1000)  # ms -> us
 
