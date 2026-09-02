@@ -179,6 +179,9 @@ def calibrate_from_frames(frames: list[Mapping[LM, np.ndarray]]) -> HandParams:
     # One broad wrist→middle-MCP capsule is a conservative palm proxy. The
     # former five overlapping metacarpal capsules counted dense palm pixels
     # five times and caused unstable switches between coincident primitives.
+    # A thin two-capsule plate was measured against this and rejected: see
+    # docs/hand_fit_batch_design.md, it moves which capsule absorbs a curled
+    # fingertip without changing the fitted flexion at all.
     palm_width = float(np.linalg.norm(root_xyz["index"] - root_xyz["pinky"]))
     # Keep the proxy narrower than half the palm span: an overly spherical
     # capsule steals correspondences from proximal phalanges and makes wrist
@@ -349,14 +352,17 @@ def joint_capsule_support(hand: CapsuleHand) -> np.ndarray:
     """
     nrev = hand.nq - 7
     support = np.zeros((nrev, len(hand.capsules)), bool)
-    # capsule order follows build(): palm first, then prox/mid/dist per finger
+    # Identify a capsule by both endpoint frames rather than by its start
+    # alone, so a future palm or bridging primitive that happens to begin at a
+    # phalanx frame cannot be mistaken for that phalanx.
     frame_level = {}
-    for i, (a, _b, _r) in enumerate(hand.capsules):
-        frame_level[i] = hand.model.frames[a].name
+    for i, (a, b, _r) in enumerate(hand.capsules):
+        frame_level[i] = (hand.model.frames[a].name, hand.model.frames[b].name)
     for f in FINGERS:
-        levels = {f"{f}_prox": 0, f"{f}_mid": 1, f"{f}_dist": 2}
-        caps = {lvl: i for i, name in frame_level.items()
-                if (lvl := levels.get(name)) is not None}
+        levels = {(f"{f}_prox", f"{f}_mid"): 0, (f"{f}_mid", f"{f}_dist"): 1,
+                  (f"{f}_dist", f"{f}_tip"): 2}
+        caps = {lvl: i for i, pair in frame_level.items()
+                if (lvl := levels.get(pair)) is not None}
         # abd + mcp see every phalanx, pip sees mid+dist, dip only dist
         for jname, first in zip(_JOINTS[f], (0, 0, 1, 2)):
             jid = hand.model.getJointId(jname)
@@ -427,11 +433,21 @@ def q_from_landmarks(hand: CapsuleHand, pts: Mapping[LM, np.ndarray]) -> np.ndar
         # will bend toward the back of the hand.
         flex_axis_w = R_palm @ R_root @ R_abd @ np.array([0.0, -1.0, 0.0])
         rest_dir_w = R_palm @ R_root @ R_abd @ np.array([1.0, 0.0, 0.0])
+        # Interphalangeal joints are flexion-only hinges, so their sign is not
+        # a measurement — it is anatomy. Reading it off ``axis x cross(u, v)``
+        # instead is a coin flip at the angles that actually occur: with ~3 mm
+        # landmark noise on a ~25 mm phalanx the cross product's direction is
+        # ambiguous below ~15 deg, and on the target episode 40-58% of frames
+        # came out hyperextended and were clamped at the lower limit, which
+        # collapsed a real 7-20 deg median bend to 0-5 deg. Take the magnitude
+        # and let the depth fit refine it from the correct basin. The MCP/CMC
+        # angle is measured against the calibrated rest direction, where
+        # hyperextension is real, so it keeps its sign.
         ang = {
             abd: abd_angle,
             j_mcp: _signed_angle(rest_dir_w, bones[0], flex_axis_w),
-            j_pip: _signed_angle(bones[0], bones[1], flex_axis_w),
-            j_dip: _signed_angle(bones[1], bones[2], flex_axis_w),
+            j_pip: abs(_signed_angle(bones[0], bones[1], flex_axis_w)),
+            j_dip: abs(_signed_angle(bones[1], bones[2], flex_axis_w)),
         }
         for jname, a in ang.items():
             jid = hand.model.getJointId(jname)

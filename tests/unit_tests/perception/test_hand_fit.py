@@ -451,10 +451,11 @@ def test_fit_preserves_finger_bend_against_the_posture_prior():
     16 mm off. The depth cloud has to win on joints it actually observes.
 
     Note what this does *not* claim: starting from a straight hand the fit
-    cannot find a 50 deg bend at all, because a curled fingertip lies inside
-    the broad palm capsule and is assigned to it, leaving the finger joints
-    with no correspondences. That basin is the warm start's job, and widening
-    it needs the palm geometry reworked.
+    cannot find a 50 deg bend at all. Nearest-surface assignment binds the
+    curled phalanges' points to whatever lies closest in the straight pose --
+    the proximal capsules -- so the distal joints never see a gradient. That
+    basin is the warm start's job; escaping it needs per-point part labels or
+    a multi-hypothesis search, not a reweighting.
     """
     hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
     bent = {f"{f}_{j}": deg for f in ("index", "middle", "ring")

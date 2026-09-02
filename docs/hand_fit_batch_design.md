@@ -21,11 +21,15 @@ This note supersedes the per-frame solver described in `hand_fitting_plan.md`.
 - **Landmark decay:** the confidence-weighted landmark anchor is multiplied by
   `0.35 ** outer_iteration`. It is strong enough to pick the first basin, then
   becomes secondary to depth and temporal consistency.
-- **Palm proxy:** one wrist-to-middle-MCP capsule with a calibrated broad radius
-  replaces the five intersecting wrist-to-MCP capsules. It preserves the
+- **Palm proxy:** one wrist-to-middle-MCP capsule with a calibrated broad
+  radius replaces the five intersecting wrist-to-MCP capsules. It preserves the
   tested capsule distance/Jacobian while ensuring dense palm samples are counted
-  once. The radius is deliberately narrower than half the palm width so it does
-  not steal proximal-finger correspondences.
+  once. A thin two-capsule plate (longitudinal + knuckle line, ~12 mm) was
+  built and measured against it on the target episode and **rejected**: median
+  residual 5.46 vs 5.77 mm, p90 17.53 vs 17.22 mm, and identical fitted flexion
+  (index_pip 18.5° median, 42° span, both ways). It moves which capsule absorbs
+  a curled fingertip without resolving the ambiguity, so it is not worth the
+  extra primitive.
 - **ROI and segmentation:** the ROI is the union of current capsules padded by
   3 cm. A plane normal to palm-forward, 1 cm proximal to the wrist, removes the
   forearm. Recorded episodes do not currently persist a detector mask, so the
@@ -95,22 +99,22 @@ Measured on `data/datasets/new-dataset/2026-09-01_10-51-08` (599 frames,
 
 | term | before | after |
 |---|---:|---:|
-| data (depth cloud) | **0.1%** | **36.7%** |
-| vel_rotation | 36.0% | 28.1% |
-| vel_joints | 24.2% | 16.2% |
-| posture | 29.0% | 6.9% |
+| data (depth cloud) | **0.1%** | **38.6%** |
+| vel_rotation | 36.0% | 26.3% |
+| vel_joints | 24.2% | 14.0% |
+| posture | 29.0% | 10.1% |
 | vel_translation | 3.6% | 5.6% |
-| acc_joints | 4.0% | 2.7% |
-| acc_rotation | 2.3% | 1.8% |
-| landmark | 0.6% | 1.3% |
-| acc_translation | 0.3% | 0.7% |
+| acc_joints | 4.0% | 1.9% |
+| acc_rotation | 2.3% | 1.4% |
+| landmark | 0.6% | 1.4% |
+| acc_translation | 0.3% | 0.6% |
 
 | quantity | before | after |
 |---|---:|---:|
-| median point→surface residual | 8.59 mm | **5.68 mm** |
-| p90 point→surface residual | 25.75 mm | **16.97 mm** |
-| wrist jerk norm, warm start → fit | 0.00989 → 0.00051 | 0.00989 → 0.00113 |
-| batch ICP wall time | 47.19 s | 46.17 s |
+| median point→surface residual | 8.59 mm | **5.82 mm** |
+| p90 point→surface residual | 25.75 mm | **17.43 mm** |
+| wrist jerk norm, warm start → fit | 0.00989 → 0.00051 | 0.00989 → 0.00108 |
+| batch ICP wall time | 47.19 s | 47.00 s |
 
 The jerk rises slightly on purpose: the fingers now move instead of being held
 straight, and the trajectory is still 8.8x smoother than the landmark warm start.
@@ -119,20 +123,42 @@ Weights changed: `w_data` 500.0 (new), `w_posture` 0.02 → 0.004,
 `w_vel_rotation` 8 → 4, `w_vel_joints` 2 → 0.8, `w_acc_rotation` 20 → 10,
 `w_acc_joints` 4 → 1.6.
 
+## Warm-start flexion sign
+
+Interphalangeal joints are flexion-only hinges, so the sign of a PIP/DIP angle
+is anatomy, not a measurement. `q_from_landmarks` used to read it off
+`axis · cross(u, v)`, which is a coin flip at the angles that actually occur:
+with ~3 mm landmark noise on a ~25 mm phalanx the cross product's direction is
+ambiguous below ~15°. On the target episode 40–58% of frames came out
+hyperextended and 10–25% were clamped at the lower joint limit, collapsing a
+real 7–20° median bend to 0–5°. The magnitude is now taken directly; the MCP/CMC
+angle is measured against the calibrated rest direction, where hyperextension is
+real, so it keeps its sign.
+
+| joint | warm start before | warm start after | fitted |
+|---|---:|---:|---:|
+| index_pip | 4.8° | 15.3° | 18.6° (p5–p95 4.3–46.1) |
+| middle_pip | 2.2° | 10.0° | 16.3° (3.3–40.0) |
+| thumb_ip | −7.0° | 20.1° | 21.0° (9.8–51.7) |
+| index_dip | −0.9° | 8.9° | 12.5° (3.7–51.2) |
+
+The fitted median exceeds the warm start on every joint, i.e. the depth cloud
+adds flexion rather than merely following the landmarks.
+
 ## Known limit: the correspondence basin
 
-The fit preserves and sharpens a flexion the warm start already indicates, but
-it cannot *discover* one. Sampling a synthetic hand bent 50° at the PIPs and
-warm-starting from a straight hand, the solve converges to 0° with the data term
-holding 99.7% of the energy and a 5.9 mm residual — the depth term is dominant
-and still cannot see the bend. The assignment histogram shows why: a curled
-fingertip lies inside the broad palm capsule (radius ~25 mm) and binds to it, so
-`index_mid` receives 10 points and `index_dist` none. Starting from the true
-pose the same solve now holds 52° (it used to fall back to 31° and drag the
-wrist 16 mm), and from half the bend it closes toward the truth.
+The fit preserves and sharpens a flexion the warm start indicates, but it cannot
+*discover* one. Sampling a synthetic hand bent 50° at the PIPs and warm-starting
+from a straight hand, the solve converges to 0° with the data term holding 99.9%
+of the energy — dominant, and still blind to the bend. Nearest-surface
+assignment is why: in the straight pose the curled phalanges' points are closest
+to the *proximal* capsules (index_prox takes 400 of them, index_mid 16,
+index_dist none), so the distal joints never see a gradient. Thinning the palm
+into a two-capsule plate only moves the absorption to the proximal capsules
+(index_prox 400, index_mid 16, index_dist 0) and changes no fitted angle. From the
+true pose the same solve holds 55° (it used to fall back to 31° and drag the
+wrist 16 mm), and from half the bend it closes to 29°.
 
-Widening that basin means reworking the palm proxy or attaching per-point
-segment labels from the detector — both out of scope for a weight rebalance.
-Landmark quality gates it in the meantime: on the target episode the raw
-inter-bone angles read 15.3° median / 42.8° p90 at `index_pip`, while
-`q_from_landmarks` warm-starts the same joint at 4.8° / 34.7°.
+Escaping that basin needs per-point part labels from the detector or a
+multi-hypothesis search, not a reweighting. The warm start therefore gates
+finger fidelity, which is why its sign bug mattered so much.
