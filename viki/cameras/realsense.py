@@ -159,6 +159,16 @@ class RealSenseBackend(CameraBackend):
             "depth_mode": None,  # RealSense has no depth-mode enum
         }
 
+    def project_color_to_depth(self, u: float, v: float, z: float) -> tuple[float, float] | None:
+        """Colour pixel -> depth pixel.
+
+        This backend always starts the pipeline with ``rs.align(rs.stream.color)``
+        (see :meth:`get_frame`), so the depth frame is resampled onto the colour
+        image plane pixel-for-pixel. The mapping is therefore the identity; ``z``
+        is unused. Mirrors ``perception._IdentityProjector``.
+        """
+        return (u, v)
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
