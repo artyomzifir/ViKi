@@ -67,6 +67,12 @@ class RealSenseBackend(CameraBackend):
         If True, resample depth onto the colour plane on the capture thread
         every frame (``project_color_to_depth`` then becomes the identity).
         Default: False — record raw and align offline, like the Kinect.
+    depth_max_m : float
+        Zero out depth past this range. The raw D4xx stream returns low-confidence
+        estimates out to 20–30 m; ``rs.align`` used to drop them but the raw
+        stream keeps them, and downstream only filters ``z > 0`` — so they become
+        phantom points metres deep that swamp the workspace. The k4a NFOV depth
+        engine self-limits near ~3.5 m; 6 m here is generous headroom.
     timeout_ms : int
         Frame wait timeout in milliseconds.
     """
@@ -78,6 +84,7 @@ class RealSenseBackend(CameraBackend):
         depth_resolution: tuple[int, int] = (848, 480),
         fps: int = 30,
         align_to_color: bool = False,
+        depth_max_m: float = 6.0,
         timeout_ms: int = 5000,
     ) -> None:
         self._serial = serial
@@ -85,10 +92,12 @@ class RealSenseBackend(CameraBackend):
         self._depth_res = depth_resolution
         self._fps = fps
         self._align_to_color = align_to_color
+        self._depth_max_m = float(depth_max_m)
         self._timeout_ms = timeout_ms
 
         self._pipeline: Optional[rs.pipeline] = None
         self._align: Optional[rs.align] = None
+        self._threshold: Optional["rs.threshold_filter"] = None
         self._resolved_serial: str = serial or ""
         self._running = False
         # raw stream intrinsics + depth→colour extrinsic, captured at start().
@@ -177,6 +186,9 @@ class RealSenseBackend(CameraBackend):
         if self._align_to_color:
             self._align = rs.align(rs.stream.color)
 
+        if self._depth_max_m > 0:
+            self._threshold = rs.threshold_filter(0.1, self._depth_max_m)
+
         self._running = True
 
     def stop(self) -> None:
@@ -185,6 +197,7 @@ class RealSenseBackend(CameraBackend):
         self._running = False
         self._pipeline = None
         self._align = None
+        self._threshold = None
 
     def get_frame(self) -> Frame:
         if not self._running or self._pipeline is None:
@@ -206,6 +219,12 @@ class RealSenseBackend(CameraBackend):
 
         if not color_frame or not depth_frame:
             raise TimeoutError("RealSense capture missing a colour or depth frame — dropped.")
+
+        if self._threshold is not None:
+            # range gate: everything outside [0.1 m, depth_max_m] → 0 (the
+            # "no reading" marker the rest of the pipeline expects). Kills the
+            # low-confidence 10–30 m tail the raw stream keeps.
+            depth_frame = self._threshold.process(depth_frame)
 
         color = np.asanyarray(color_frame.get_data())  # HxWx3 BGR uint8
         depth = np.asanyarray(depth_frame.get_data())  # HxW uint16, raw z16 units
