@@ -198,3 +198,52 @@ def test_migrate_legacy_v2_preset(store):
     # idempotent
     artifacts.ensure_migrated("old")
     assert artifacts.read_extrinsics("old")["reference_device"] == "kinect_0"
+
+
+def test_resolve_from_observations_reproduces(store):
+    """Acceptance §10.4: re-solving from the stored observations gives the same
+    extrinsics (and the dependents go stale)."""
+    board = {"type": "aruco", "board_size": [5, 4], "square_size": 0.03,
+             "marker_size": 0.022, "aruco_dict": int(cv2.aruco.DICT_4X4_50)}
+    Kd = {"fx": 600.0, "fy": 600.0, "cx": 320.0, "cy": 240.0, "width": 640, "height": 480}
+    intr = {"cam_ref": Kd, "cam_b": Kd}
+    Km = np.array([[600, 0, 320], [0, 600, 240], [0, 0, 1.0]])
+    from viki.calibration.samples import _charuco_board
+    obj = np.asarray(_charuco_board(board).getChessboardCorners(), np.float64)
+    ids = np.arange(len(obj))
+
+    def T(rv, t):
+        M = np.eye(4); M[:3, :3] = cv2.Rodrigues(np.asarray(rv, float))[0]; M[:3, 3] = t
+        return M
+
+    T_b_ref = T([0.0, 0.45, 0.0], [0.35, 0.0, 0.08])
+    poses = [([0.05, 0.0, 0.0], [0, 0, 0.65]), ([0.5, -0.1, 0.0], [0, 0, 0.6]),
+             ([-0.4, 0.2, 0.0], [0, 0, 0.62]), ([0.2, 0.35, 0.1], [0, 0, 0.68])]
+    rng = np.random.default_rng(0)
+    sets = []
+    for k, (rv, t) in enumerate(poses):
+        Xr = obj @ T(rv, t)[:3, :3].T + T(rv, t)[:3, 3]
+        obs = {}
+        for dev, Tc in (("cam_ref", np.eye(4)), ("cam_b", T_b_ref)):
+            Xc = Xr @ Tc[:3, :3].T + Tc[:3, 3]
+            uv = cv2.projectPoints(Xc, np.zeros(3), np.zeros(3), Km, np.zeros(5))[0].reshape(-1, 2)
+            uv += rng.normal(0, 0.15, uv.shape)
+            obs[dev] = {"charuco_ids": ids.tolist(), "charuco_corners": uv.tolist()}
+        sets.append({"set_id": f"s{k}", "observations": obs})
+
+    from viki.calibration.bundle import solve_bundle
+    first = solve_bundle(sets, intr, board, reference_device="cam_ref")
+    artifacts.write_extrinsics(
+        "rig", reference_device="cam_ref", devices=first["devices"],
+        sets=sets, solve=first["solve"], intrinsics=intr, board=board,
+    )
+    artifacts.write_world_anchor("rig", T_world_display=np.eye(4), observations={})
+    h0 = artifacts.extrinsics_hash("rig")
+
+    artifacts.resolve_from_observations("rig")
+    np.testing.assert_allclose(
+        artifacts.device_transforms("rig")["cam_b"],
+        np.asarray(first["devices"]["cam_b"]), atol=1e-6,
+    )
+    assert artifacts.extrinsics_hash("rig") != h0          # created_at moved
+    assert artifacts.world_anchor_stale("rig")             # dependent went stale

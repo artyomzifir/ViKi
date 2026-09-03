@@ -133,14 +133,18 @@ def write_extrinsics(
     devices: dict[str, Any],
     sets: list[dict],
     solve: dict,
+    intrinsics: dict | None = None,
+    board: dict | None = None,
 ) -> dict:
     """``devices[dev]`` is a 4x4 ``T_ref_cam`` (list-of-lists or ndarray); the
     reference device must be present and (near-)identity. ``sets`` is the list of
     ``{set_id, captured_at, observations: {dev: {charuco_ids, charuco_corners}}}``
-    the solve consumed — kept so the solve and the world anchor can be redone
-    offline."""
+    the solve consumed. ``intrinsics`` (``{dev: {fx,fy,cx,cy,dist_coeffs?}}``) and
+    ``board`` are stored alongside so the solve and the world anchor can be
+    redone offline from this one file."""
     if reference_device not in devices:
         raise ValueError(f"reference_device {reference_device!r} not in devices")
+    prev = read_extrinsics(name) or {}
     payload = {
         "schema": EXTRINSICS_SCHEMA,
         "created_at": _now_iso(),
@@ -150,9 +154,39 @@ def write_extrinsics(
         },
         "sets": sets,
         "solve": solve,
+        "intrinsics": intrinsics if intrinsics is not None else prev.get("intrinsics", {}),
+        "board": board if board is not None else prev.get("board"),
     }
     _dump(_extrinsics_path(name), payload)
     return payload
+
+
+def resolve_from_observations(name: str, *, reference_device: str | None = None) -> dict:
+    """Re-run the bundle solve from the ``sets`` / ``intrinsics`` / ``board``
+    stored in ``extrinsics.json`` and rewrite it in place. Used after a set is
+    dropped, or to re-solve with a better solver. The world anchor and the
+    validation report go stale (their ``extrinsics_hash`` no longer matches)
+    until recomputed."""
+    from viki.calibration.bundle import solve_bundle
+
+    data = read_extrinsics(name)
+    if not data:
+        raise FileNotFoundError(f"no extrinsics.json for preset {name!r}")
+    out = solve_bundle(
+        data.get("sets", []),
+        data.get("intrinsics", {}),
+        data.get("board") or {},
+        reference_device=reference_device or data.get("reference_device"),
+    )
+    return write_extrinsics(
+        name,
+        reference_device=out["reference_device"],
+        devices=out["devices"],  # {dev: 4x4 list}
+        sets=data.get("sets", []),
+        solve=out["solve"],
+        intrinsics=data.get("intrinsics", {}),
+        board=data.get("board"),
+    )
 
 
 def read_extrinsics(name: str) -> dict | None:
@@ -427,6 +461,8 @@ def migrate_legacy(name: str) -> dict | None:
             "n_sets": len(sets),
             "n_points": 0,
         },
+        intrinsics=legacy.get("intrinsics", {}) if isinstance(legacy, dict) else {},
+        board=legacy.get("board") if isinstance(legacy, dict) else None,
     )
     # the legacy world frame == the reference camera's board pose; preserve it as
     # the display anchor so migrated episodes render unchanged.
