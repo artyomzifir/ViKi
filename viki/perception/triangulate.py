@@ -226,20 +226,32 @@ def triangulate_episode(raw: Path, *, write: bool = True) -> dict:
 
     cam_ids = obs["camera_id"].astype(str)
     frame_idx = obs["frame_index"].astype(int)
-    ts = obs["host_timestamp_us"].astype(np.int64)
     uv = obs["uv"]
     score = obs["lm_score"]
     depth = obs["depth_m"]
     dvalid = obs["depth_valid"]
     dspread = obs["depth_spread_m"]
 
-    # group observation rows by their synced tick
-    ticks = sorted(set(ts.tolist()))
-    tick_rows: dict[int, list[int]] = {t: [] for t in ticks}
-    for r, t in enumerate(ts.tolist()):
-        tick_rows[t].append(r)
+    # Group by SYNCED-FRAME INDEX, not host timestamp: the recorder is
+    # index-aligned across cameras (mp4 frame i of every camera == one synced
+    # group), whereas host_timestamp_us carries each camera's per-frame offset
+    # from the tick, so two cameras' rows for the same group never share it.
+    frames = sorted(set(frame_idx.tolist()))
+    frame_rows: dict[int, list[int]] = {f: [] for f in frames}
+    for r, f in enumerate(frame_idx.tolist()):
+        frame_rows[f].append(r)
+    T = len(frames)
 
-    T = len(ticks)
+    # canonical timestamp per synced group = the sync tick from raw/timestamps.json
+    sync_us: list[int] = []
+    try:
+        import json as _json
+
+        _ts = _json.loads((raw / "timestamps.json").read_text())
+        _sync = [int(e["sync_us"]) for e in _ts if "sync_us" in e]
+        sync_us = [_sync[f] if 0 <= f < len(_sync) else int(f) for f in frames]
+    except Exception:  # noqa: BLE001
+        sync_us = list(frames)
     out_xyz = np.full((T, HAND_LM_COUNT, 3), np.nan, np.float32)
     out_q = np.zeros((T, HAND_LM_COUNT), np.float32)
     out_nv = np.zeros((T, HAND_LM_COUNT), np.int8)
@@ -247,8 +259,8 @@ def triangulate_episode(raw: Path, *, write: bool = True) -> dict:
     out_reproj = np.full((T, HAND_LM_COUNT), np.nan, np.float32)
 
     nviews_hist = np.zeros(4, int)  # joints solved with 0/1/2/3+ views
-    for ti, t in enumerate(ticks):
-        rows = [r for r in tick_rows[t] if cam_ids[r] in cams]
+    for ti, f in enumerate(frames):
+        rows = [r for r in frame_rows[f] if cam_ids[r] in cams]
         for lm in range(HAND_LM_COUNT):
             views = [{
                 "camera_id": cam_ids[r], "uv": uv[r, lm], "score": float(score[r, lm]),
@@ -280,7 +292,7 @@ def triangulate_episode(raw: Path, *, write: bool = True) -> dict:
     if write:
         np.savez(
             raw / "joints3d.npz", schema=np.int32(1),
-            timestamps=np.asarray(ticks, np.int64),
+            timestamps=np.asarray(sync_us, np.int64),
             xyz=out_xyz, quality=out_q, n_views=out_nv,
             ray_deg=out_ray, reproj_px=out_reproj,
             cameras=np.array(sorted(cams)),
