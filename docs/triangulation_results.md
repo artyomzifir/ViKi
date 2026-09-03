@@ -1,47 +1,73 @@
-# Multi-view triangulation — A/B on the `pick_up` episode
+# Multi-view triangulation — A/B results
 
-Episode `new-dataset/2026-09-03_15-52-12` (task `pick_up`, 898 frames, 2×Kinect).
-Detector: `rtmpose-m-hand5` on the GPU (~11 ms/frame). Same episode, same
-`hand_fit` config, only `PERCEPTION_FUSE_MODE` flipped.
+## Clean run (hardware-synced, full coverage) — `2026-09-03_16-58-45` (`pick_up_u`)
 
-> **Caveat:** this episode was recorded **before** the Kinect wired hardware sync
-> was enabled — inter-camera skew P95 ≈ 21 ms (`docs/sync_stage0.md`), ~21 mm of
-> spatial error at 1 m/s. Triangulation runs *handicapped* here. A fresh
-> hardware-synced take (P95 2.5 ms) should widen the gap.
-
-## Results
+898 frames, 30 fps, 2×Kinect **wired hardware sync** (inter-camera gap median
+0.5 ms, P95 5.4 ms). Detector **`mediapipe`** (handedness + tracker → the hand is
+seen by *both* cameras in 807/898 frames = 90 %). Same `hand_fit` config, only
+`PERCEPTION_FUSE_MODE` flipped.
 
 | metric | `xyz_mean` (legacy) | `triangulate` | Δ |
 |---|---|---|---|
-| hand_fit median point→capsule residual | 10.8 mm | **9.9 mm** | −0.9 mm (−8 %) |
-| hand_fit p90 residual | 26.7 mm | **24.3 mm** | −2.4 mm (−9 %) |
-| warm-start jerk (landmark skeleton) | 9.9e-3 | **9.4e-4** | **−90 %** |
-| fitted-trajectory jerk | 8.5e-2 | 5.6e-2 | −35 % |
-| hand_fit energy: data (cloud) term | 12.0 % | **19.2 %** | cloud gets more say |
-| hand_fit empty-frame fraction | 11.8 % | 50.1 % | +38 pp — see below |
-| mean ROI points / frame | 352 | 198 | fewer |
-| triangulation reprojection error | — | median **0.94 px** / P95 **2.6 px** | — |
-| joints by #views (0 / 1 / 2 / 3+) | — | 42 / 12048 / 4563 / 0 | — |
+| valid frames | 86 % | **99 %** | +13 pp |
+| gap runs (count / longest) | 23 / 36 fr | **2 / 11 fr** | — |
+| hand_fit empty-frame fraction | 14 % | **1 %** | — |
+| hand_fit median point→capsule residual | 9.6 mm | **9.0 mm** | −6 % |
+| hand_fit p90 residual | 26.1 mm | **22.5 mm** | −14 % |
+| **fitted wrist step, median** | 13.9 mm/fr | **6.2 mm/fr** | **−55 %** |
+| fitted wrist step, p95 | 59.8 mm/fr | **31.9 mm/fr** | −47 % |
+| fitted wrist step, max | 191.5 mm/fr | **77.8 mm/fr** | −59 % |
+| **fitted wrist jerk, RMS** | 2601 | **1327** | **−49 %** |
+| fitted wrist jerk, p95 | 5441 | 2925 | −46 % |
+| warm-start (landmark) jerk | 1.4e-2 | **1.1e-3** | −92 % |
+| hand_fit energy: data (cloud) term | 7 % | **20 %** | — |
+| triangulation reprojection error | — | median 1.3 px / P95 3.1 px | — |
+| joints by #views (0 / 1 / 2 / 3+) | — | 0 / 1911 / 16947 / 0 | — |
 
-## Reading it
+### Reading it
 
-- **The residual improved (−8 % median, −9 % p90) even handicapped**, and the
-  landmark-skeleton jerk dropped **10×**. The triangulated joints are far more
-  frame-to-frame consistent than an average of two monocular reconstructions, so
-  `hand_fit` stops fighting the anchor and trusts the depth cloud more (data
-  term 12 % → 19 % of the energy). This is the mechanism the task predicted.
-- **Triangulation geometry is sound**: reprojection P95 2.6 px. Calibration +
-  the undistort-once discipline + DLT are correct.
-- **`empty_frame_fraction` jumped to 50 %** because triangulation only produces a
-  joint where *both* cameras saw the hand, and on this take `kinect_0` detected
-  the hand in only ~300 / 898 frames vs `kinect_1`'s ~715 — `rtmpose` has no
-  handedness label and mis-locks on that camera's wider framing. So the gain is
-  real but covers only ~half the timeline; the rest falls back to gaps. That is
-  a **detector** limitation (out of scope — use `mediapipe`, or reframe
-  `kinect_0`), not a triangulation one.
+An **unambiguous, large win** on the clean setup:
 
-## Next
+- The fitted **wrist trajectory frame-to-frame step is halved** (median 13.9 →
+  6.2 mm/fr; p95 −47 %; max −59 %) and its **jerk RMS is down 49 %**. The
+  trajectory is genuinely smoother — 99 % of frames are valid, only two short
+  gaps, so this is real, not the interpolation artifact of the earlier run.
+- The point→capsule residual improves (−6 % median, −14 % p90) and
+  `hand_fit`'s empty-frame fraction collapses 14 % → 1 % — it sits on the depth
+  cloud across almost the whole take.
+- The cloud (data) term rises from 7 % to 20 % of `hand_fit`'s energy: the
+  triangulated landmark anchor is consistent enough that the optimiser stops
+  fighting it and lets the cloud decide the pose.
+- Triangulation geometry is sound: reprojection P95 3.1 px over 16947 two-view
+  joints.
 
-Re-record `pick_up` with the pair hardware-synced and the hand kept inside both
-cameras' overlap, then re-run this A/B. Expect a larger residual drop and full
-timeline coverage.
+### What it took to get here (all committed)
+
+1. **`8ac8e17`** — GPU inference back on (probe graph was IR-13; onnxruntime
+   1.23 rejects it). extract 30 min → ~30–75 s.
+2. **`ab252f7`** — Kinect wired sync: master is **`kinect_1`**, subordinate
+   `kinect_0` (SDK cable-presence check fails on both when reversed). Inter-camera
+   skew 20–31 ms → **<1 ms**.
+3. **`cb96a5f`** — `MultiCameraSync.max_offset_us` default was 25 ms, *below* one
+   frame period, so `nearest_to`'s legitimate half-period-plus-jitter frames were
+   rejected — a 30 s take came out 22 s / 660 frames. Now `1.5 / sync_fps`.
+4. **`804becf`** — `triangulate_episode` grouped observations by
+   `host_timestamp_us` (carries each camera's per-frame offset → never matches
+   across cameras). Now groups by `frame_index`.
+5. **Detector**: `rtmpose-m-hand5` has no handedness label and detects the hand
+   in only ~13 % of two-view frames on this rig — it was the reason the first A/B
+   looked jittery (gap-dominated). `mediapipe` (handedness + tracker) → 90 %
+   two-view coverage. **Recommend `POSE_BACKEND = mediapipe` for this rig.**
+
+---
+
+## First run (software-synced, rtmpose) — superseded, kept for context
+
+Episode `2026-09-03_15-52-12`, recorded before the wired sync, detector
+`rtmpose-m-hand5`. Inter-camera skew P95 ≈ 21 ms; two-view coverage only ~13 %
+of frames (rtmpose one-camera dropout). The scalar `hand_fit` metrics improved
+(median resid 10.8 → 9.9 mm, warm-start jerk −90 %) but that was largely a
+selection / over-smoothing artifact: `empty_frame_fraction` jumped 12 → 50 %, so
+half the trajectory was unconstrained spline fill (one gap ran 111 frames). On
+the per-frame graphs it read as *worse* — frozen stretches and discontinuities.
+The clean run above is the real comparison.
