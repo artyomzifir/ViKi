@@ -561,3 +561,69 @@ def test_unobserved_fingers_hold_the_calibrated_rest_pose():
         got = _joint_deg(hand, fitted[1], name)
         assert abs(got - 28.0) < 10.0, f"{name} relaxed to {got:.1f}°, not to rest"
         assert got > 15.0, f"{name} collapsed toward pin.neutral ({got:.1f}°)"
+
+
+# ── sliding-window driver ────────────────────────────────────────────────
+
+def test_windowed_matches_whole_batch_and_has_no_seam_step():
+    import pinocchio as pin
+
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    T = 24
+    true_q = _linear_q_trajectory(hand, T=T, step=0.010)
+    clouds = [_sample_cloud(hand, q, per_capsule=6, noise=0.0012, seed=t)
+              for t, q in enumerate(true_q)]
+    q0 = true_q.copy()
+    for t in range(T):  # small in-plane jitter on the warm start
+        p, R = hf.wrist_pose(hand, q0[t])
+        q0[t, :7] = pin.SE3ToXYZQUAT(pin.SE3(R, p + [0.0, 0.004 * ((t % 3) - 1), 0.0]))
+
+    base = dict(min_points=10, max_points=120, outer_iterations=3, max_nfev=25,
+                w_landmark=0.0, w_posture=0.0,
+                w_vel_translation=25.0, w_acc_translation=350.0)
+    whole = hf.FitConfig(window=0, **base)
+    win = hf.FitConfig(window=10, window_overlap=4, workers=1, **base)
+
+    q_whole, _ = hf.fit_trajectory(hand, clouds, [None] * T, q0, whole)
+    q_win, info = hf.fit_trajectory_windowed(hand, clouds, [None] * T, q0, win)
+
+    assert info["n_windows"] >= 3
+    assert q_win.shape == q_whole.shape
+
+    pw = np.asarray([hf.wrist_pose(hand, q)[0] for q in q_whole])
+    ps = np.asarray([hf.wrist_pose(hand, q)[0] for q in q_win])
+    assert np.max(np.linalg.norm(pw - ps, axis=1)) < 0.010  # agrees with the batch
+
+    steps = np.linalg.norm(np.diff(ps, axis=0), axis=1)
+    med = np.median(steps)
+    seam_ends = {e for _, e in hf._window_starts(T, 10, 4)[:-1]}
+    seam_steps = [steps[i] for i in range(len(steps)) if (i + 1) in seam_ends]
+    assert seam_steps and max(seam_steps) < 3.0 * med + 1e-4  # no discontinuity at a seam
+
+
+def test_windowed_falls_through_for_short_episodes():
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    true_q = _linear_q_trajectory(hand, T=6, step=0.01)
+    clouds = [_sample_cloud(hand, q, per_capsule=5, noise=0.001, seed=t)
+              for t, q in enumerate(true_q)]
+    fc = hf.FitConfig(window=50, window_overlap=10, min_points=10, max_points=80,
+                      outer_iterations=2, w_landmark=0.0, w_posture=0.0)
+    q_fit, info = hf.fit_trajectory_windowed(hand, clouds, [None] * 6, true_q.copy(), fc)
+    assert q_fit.shape == true_q.shape
+    assert "n_windows" not in info  # delegated straight to fit_trajectory
+
+
+def test_sanitize_warm_start_demotes_a_wrist_spike():
+    import pinocchio as pin
+
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    T = 12
+    q = _linear_q_trajectory(hand, T=T, step=0.008)
+    valid = np.ones(T, bool)
+    # frame 7 warm-started 1 m away — passed the stability mask, garbage landmarks
+    p, R = hf.wrist_pose(hand, q[7])
+    q[7, :7] = pin.SE3ToXYZQUAT(pin.SE3(R, p + [1.0, 0.0, 0.0]))
+
+    out = hf._sanitize_warm_start(hand, q, valid, mad_k=6.0)
+    assert out[7] == False           # the spike is demoted
+    assert out.sum() == T - 1        # nothing else touched

@@ -28,11 +28,41 @@ logger = logging.getLogger(__name__)
 
 
 def _pick_device() -> str:
+    """`"cuda"` only if a CUDAExecutionProvider session actually initialises —
+    the provider can be *listed* (onnxruntime-gpu installed) yet fail at runtime
+    (missing CUDA/cuDNN libs, driver too old for the GPU arch). Verify, don't
+    assume; fall back to CPU with a warning."""
     try:
+        import numpy as _np
         import onnxruntime as ort
-
-        return "cuda" if "CUDAExecutionProvider" in ort.get_available_providers() else "cpu"
     except Exception:  # noqa: BLE001
+        return "cpu"
+    if "CUDAExecutionProvider" not in ort.get_available_providers():
+        return "cpu"
+    try:
+        from onnx import TensorProto, helper  # rtmlib pulls onnx in
+
+        g = helper.make_graph(
+            [helper.make_node("Identity", ["x"], ["y"])], "probe",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+        )
+        model = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13)])
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        sess = ort.InferenceSession(
+            model.SerializeToString(), so, providers=["CUDAExecutionProvider"]
+        )
+        if "CUDAExecutionProvider" not in sess.get_providers():
+            raise RuntimeError("CUDA EP not active in the probe session")
+        sess.run(None, {"x": _np.zeros(1, _np.float32)})
+        return "cuda"
+    except ImportError:
+        # can't build a probe graph without onnx — trust the provider list
+        logger.info("RTMPose: onnx unavailable to verify CUDA EP; trusting provider list")
+        return "cuda"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("RTMPose: CUDA EP present but unusable (%s) — running on CPU", exc)
         return "cpu"
 
 
@@ -64,6 +94,9 @@ class RTMPoseHandBackend(HandPoseBackend):
         self._tier = entry["id"]
         self._device = device or _pick_device()
         self._warned_multi = False
+        # last picked hand's centroid (pixels) — used to stay locked on one hand
+        self._prev_center = None
+        self._misses = 0
         logger.info(
             "RTMPose-Hand: %s device=%s (onnxruntime)", self._tier, self._device
         )
@@ -79,21 +112,39 @@ class RTMPoseHandBackend(HandPoseBackend):
         bgr = np.ascontiguousarray(frame.rgb[:, :, ::-1])
         keypoints, scores = self._hand(bgr)  # (N,21,2), (N,21)
         if keypoints is None or len(keypoints) == 0:
+            self._misses += 1
+            if self._misses > 15:
+                self._prev_center = None  # hand left the frame — stop tracking it
             return None
 
         mean = scores.mean(axis=1)
         best = int(np.argmax(mean))
-        if len(keypoints) > 1 and not self._warned_multi:
-            logger.warning(
-                "RTMPose sees %d hands on %s; taking the top-scoring one as %r "
-                "(RTMPose has no left/right label)",
-                len(keypoints), frame.device_id, hand,
-            )
-            self._warned_multi = True
+        if len(keypoints) > 1:
+            if not self._warned_multi:
+                logger.warning(
+                    "RTMPose sees %d hands on %s; locking onto one by proximity "
+                    "(RTMPose has no left/right label or tracker)",
+                    len(keypoints), frame.device_id,
+                )
+                self._warned_multi = True
+            # Stay on the hand nearest last frame's pick, as long as it's not a
+            # clearly worse detection than the top-scoring one.
+            if self._prev_center is not None:
+                centers = keypoints.mean(axis=1)  # (N, 2)
+                d = np.linalg.norm(centers - self._prev_center, axis=1)
+                near = int(np.argmin(d))
+                if mean[near] >= 0.7 * mean[best]:
+                    best = near
+
         if float(mean[best]) < self._min_conf:
+            self._misses += 1
+            if self._misses > 15:
+                self._prev_center = None
             return None
 
         kp = keypoints[best]
+        self._prev_center = kp.mean(axis=0)
+        self._misses = 0
         points = {
             LM(i): np.asarray(kp[i], dtype=np.float32) for i in range(HAND_LM_COUNT)
         }

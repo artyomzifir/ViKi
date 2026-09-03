@@ -61,6 +61,10 @@ PERCEPTION_HAND_FIT_MIN_POINTS: int  # below this, frame has an empty data block
 PERCEPTION_HAND_FIT_MAX_POINTS: int  # max deterministic voxel representatives per frame
 PERCEPTION_HAND_FIT_MAX_NFEV: int
 PERCEPTION_HAND_FIT_OUTER_ITERATIONS: int
+PERCEPTION_HAND_FIT_WINDOW: int  # frames per sliding window; 0 = whole-episode batch
+PERCEPTION_HAND_FIT_WINDOW_OVERLAP: int  # overlapping frames blended between windows
+PERCEPTION_HAND_FIT_WORKERS: int  # window-solver threads; 0 = auto (min(4, cpu/2))
+PERCEPTION_HAND_FIT_WARM_START_MAD_K: float  # wrist warm-start spike gate (robust MAD units)
 KINECT_SYNC: dict  # {"master": "kinect_0", "subordinates": [...], "subordinate_delay_us": 160}; {} = software sync only
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
@@ -212,6 +216,10 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_MAX_POINTS": 400,
     "PERCEPTION_HAND_FIT_MAX_NFEV": 35,
     "PERCEPTION_HAND_FIT_OUTER_ITERATIONS": 4,
+    "PERCEPTION_HAND_FIT_WINDOW": 120,
+    "PERCEPTION_HAND_FIT_WINDOW_OVERLAP": 30,
+    "PERCEPTION_HAND_FIT_WORKERS": 0,
+    "PERCEPTION_HAND_FIT_WARM_START_MAD_K": 6.0,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
 }

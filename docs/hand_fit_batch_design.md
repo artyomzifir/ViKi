@@ -4,10 +4,27 @@ This note supersedes the per-frame solver described in `hand_fitting_plan.md`.
 
 ## Decisions
 
-- **Batch extent:** one batch per complete episode, including invalid or
-  low-observation frames as empty data blocks. This lets velocity and true
-  second-difference edges interpolate a gap from both sides. There is no
-  per-frame skip/reset or accept/reject path.
+- **Batch extent:** one batch per window. `PERCEPTION_HAND_FIT_WINDOW`
+  (default 120 frames) with `PERCEPTION_HAND_FIT_WINDOW_OVERLAP` (default 30)
+  splits the episode into overlapping windows, each solved by the unchanged
+  `fit_trajectory` and blended on the manifold with a raised-cosine ramp across
+  the overlap (`fit_trajectory_windowed`). Windows are independent → solved on a
+  thread pool (`PERCEPTION_HAND_FIT_WORKERS`, BLAS pinned to 1/worker). This
+  bounds the per-solve cost regardless of recording length — the original
+  whole-episode batch (`WINDOW=0`) hit the `nfev` cap on every ICP pass for real
+  610–728-frame takes and scaled unboundedly. Invalid/low-observation frames are
+  still empty data blocks whose temporal edges interpolate from both sides;
+  within a window that is unchanged, and the overlap carries continuity across
+  the seam. `WINDOW=0` keeps the exact whole-episode behaviour.
+- **Warm-start sanitisation:** a `valid` frame whose `q_from_landmarks` wrist is
+  a local outlier (robust MAD gate `PERCEPTION_HAND_FIT_WARM_START_MAD_K`, or a
+  >0.25 m single-frame jump) is demoted for the warm start — re-filled by
+  manifold interpolation and stripped of its landmark anchor — since the ±0.15 m
+  per-iteration wrist bound cannot otherwise undo a metres-off spike. Depth for
+  that frame is still used; it stays a free variable.
+- (was) **Batch extent — whole episode:** one batch per complete episode. This
+  let velocity/second-difference edges interpolate a gap from both sides, but
+  assumed ~300-frame episodes; superseded by the window above.
 - **Solver:** `scipy.optimize.least_squares(method="trf", tr_solver="lsmr")`
   over all `T * nv` tangent increments. A callable loss applies Huber only to
   point-data rows and leaves temporal/prior blocks quadratic, matching the

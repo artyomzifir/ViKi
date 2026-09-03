@@ -63,6 +63,10 @@ class FitConfig:
     outer_iterations: int = 4
     outer_step_tol: float = 2e-4
     calib_frames: int = 8
+    window: int = 120           # frames per sliding window; 0 = whole-episode batch
+    window_overlap: int = 30    # overlapping frames blended between windows
+    workers: int = 0            # window-solver threads; 0 = auto (min(4, cpu/2))
+    warm_start_mad_k: float = 6.0  # wrist warm-start outlier gate (robust MAD units)
 
     @classmethod
     def from_config(cls, cfg=None) -> "FitConfig":
@@ -92,6 +96,10 @@ class FitConfig:
             max_points=gi("PERCEPTION_HAND_FIT_MAX_POINTS", 400),
             max_nfev=gi("PERCEPTION_HAND_FIT_MAX_NFEV", 35),
             outer_iterations=gi("PERCEPTION_HAND_FIT_OUTER_ITERATIONS", 4),
+            window=gi("PERCEPTION_HAND_FIT_WINDOW", 120),
+            window_overlap=gi("PERCEPTION_HAND_FIT_WINDOW_OVERLAP", 30),
+            workers=gi("PERCEPTION_HAND_FIT_WORKERS", 0),
+            warm_start_mad_k=gf("PERCEPTION_HAND_FIT_WARM_START_MAD_K", 6.0),
         )
 
 
@@ -661,9 +669,24 @@ def fit_trajectory(
         if step_norm < fc.outer_step_tol:
             break
 
-    residuals = []
+    info = _final_metrics(
+        hand, q_ref, observations, fc, q_rest=q_rest, initial_jerk=initial_jerk,
+        n_outer=n_outer, total_nfev=total_nfev, elapsed_s=time.perf_counter() - started,
+    )
+    return q_ref, info
+
+
+def _final_metrics(
+    hand: "hm.CapsuleHand", q_traj: np.ndarray, observations, fc: FitConfig, *,
+    q_rest: np.ndarray, initial_jerk: float, n_outer: int, total_nfev: int,
+    elapsed_s: float,
+) -> dict:
+    """Residual / jerk / energy-split summary at the converged trajectory. Shared
+    by the whole-episode and the sliding-window drivers so both report the same
+    keys computed the same way."""
     radii = hm.capsule_radii(hand)
-    for q, obs in zip(q_ref, observations):
+    residuals = []
+    for q, obs in zip(q_traj, observations):
         if len(obs.cloud):
             d, _ = nearest_capsule(obs.cloud, hm.fk_capsule_endpoints(hand, q), radii)
             residuals.append(np.abs(d))
@@ -673,20 +696,147 @@ def fit_trajectory(
         "median_resid_m": float(np.median(all_resid)) if len(all_resid) else float("nan"),
         "p90_resid_m": float(np.percentile(all_resid, 90)) if len(all_resid) else float("nan"),
         "jerk_before_m": initial_jerk,
-        "jerk_after_m": _jerk_norm(q_ref),
-        "empty_frame_fraction": float(np.mean(counts == 0)),
+        "jerk_after_m": _jerk_norm(q_traj),
+        "empty_frame_fraction": float(np.mean(counts == 0)) if len(counts) else 0.0,
         "mean_roi_points": float(counts.mean()) if len(counts) else 0.0,
-        "outer_iterations": n_outer,
-        "nfev": total_nfev,
-        "elapsed_s": float(time.perf_counter() - started),
+        "outer_iterations": int(n_outer),
+        "nfev": int(total_nfev),
+        "elapsed_s": float(elapsed_s),
     }
-    # Reported at the converged trajectory and the final landmark decay, i.e.
-    # the balance the solution actually settled on.
     info.update(energy_split(
-        hand, q_ref, freeze_correspondences(hand, q_ref, observations, fc.inside_scale),
+        hand, q_traj, freeze_correspondences(hand, q_traj, observations, fc.inside_scale),
         fc, q_rest=q_rest, lm_scale=fc.landmark_decay ** max(n_outer - 1, 0),
     ))
-    return q_ref, info
+    return info
+
+
+def _window_starts(T: int, W: int, overlap: int) -> list[tuple[int, int]]:
+    """(start, end) spans covering [0, T) with `overlap` shared frames. The last
+    span is pulled back so it is a full W (no runt window) when T >= W."""
+    if T <= W:
+        return [(0, T)]
+    hop = max(1, W - overlap)
+    starts = list(range(0, T - W + 1, hop))
+    if starts[-1] != T - W:
+        starts.append(T - W)
+    return [(s, s + W) for s in starts]
+
+
+def _blend_ramp(n: int) -> np.ndarray:
+    """Raised-cosine 0->1 over n samples (endpoints excluded so both windows keep
+    full authority at their own edge)."""
+    if n <= 1:
+        return np.ones(max(n, 0))
+    i = np.arange(1, n + 1) / (n + 1)
+    return 0.5 - 0.5 * np.cos(np.pi * i)
+
+
+def fit_trajectory_windowed(
+    hand: "hm.CapsuleHand", clouds: Sequence[np.ndarray],
+    weights: Sequence[np.ndarray | None], q_init: np.ndarray, fc: FitConfig,
+    *, landmark_frames: Sequence[Mapping[LM, np.ndarray]] | None = None,
+    landmark_confidence: np.ndarray | None = None, q_rest: np.ndarray | None = None,
+    report=None,
+) -> tuple[np.ndarray, dict]:
+    """Solve the episode as overlapping sliding windows, blended on the manifold.
+
+    Bounds the per-solve cost regardless of recording length, and the windows are
+    independent so they run on a thread pool. ``fc.window <= 0`` or a short
+    episode falls straight through to :func:`fit_trajectory` (unchanged).
+    """
+    import os
+    import pinocchio as pin
+
+    report = report or (lambda **_k: None)
+    q_init = np.asarray(q_init, float)
+    T = len(q_init)
+    W, ov = int(fc.window), max(0, int(fc.window_overlap))
+    if W <= 0 or T <= W or T < 2:
+        return fit_trajectory(
+            hand, clouds, weights, q_init, fc, landmark_frames=landmark_frames,
+            landmark_confidence=landmark_confidence, q_rest=q_rest, report=report,
+        )
+
+    started = time.perf_counter()
+    initial_jerk = _jerk_norm(q_init)
+    spans = _window_starts(T, W, ov)
+
+    def solve(span):
+        s, e = span
+        lf = landmark_frames[s:e] if landmark_frames is not None else None
+        lc = landmark_confidence[s:e] if landmark_confidence is not None else None
+        # windows solve independently from the (already sanitised) warm start;
+        # the overlap blend carries continuity across the seam.
+        return fit_trajectory(
+            hand, list(clouds[s:e]), list(weights[s:e]), q_init[s:e], fc,
+            landmark_frames=lf, landmark_confidence=lc, q_rest=q_rest,
+        )
+
+    # Parallel windows only when BLAS can be held to one thread per worker — else
+    # N workers × an unpinned OpenBLAS pegs every core (env vars are read at
+    # import, too late to set here). threadpoolctl does it at runtime via the
+    # BLAS C API; without it, run sequential.
+    try:
+        from threadpoolctl import threadpool_limits
+    except Exception:  # noqa: BLE001
+        threadpool_limits = None
+
+    want = fc.workers or min(4, max(1, (os.cpu_count() or 2) // 2))
+    n_workers = want if (threadpool_limits is not None and len(spans) > 1) else 1
+    if n_workers == 1 and want > 1 and threadpool_limits is None:
+        logger.warning("hand_fit: threadpoolctl missing — window solves run sequentially")
+
+    limits = threadpool_limits(limits=1) if threadpool_limits is not None else None
+    try:
+        if n_workers > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(n_workers, len(spans))) as ex:
+                win = list(ex.map(solve, spans))
+        else:
+            win = [solve(sp) for sp in spans]
+    finally:
+        if limits is not None:
+            limits.unregister()
+    for k, _ in enumerate(spans):
+        report(stage="hand_fit", frame=k + 1, total=len(spans))
+
+    # stitch on the manifold: verbatim outside overlaps, raised-cosine blend inside
+    nq = q_init.shape[1]
+    q_out = np.empty((T, nq), float)
+    (s0, e0), (q0, _) = spans[0], win[0]
+    q_out[s0:e0] = q0
+    for k in range(1, len(spans)):
+        (sp, ep), (qp, _) = spans[k - 1], win[k - 1]
+        (sc, ec), (qc, _) = spans[k], win[k]
+        lap = ep - sc                     # overlapping frame count
+        if lap > 0:
+            r = _blend_ramp(lap)
+            for i in range(lap):
+                q_out[sc + i] = pin.interpolate(hand.model, q_out[sc + i], qc[i], r[i])
+            q_out[ep:ec] = qc[lap:]
+        else:
+            q_out[sc:ec] = qc
+
+    observations = _make_observations(
+        clouds, weights, landmark_frames, landmark_confidence, hand, fc
+    )
+    q_rest = np.asarray(q_rest if q_rest is not None else pin.neutral(hand.model), float)
+    info = _final_metrics(
+        hand, q_out, observations, fc, q_rest=q_rest, initial_jerk=initial_jerk,
+        n_outer=max(int(i["outer_iterations"]) for _, i in win),
+        total_nfev=sum(int(i["nfev"]) for _, i in win),
+        elapsed_s=time.perf_counter() - started,
+    )
+    info.update({
+        "n_windows": len(spans),
+        "window": W,
+        "window_overlap": ov,
+        "workers": int(n_workers),
+        "worst_window_nfev": max(int(i["nfev"]) for _, i in win),
+        "worst_window_elapsed_s": max(float(i["elapsed_s"]) for _, i in win),
+    })
+    return q_out, info
 
 
 # Single-frame compatibility helpers retain the proven analytic geometry test;
@@ -956,6 +1106,40 @@ def _fill_invalid_initialization(
     return out
 
 
+def _sanitize_warm_start(
+    hand: "hm.CapsuleHand", q_traj: np.ndarray, valid: np.ndarray, mad_k: float = 6.0,
+    hard_jump_m: float = 0.25,
+) -> np.ndarray:
+    """Demote ``valid`` frames whose warm-start wrist position is a local outlier.
+
+    A frame can pass the stability mask yet carry a noisy ``q_from_landmarks``
+    pose whose wrist is metres off its neighbours. ``_fill_invalid_initialization``
+    only touches ``valid=False`` frames, so those spikes seed the solve and — with
+    the ±0.15 m per-iteration wrist bound — survive into the fit. Mark them
+    not-valid so they get re-filled by manifold interpolation from clean
+    neighbours; they stay free variables in the solve.
+    """
+    q_traj = np.asarray(q_traj, float)
+    valid = np.asarray(valid, bool).copy()
+    if valid.sum() < 4:
+        return valid
+    p = q_traj[:, :3]
+    step = np.linalg.norm(np.diff(p, axis=0), axis=1)  # (T-1,)
+    med = np.median(step[np.isfinite(step)]) if np.isfinite(step).any() else 0.0
+    mad = np.median(np.abs(step - med)) + 1e-9
+    thr = max(med + mad_k * mad, hard_jump_m)
+    # a frame is a spike if both the step into it and out of it exceed thr
+    spike = np.zeros(len(q_traj), bool)
+    spike[1:-1] = (step[:-1] > thr) & (step[1:] > thr)
+    spike[0] = len(step) and step[0] > thr and step[min(1, len(step) - 1)] > thr
+    spike[-1] = len(step) and step[-1] > thr
+    n = int((spike & valid).sum())
+    if n:
+        logger.info("hand_fit: %d valid frame(s) demoted as warm-start wrist spikes", n)
+    valid[spike] = False
+    return valid
+
+
 def refine_cln(ep, cfg=None, report=None) -> str:
     """Fit a complete prepared episode and append new, non-destructive keys."""
     report = report or (lambda **_k: None)
@@ -993,7 +1177,12 @@ def refine_cln(ep, cfg=None, report=None) -> str:
 
     q_landmark = np.asarray([hm.q_from_landmarks(hand, frame) for frame in frames])
     landmark_jerk = _jerk_norm(q_landmark)
-    q_init = _fill_invalid_initialization(hand, q_landmark, valid)
+    # A `valid` frame whose landmark warm start puts the wrist metres off its
+    # neighbours is a spike source — demote it for the warm start and drop its
+    # landmark anchor. Depth for that frame is still used (ROI built below from
+    # the interpolated pose); it stays a free variable in the solve.
+    valid_ws = _sanitize_warm_start(hand, q_landmark, valid, fc.warm_start_mad_k)
+    q_init = _fill_invalid_initialization(hand, q_landmark, valid_ws)
     # Calibrated rest is the robust median finger posture of the open frames.
     q_rest = q_init[calibration_indices[0]].copy()
     if len(calibration_frames):
@@ -1023,15 +1212,15 @@ def refine_cln(ep, cfg=None, report=None) -> str:
         # construction indexes by canonical landmark id.
         canonical = np.zeros((T, 21), float)
         canonical[:, landmark_ids] = confidence
-        canonical[~valid] = 0.0
+        canonical[~valid_ws] = 0.0
         confidence = canonical
     else:
         # Historical cln files only have per-frame omega. It is a less precise
         # fallback, but still avoids treating invalid frames as observations.
         frame_conf = np.asarray(data.get("omega", np.ones(T)), float)
         confidence = np.repeat(np.clip(frame_conf, 0.0, 1.0)[:, None], 21, axis=1)
-        confidence[~valid] = 0.0
-    q_fit, info = fit_trajectory(
+        confidence[~valid_ws] = 0.0
+    q_fit, info = fit_trajectory_windowed(
         hand, clouds, weights, q_init, fc, landmark_frames=frames,
         landmark_confidence=confidence, q_rest=q_rest, report=report,
     )

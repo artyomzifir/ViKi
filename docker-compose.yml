@@ -32,8 +32,19 @@ x-common: &common
     - PYTHONPATH=/app
     - GIT_PYTHON_REFRESH=quiet
     - DISPLAY=${DISPLAY}
+    # Cap BLAS/OpenMP so no single numpy/scipy stage (hand_fit lsmr, retarget IK)
+    # pegs every core — read at library load, so this is the reliable lever.
+    # hand_fit's window pool pins to 1/worker on top of this (threadpoolctl).
+    - OMP_NUM_THREADS=6
+    - OPENBLAS_NUM_THREADS=6
+    - MKL_NUM_THREADS=6
+    - NUMEXPR_NUM_THREADS=6
+    # LIBGL_ALWAYS_SOFTWARE governs GL *rendering* (k4a depth engine, viewer),
+    # NOT CUDA compute — leave it; RTMPose's CUDA EP is unaffected.
     - LIBGL_ALWAYS_SOFTWARE=1
     - GALLIUM_DRIVER=llvmpipe
+    - NVIDIA_VISIBLE_DEVICES=all
+    - NVIDIA_DRIVER_CAPABILITIES=compute,utility
   devices:
     - /dev/dri:/dev/dri
 

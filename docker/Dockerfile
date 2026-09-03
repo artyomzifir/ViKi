@@ -63,12 +63,23 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN mkdir -p viki && touch viki/__init__.py
 RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps -e .
 
-# ── Perception backend: RTMPose-Hand via rtmlib on ONNX Runtime ───────────────
+# ── Perception backend: RTMPose-Hand via rtmlib on ONNX Runtime (CUDA) ────────
 # rtmlib hard-depends on opencv-python, which would fight the
 # opencv-python-headless pinned in pyproject.toml — install it without deps and
-# bring its real needs (onnxruntime, tqdm; cv2 comes from headless) explicitly.
+# bring its real needs (onnxruntime-gpu, tqdm; cv2 comes from headless) explicitly.
+#
+# GPU: onnxruntime-gpu >= 1.22 ships CUDA 12.8 wheels (needed for Blackwell /
+# sm_120 like the RTX 5060 Ti) and pulls the nvidia-*-cu12 runtime wheels as
+# deps, so no CUDA base image. The driver is injected by nvidia-container-toolkit
+# (`gpus: all`). _pick_device() in backends/rtmpose.py verifies the EP actually
+# initialises and falls back to CPU otherwise.
+#   Fallbacks if the plain wheel doesn't cover sm_120:
+#     --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+#   or base image nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install "onnxruntime>=1.17" "tqdm>=4.66" && \
+    pip install "onnxruntime-gpu>=1.22" "tqdm>=4.66" \
+        nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cublas-cu12 \
+        nvidia-cufft-cu12 nvidia-curand-cu12 && \
     pip install --no-deps rtmlib
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
