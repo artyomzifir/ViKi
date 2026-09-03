@@ -110,6 +110,10 @@ class PreparationPipeline:
         # timestamps, so cln.npz shares one index with the point cloud. None →
         # fuse onto the union of the per-camera detection timestamps.
         self.grid_ts: np.ndarray | None = None
+        # Multi-view triangulation output (raw/joints3d.npz). When set and
+        # PERCEPTION_FUSE_MODE == "triangulate", fusion uses these world-frame
+        # joints + their per-joint quality instead of averaging per-camera XYZ.
+        self.joints3d_path: Path | None = None
         # No mkdir here: the episode flow (prepare_episode) overrides recs_dir /
         # smoothed_dir to a tempdir right after construction, so eagerly creating
         # data/skeleton_{recs,smoothed}/ just litters (root-owned under Docker).
@@ -226,13 +230,37 @@ class PreparationPipeline:
         for dev in trajectories:
             raw_filled[dev] = interpolate_nans(trajectories[dev], max_gap=self.interp_max_gap)
 
-        # 2. Fusion: confidence-weighted average across cameras onto a common
-        #    grid (paper §3.5, eq. 2 — weights from rec.npz["confidence"]).
-        from viki.prepare.fuse import fuse_trajectories
+        # 2. Fusion. Two modes (PERCEPTION_FUSE_MODE, kept switchable for A/B):
+        #    - "xyz_mean" (legacy): confidence-weighted average of the per-camera
+        #      monocular reconstructions onto a common grid (paper §3.5 eq. 2).
+        #    - "triangulate": use raw/joints3d.npz — joints solved by multi-view
+        #      triangulation directly in the world frame — snapped onto the grid;
+        #      the per-joint triangulation `quality` becomes landmark_confidence.
+        from viki.prepare.fuse import fuse_trajectories, snap_to_grid
 
-        raw_fused, grid = fuse_trajectories(
-            raw_filled, ts_map, landmark_ids, weights=conf_map, grid=self.grid_ts
-        )
+        _mode = str(getattr(config, "PERCEPTION_FUSE_MODE", "xyz_mean"))
+        _tri = None
+        if _mode == "triangulate" and self.joints3d_path and Path(self.joints3d_path).exists():
+            _tri = np.load(self.joints3d_path)
+        elif _mode == "triangulate":
+            logger.warning("prepare: PERCEPTION_FUSE_MODE=triangulate but no "
+                           "joints3d.npz — falling back to xyz_mean")
+
+        tri_lm_conf = None
+        if _tri is not None:
+            grid = (self.grid_ts if self.grid_ts is not None
+                    else np.asarray(sorted(_tri["timestamps"]), dtype=np.int64))
+            raw_fused = snap_to_grid(_tri["xyz"].astype(np.float32), _tri["timestamps"], grid)
+            tri_lm_conf = np.nan_to_num(
+                snap_to_grid(_tri["quality"].astype(np.float32), _tri["timestamps"], grid), nan=0.0
+            )
+            landmark_ids = np.arange(_tri["xyz"].shape[1], dtype=landmark_ids.dtype)
+            logger.info("prepare: fused from triangulation (%d frames, %d joints)",
+                        len(grid), landmark_ids.size)
+        else:
+            raw_fused, grid = fuse_trajectories(
+                raw_filled, ts_map, landmark_ids, weights=conf_map, grid=self.grid_ts
+            )
 
         if grid.size == 0:
             raise ValueError("Recording contains no valid trajectories.")
@@ -254,11 +282,14 @@ class PreparationPipeline:
         #     landmarks of the max-over-cameras weight (paper §3.5, eq. 5).
         _wf = [int(LM.WRIST), int(LM.INDEX_MCP), int(LM.MIDDLE_MCP), int(LM.PINKY_MCP)]
         _cols = [np.where(landmark_ids == lm)[0][0] for lm in _wf if lm in landmark_ids]
-        grid_conf = np.zeros((len(grid), points.shape[1]), dtype=np.float64)
-        for dev, cam_conf in conf_map.items():
-            for k, t in enumerate(ts_map[dev]):
-                gi = int(np.argmin(np.abs(grid - t)))
-                grid_conf[gi] = np.maximum(grid_conf[gi], cam_conf[k])
+        if tri_lm_conf is not None:
+            grid_conf = tri_lm_conf.astype(np.float64)   # per-joint triangulation quality
+        else:
+            grid_conf = np.zeros((len(grid), landmark_ids.size), dtype=np.float64)
+            for dev, cam_conf in conf_map.items():
+                for k, t in enumerate(ts_map[dev]):
+                    gi = int(np.argmin(np.abs(grid - t)))
+                    grid_conf[gi] = np.maximum(grid_conf[gi], cam_conf[k])
         omega = (
             grid_conf[:, _cols].mean(axis=1)
             if _cols
@@ -430,6 +461,24 @@ def prepare_episode(
                     pp.grid_ts = np.asarray(sorted(_sync), dtype=np.int64)
             except Exception:  # noqa: BLE001 — fall back to the union grid
                 pass
+
+        # Multi-view triangulation (Stage 3): if enabled, make sure
+        # raw/joints3d.npz is current before fusion reads it.
+        if str(getattr(config, "PERCEPTION_FUSE_MODE", "xyz_mean")) == "triangulate":
+            j3d = ep.raw_dir / "joints3d.npz"
+            obs = ep.raw_dir / "observations.npz"
+            try:
+                if obs.exists() and (
+                    not j3d.exists() or j3d.stat().st_mtime < obs.stat().st_mtime
+                ):
+                    from viki.perception.triangulate import triangulate_episode
+
+                    triangulate_episode(ep.raw_dir)
+                if j3d.exists():
+                    pp.joints3d_path = j3d
+            except Exception:  # noqa: BLE001 — fusion falls back to xyz_mean
+                logger.warning("prepare %s: triangulation step failed", ep.id, exc_info=True)
+
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
 

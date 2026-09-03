@@ -43,6 +43,7 @@ PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames u
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
 PERCEPTION_HAND_FIT: bool  # run trajectory-level capsule hand fit at the end of prepare
 PERCEPTION_SAVE_OBSERVATIONS: bool  # extract also writes raw/observations.npz (2-D obs for multi-view triangulation)
+PERCEPTION_FUSE_MODE: str          # prepare fusion: 'xyz_mean' (legacy per-camera average) | 'triangulate' (raw/joints3d.npz)
 TRI_MIN_SCORE: float            # multi-view triangulation: min per-landmark detector score to use a view
 TRI_MIN_RAY_DEG: float          # drop a camera pair whose rays subtend less than this (ill-conditioned)
 TRI_REPROJ_INLIER_PX: float     # reprojection error below this = inlier view; also least_squares f_scale
@@ -222,6 +223,7 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_CONF_ALPHA": 1.0,
     "PERCEPTION_HAND_FIT": True,
     "PERCEPTION_SAVE_OBSERVATIONS": True,
+    "PERCEPTION_FUSE_MODE": "xyz_mean",
     "TRI_MIN_SCORE": 0.3,
     "TRI_MIN_RAY_DEG": 5.0,
     "TRI_REPROJ_INLIER_PX": 4.0,
