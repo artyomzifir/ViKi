@@ -427,3 +427,17 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .perc-bar { width: 60px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .perc-bar i { display: block; height: 100%; background: var(--accent); }
 .perc-job button { padding: 1px 5px; font-size: 10px; }
+
+/* ── calibration setup wizard (S7) ──────────────────────────────────── */
+.calib-wizard .wiz-step { border-top: 1px solid var(--border); padding-top: 7px; margin-top: 3px; }
+.calib-wizard .wiz-step:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+.wiz-head { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.wiz-head .wiz-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.wiz-state { margin-left: auto; font-size: 10px; color: var(--muted); }
+.wiz-state.ok { color: #4ade80; } .wiz-state.warn { color: #fbbf24; } .wiz-state.bad { color: #f87171; }
+.wiz-crit { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+.wiz-crit .crit { display: flex; justify-content: space-between; gap: 8px; font-size: 10px;
+  padding: 2px 6px; border-radius: 4px; background: var(--bg); color: var(--muted); }
+.wiz-crit .crit.ok { color: #4ade80; }
+.wiz-crit .crit.bad { color: #f87171; }
+.wiz-crit .crit.green { color: #4ade80; } .wiz-crit .crit.amber { color: #fbbf24; } .wiz-crit .crit.red { color: #f87171; }

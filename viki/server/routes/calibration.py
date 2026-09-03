@@ -747,6 +747,23 @@ def _grab_k4a_best_effort(name: str, mgr: CameraManager) -> None:
 
 def _grab_background_best_effort(name: str, mgr: CameraManager) -> None:
     try:
+        # Prefer an explicit Background step (board removed) captured this session
+        # over re-grabbing now (board may be back in frame for the anchor).
+        from viki.calibration import captures
+
+        live = captures.ROOT / captures.LIVE
+        staged = sorted(live.glob("*_bg.npz")) if live.is_dir() else []
+        if staged:
+            import numpy as np
+
+            depths = {}
+            for p in staged:
+                dev = p.name[: -len("_bg.npz")]
+                with np.load(p) as z:
+                    depths[dev] = z["depth_mm"].astype(np.float32)
+            _presets.attach_background(name, depths)
+            logger.info("preset %r: folded staged background for %s", name, sorted(depths))
+            return
         depths = _collect_background(mgr)
         if depths:
             _presets.attach_background(name, depths)
@@ -765,6 +782,13 @@ def _grab_background_best_effort(name: str, mgr: CameraManager) -> None:
 def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
     """Median depth (mm) over ~``n`` frames per running camera — the static
     empty scene captured during calibration. 0 stays 0 (no IR reading)."""
+    return {d: med for d, (med, _v, _f) in _collect_background_masked(mgr, n).items()}
+
+
+def _collect_background_masked(mgr: CameraManager, n: int = 30) -> dict:
+    """``{dev: (median_mm, valid_mask, invalid_frac)}``. A pixel is *valid* when
+    at least a third of the frames gave it a reading; invalid pixels are left 0
+    and must not feed the subtraction."""
     import time
 
     import numpy as np
@@ -780,12 +804,43 @@ def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
     for dev, frames in stacks.items():
         if not frames:
             continue
-        arr = np.stack(frames)                 # (F, H, W) mm, 0 = missing
+        arr = np.stack(frames).astype(np.float32)     # (F, H, W) mm, 0 = missing
+        hits = (arr > 0).sum(axis=0)
+        valid = hits >= max(1, len(frames) // 3)
         arr[arr <= 0] = np.nan
         with np.errstate(all="ignore"):
-            med = np.nanmedian(arr, axis=0)
-        out[dev] = np.nan_to_num(med, nan=0.0).astype(np.float32)
+            med = np.nan_to_num(np.nanmedian(arr, axis=0), nan=0.0).astype(np.float32)
+        med[~valid] = 0.0
+        out[dev] = (med, valid, float((~valid).mean()))
     return out
+
+
+@router.post("/background")
+async def capture_background(
+    cal: CalibrationManager = Depends(get_calibrator),
+    mgr: CameraManager = Depends(get_manager),
+):
+    """Background step (spec §8): empty scene, board removed. Writes a per-camera
+    depth plate + validity mask to the live calibration dir; save-as folds it
+    into the preset. Returns the invalid-pixel fraction per camera."""
+    if not mgr.active_device_ids():
+        raise HTTPException(400, "no active cameras")
+    from viki.calibration import captures
+    from viki.calibration.artifacts import write_background
+
+    got = await asyncio.to_thread(_collect_background_masked, mgr)
+    if not got:
+        raise HTTPException(422, "no depth frames — is depth streaming?")
+    live = captures.ROOT / captures.LIVE
+    live.mkdir(parents=True, exist_ok=True)
+    plates = {d: (med, valid) for d, (med, valid, _f) in got.items()}
+    import numpy as np
+
+    for d, (med, valid) in plates.items():
+        np.savez_compressed(live / f"{d}_bg.npz", schema=np.int32(2),
+                            depth_mm=med, valid=valid)
+    return {d: {"invalid_frac": round(f, 4), "shape": list(med.shape)}
+            for d, (med, _v, f) in got.items()}
 
 
 @router.post("/activate")

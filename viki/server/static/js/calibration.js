@@ -99,20 +99,49 @@ function template() {
         </div>
       </section>
 
-      <section class="calib-sec">
-        <div class="calib-sec-title">Calibrate</div>
-        <div class="hint">Start every camera (top bar) so each one sees the board.</div>
-        <button id="calib-start-session" class="primary">1 · Start session</button>
-        <button id="calib-capture-all" class="primary">2 · Capture all</button>
-        <div class="hint">3–10×, keep the board still between captures.</div>
-        <button id="calib-solve" class="primary">3 · Calibrate extrinsics</button>
+      <section class="calib-sec calib-wizard">
+        <div class="calib-sec-title">Setup steps</div>
+
+        <div class="wiz-step" data-step="calibrate">
+          <div class="wiz-head"><span class="wiz-dot"></span><b>1 · Calibrate</b>
+            <span class="wiz-state" data-role="st-calibrate">—</span></div>
+          <div class="hint">Start every camera (top bar). Then move the board
+            through <b>different</b> poses — tilt it, near &amp; far — and Capture
+            each. A pose too close to one already taken is refused.</div>
+          <button id="calib-start-session" class="primary">Start session</button>
+          <button id="calib-capture-all" class="primary">Capture set</button>
+          <div id="calib-readiness" class="wiz-crit"></div>
+          <button id="calib-solve" class="primary" disabled>Solve (bundle)</button>
+        </div>
+
+        <div class="wiz-step" data-step="anchor">
+          <div class="wiz-head"><span class="wiz-dot"></span><b>2 · Anchor</b>
+            <span class="wiz-state" data-role="st-anchor">—</span></div>
+          <div class="hint">Lay the board flat on the marked <b>home</b> spot.
+            One frame — it defines the world origin (viz / workspace only).</div>
+          <button id="calib-anchor" class="primary" disabled>Capture anchor</button>
+        </div>
+
+        <div class="wiz-step" data-step="background">
+          <div class="wiz-head"><span class="wiz-dot"></span><b>3 · Background</b>
+            <span class="wiz-state" data-role="st-background">—</span></div>
+          <div class="hint"><b>Remove the board</b> and step out of frame.</div>
+          <button id="calib-background" class="primary" disabled>Grab background</button>
+        </div>
+
+        <div class="wiz-step" data-step="validate">
+          <div class="wiz-head"><span class="wiz-dot"></span><b>4 · Validate</b>
+            <span class="wiz-state" data-role="st-validate">—</span></div>
+          <div class="hint">Empty scene. Checks the per-camera clouds actually
+            overlap. Recording is blocked on a <b>red</b> verdict.</div>
+          <button id="calib-validate" class="primary" disabled>Run validation</button>
+          <div id="calib-validation" class="wiz-crit"></div>
+        </div>
+
         <div class="inline-add">
           <input type="text" id="calib-preset-name" placeholder="preset name">
-          <button id="calib-preset-save" class="primary">4 · Save</button>
+          <button id="calib-preset-save" class="primary">Save preset</button>
         </div>
-        <div class="hint">Save also grabs the Kinects' depth↔colour calibration and
-          the empty-scene background depth (the scene as it sits now).
-          Delete bad sets on the left before step 3.</div>
         <button id="calib-clear" class="danger">Clear samples</button>
       </section>
     </aside>
@@ -205,26 +234,118 @@ async function captureAll() {
   try {
     const r = await api('POST', '/api/calibration/capture');
     if (r.captured) log(`Captured set #${r.index}`, 'ok');
+    else if (r.rejected) log(`Set refused — ${r.reason || `too close to set #${r.conflict}`}`, 'error');
     else log(`Board not seen by: ${(r.missing || []).join(', ') || 'a camera'} — set discarded`, 'error');
   } catch (e) { log('Capture failed: ' + e, 'error'); }
   refreshSets();
+  refreshSetup();
 }
 
 async function solve() {
-  log('Calibrating extrinsics…');
+  log('Bundle solve…');
   try {
-    await api('POST', '/api/calibration/extrinsics');
+    const r = await api('POST', '/api/calibration/solve');
+    const rms = Object.entries(r.solve?.rms_reproj_px || {})
+      .map(([d, v]) => `${d} ${(+v).toFixed(2)}px`).join(', ');
+    log(`Extrinsics solved (ref ${r.reference_device}; ${rms})`
+      + (r.solve?.degenerate ? ' — ⚠ DEGENERATE, collect more varied poses' : ''),
+      r.solve?.degenerate ? 'error' : 'ok');
+    const sc = r.solve?.stereo_check;
+    if (sc && sc.ran && !sc.agrees)
+      log(`stereoCalibrate disagrees by ${sc.delta_translation_mm}mm / ${sc.delta_rotation_deg}° — check the solve`, 'error');
     await Promise.all(Object.keys(state).map(async id => {
-      try { await api('POST', `/api/skeleton/capture_base/${id}`); }
-      catch (e) { log(`Base depth capture failed for ${id}: ${e}`, 'error'); }
+      try { await api('POST', `/api/skeleton/capture_base/${id}`); } catch (_e) { }
     }));
-    log('Extrinsics solved — name it below and Save to keep it as a preset', 'ok');
-    presetChoice = '';   // park the picker on "current, unsaved" — this is a fresh solve
-    view?.querySelector('#calib-preset-name')?.focus();
+    presetChoice = '';
     refreshPresets();
   } catch (e) {
-    log('Extrinsics calibration failed: ' + e, 'error');
+    log('Bundle solve failed: ' + e, 'error');
   }
+  refreshSetup();
+}
+
+async function captureAnchor() {
+  try {
+    const r = await api('POST', '/api/calibration/anchor');
+    log(`World anchor captured (seen by ${Object.keys(r.observations || {}).join(', ')})`, 'ok');
+  } catch (e) { log('Anchor failed: ' + e, 'error'); }
+  refreshSetup();
+}
+
+async function grabBackground() {
+  log('Grabbing empty-scene background…');
+  try {
+    const r = await api('POST', '/api/calibration/background');
+    const worst = Math.max(0, ...Object.values(r).map(v => v.invalid_frac));
+    log(`Background grabbed (worst ${(worst * 100).toFixed(1)}% invalid pixels)`,
+      worst > 0.25 ? 'error' : 'ok');
+  } catch (e) { log('Background grab failed: ' + e, 'error'); }
+  refreshSetup();
+}
+
+async function runValidate() {
+  log('Validating cloud agreement…');
+  try {
+    const r = await api('POST', '/api/calibration/validate');
+    renderValidation(r);
+    log(`Validation: ${r.verdict.toUpperCase()}`,
+      r.verdict === 'green' ? 'ok' : r.verdict === 'amber' ? 'warn' : 'error');
+  } catch (e) { log('Validation failed: ' + e, 'error'); }
+  refreshSetup();
+}
+
+// ── setup-step state ────────────────────────────────────────────────────
+
+function setStepState(step, txt, cls) {
+  const el = view?.querySelector(`[data-role="st-${step}"]`);
+  if (el) { el.textContent = txt; el.className = 'wiz-state ' + (cls || ''); }
+}
+
+function renderReadiness(rd) {
+  const box = view?.querySelector('#calib-readiness');
+  if (!box) return;
+  if (!rd || !rd.criteria) { box.innerHTML = ''; return; }
+  box.innerHTML = rd.criteria.map(c =>
+    `<div class="crit ${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓' : '·'} ${c.name.replace(/_/g, ' ')}
+      <span>${c.value} / ${c.need}</span></div>`).join('');
+  const solveBtn = view.querySelector('#calib-solve');
+  if (solveBtn) solveBtn.disabled = !rd.ready;
+}
+
+function renderValidation(v) {
+  const box = view?.querySelector('#calib-validation');
+  if (!box) return;
+  if (!v || !v.pairs) { box.innerHTML = ''; return; }
+  box.innerHTML =
+    `<div class="crit ${v.verdict}">verdict <b>${v.verdict}</b></div>` +
+    v.pairs.map(p => p.skipped
+      ? `<div class="crit bad">${p.a}–${p.b}: ${p.reason}</div>`
+      : `<div class="crit ${p.verdict}">${p.a}–${p.b}: NN ${p.nn_median_mm}mm ·
+         ICP ${p.icp_translation_mm}mm / ${p.icp_rotation_deg}°</div>`).join('');
+}
+
+async function refreshSetup() {
+  if (!view || openedPreset) return;
+  // readiness (needs a live session)
+  let rd = null;
+  try { rd = await api('GET', '/api/calibration/readiness'); } catch (_e) { }
+  renderReadiness(rd);
+  setStepState('calibrate',
+    rd ? (rd.ready ? 'ready to solve' : `${rd.n_sets} sets`) : 'no session',
+    rd?.ready ? 'ok' : '');
+
+  let anchor = null;
+  try { anchor = await api('GET', '/api/calibration/anchor'); } catch (_e) { }
+  setStepState('anchor', anchor ? 'captured' : 'not captured', anchor ? 'ok' : '');
+  view.querySelector('#calib-anchor').disabled = false;
+
+  let val = null;
+  try { val = await api('GET', '/api/calibration/validate'); } catch (_e) { }
+  renderValidation(val);
+  setStepState('validate', val ? val.verdict : 'not run',
+    val ? (val.verdict === 'green' ? 'ok' : val.verdict === 'red' ? 'bad' : 'warn') : '');
+  view.querySelector('#calib-background').disabled = false;
+  view.querySelector('#calib-validate').disabled = false;
 }
 
 async function clearSamples() {
@@ -442,7 +563,10 @@ export function mount(container) {
   });
   onCamerasChanged = () => renderCards();
   document.addEventListener('cameras:changed', onCamerasChanged);
-  countPoll = setInterval(() => { if (!openedPreset) refreshSets(); }, 1500);
+  refreshSetup();
+  countPoll = setInterval(() => {
+    if (!openedPreset) { refreshSets(); refreshSetup(); }
+  }, 1800);
 }
 
 export function unmount() {
@@ -468,6 +592,9 @@ function onClick(e) {
     case 'calib-start-session': startSession(); break;
     case 'calib-capture-all': captureAll(); break;
     case 'calib-solve': solve(); break;
+    case 'calib-anchor': captureAnchor(); break;
+    case 'calib-background': grabBackground(); break;
+    case 'calib-validate': runValidate(); break;
     case 'calib-clear': clearSamples(); break;
     case 'calib-preset-save': savePreset(); break;
     case 'calib-preset-open': openPreset(); break;

@@ -271,8 +271,22 @@ async function record() {
     return;
   }
   let job_id;
-  try { ({ job_id } = await api('POST', '/api/record/start', body)); }
-  catch (e) { log('Record failed: ' + e, 'error'); return; }
+  try {
+    ({ job_id } = await api('POST', '/api/record/start', body));
+  } catch (e) {
+    const msg = String(e);
+    if (/record-ready|amber|red|world anchor|validation|background|no active calibration/i.test(msg)) {
+      if (/amber/i.test(msg) && confirm(`${msg}\n\nRecord anyway on the amber verdict?`)) {
+        try { ({ job_id } = await api('POST', '/api/record/start', { ...body, allow_amber: true })); }
+        catch (e2) { log('Record failed: ' + e2, 'error'); return; }
+      } else {
+        log('Blocked by the calibration setup gate — finish the steps on the Calibration tab: ' + msg, 'error');
+        return;
+      }
+    } else {
+      log('Record failed: ' + e, 'error'); return;
+    }
+  }
   log(`Recording ${body.seconds}s into "${body.dataset}" (${job_id})`);
   recording = true;
   cameras.setRecording(true);
