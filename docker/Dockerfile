@@ -68,19 +68,23 @@ RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps -e .
 # opencv-python-headless pinned in pyproject.toml — install it without deps and
 # bring its real needs (onnxruntime-gpu, tqdm; cv2 comes from headless) explicitly.
 #
-# GPU: onnxruntime-gpu >= 1.22 ships CUDA 12.8 wheels (needed for Blackwell /
-# sm_120 like the RTX 5060 Ti) and pulls the nvidia-*-cu12 runtime wheels as
-# deps, so no CUDA base image. The driver is injected by nvidia-container-toolkit
-# (`gpus: all`). _pick_device() in backends/rtmpose.py verifies the EP actually
-# initialises and falls back to CPU otherwise.
-#   Fallbacks if the plain wheel doesn't cover sm_120:
-#     --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
-#   or base image nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04.
+# GPU: onnxruntime-gpu ships CUDA 12 wheels (sm_120 / Blackwell OK) and the
+# nvidia-*-cu12 runtime wheels carry the CUDA/cuDNN .so files, so no CUDA base
+# image. The driver is injected by nvidia-container-toolkit (`gpus: all`).
+# `onnx` is for _pick_device()'s CUDA-EP probe session.
+#
+# CRITICAL: libonnxruntime_providers_cuda.so links libcublas.so.12 / libcudnn.so.9
+# / libcudart.so.12 etc. by SONAME, and the nvidia wheels drop those under
+# site-packages/nvidia/*/lib which is NOT on the default loader path — without
+# the ldconfig entry below the CUDA EP fails to load and ORT *silently* falls
+# back to CPU. (rtmpose.py also calls onnxruntime.preload_dlls() as a backstop.)
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install "onnxruntime-gpu>=1.22" "tqdm>=4.66" \
+    pip install "onnxruntime-gpu>=1.22" "tqdm>=4.66" onnx \
         nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cublas-cu12 \
         nvidia-cufft-cu12 nvidia-curand-cu12 && \
-    pip install --no-deps rtmlib
+    pip install --no-deps rtmlib && \
+    ls -d /usr/local/lib/python3.*/dist-packages/nvidia/*/lib \
+        > /etc/ld.so.conf.d/nvidia-pip.conf && ldconfig
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh

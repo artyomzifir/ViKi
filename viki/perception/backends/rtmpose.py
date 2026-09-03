@@ -37,6 +37,13 @@ def _pick_device() -> str:
         import onnxruntime as ort
     except Exception:  # noqa: BLE001
         return "cpu"
+    # nvidia pip wheels drop libcublas/libcudnn/… where the loader can't see
+    # them; preload_dlls() adds them explicitly (the image's ldconfig entry is
+    # the primary fix, this is the backstop). Idempotent, no-op on old ORT.
+    try:
+        ort.preload_dlls()
+    except Exception:  # noqa: BLE001
+        pass
     if "CUDAExecutionProvider" not in ort.get_available_providers():
         return "cpu"
     try:
