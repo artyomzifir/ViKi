@@ -65,6 +65,7 @@ PERCEPTION_HAND_FIT_WINDOW: int  # frames per sliding window; 0 = whole-episode 
 PERCEPTION_HAND_FIT_WINDOW_OVERLAP: int  # overlapping frames blended between windows
 PERCEPTION_HAND_FIT_WORKERS: int  # window-solver threads; 0 = auto (min(4, cpu/2))
 PERCEPTION_HAND_FIT_WARM_START_MAD_K: float  # wrist warm-start spike gate (robust MAD units)
+PERCEPTION_HAND_FIT_DEADLINE_S: float  # wall-clock guard per fit_trajectory call; 0 = off
 KINECT_SYNC: dict  # {"master": "kinect_0", "subordinates": [...], "subordinate_delay_us": 160}; {} = software sync only
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
@@ -220,6 +221,7 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_WINDOW_OVERLAP": 30,
     "PERCEPTION_HAND_FIT_WORKERS": 0,
     "PERCEPTION_HAND_FIT_WARM_START_MAD_K": 6.0,
+    "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
 }

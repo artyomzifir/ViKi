@@ -627,3 +627,16 @@ def test_sanitize_warm_start_demotes_a_wrist_spike():
     out = hf._sanitize_warm_start(hand, q, valid, mad_k=6.0)
     assert out[7] == False           # the spike is demoted
     assert out.sum() == T - 1        # nothing else touched
+
+
+def test_fit_trajectory_honours_the_wall_clock_deadline():
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    true_q = _linear_q_trajectory(hand, T=8, step=0.01)
+    clouds = [_sample_cloud(hand, q, per_capsule=6, noise=0.0015, seed=t)
+              for t, q in enumerate(true_q)]
+    fc = hf.FitConfig(min_points=10, max_points=120, outer_iterations=4, max_nfev=50,
+                      w_landmark=0.0, w_posture=0.0, deadline_s=1e-4)  # trips on the 1st eval
+    q_fit, info = hf.fit_trajectory(hand, clouds, [None] * len(clouds), true_q.copy(), fc)
+    assert q_fit.shape == true_q.shape          # returns the last iterate, does not raise
+    assert info["outer_iterations"] == 0        # broke before completing an outer pass
+    assert "elapsed_s" in info and "jerk_after_m" in info

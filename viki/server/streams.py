@@ -148,6 +148,11 @@ def marked_camera_stream(
                 if worker is not None:
                     break
         if worker is None:
+            # camera_stream returned without a worker appearing → the device
+            # stopped. End the response instead of spinning this generator.
+            if device_id not in mgr.active_device_ids():
+                return
+            time.sleep(STREAM_IDLE_SLEEP)
             continue
         frame = mgr.latest_frame(device_id)
         if frame is None: # I think it's impossible

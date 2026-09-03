@@ -37,6 +37,11 @@ from viki.perception import hand_model as hm
 logger = logging.getLogger(__name__)
 
 
+class _FitDeadline(Exception):
+    """Raised from the residual callback when a per-solve wall-clock budget is
+    exceeded, so one pathological episode can't tie up a core indefinitely."""
+
+
 @dataclass
 class FitConfig:
     """All trajectory-fit tunables (translation is metres, angles radians)."""
@@ -67,6 +72,7 @@ class FitConfig:
     window_overlap: int = 30    # overlapping frames blended between windows
     workers: int = 0            # window-solver threads; 0 = auto (min(4, cpu/2))
     warm_start_mad_k: float = 6.0  # wrist warm-start outlier gate (robust MAD units)
+    deadline_s: float = 120.0   # wall-clock guard per fit_trajectory call; 0 = off
 
     @classmethod
     def from_config(cls, cfg=None) -> "FitConfig":
@@ -100,6 +106,7 @@ class FitConfig:
             window_overlap=gi("PERCEPTION_HAND_FIT_WINDOW_OVERLAP", 30),
             workers=gi("PERCEPTION_HAND_FIT_WORKERS", 0),
             warm_start_mad_k=gf("PERCEPTION_HAND_FIT_WARM_START_MAD_K", 6.0),
+            deadline_s=gf("PERCEPTION_HAND_FIT_DEADLINE_S", 120.0),
         )
 
 
@@ -638,6 +645,8 @@ def fit_trajectory(
         cache: dict[bytes, tuple[np.ndarray, object]] = {}
 
         def evaluate(x):
+            if fc.deadline_s and time.perf_counter() - started > fc.deadline_s:
+                raise _FitDeadline
             key = np.asarray(x, float).tobytes()
             if key not in cache:
                 if len(cache) > 3:
@@ -653,14 +662,21 @@ def fit_trajectory(
         sparsity = batch_jac_sparsity(hand, q_ref, frozen, fc, q_rest=q_rest,
                                       lm_scale=lm_scale)
         robust_data_weights = _data_row_weights(hand, frozen, fc, lm_scale)
-        result = least_squares(
-            lambda x: evaluate(x)[0], np.zeros(T * nv),
-            jac=lambda x: evaluate(x)[1], jac_sparsity=sparsity,
-            bounds=(lower, upper), method="trf", tr_solver="lsmr",
-            loss=_data_huber_loss(robust_data_weights),
-            f_scale=fc.huber_delta_m, x_scale="jac",
-            max_nfev=fc.max_nfev,
-        )
+        try:
+            result = least_squares(
+                lambda x: evaluate(x)[0], np.zeros(T * nv),
+                jac=lambda x: evaluate(x)[1], jac_sparsity=sparsity,
+                bounds=(lower, upper), method="trf", tr_solver="lsmr",
+                loss=_data_huber_loss(robust_data_weights),
+                f_scale=fc.huber_delta_m, x_scale="jac",
+                max_nfev=fc.max_nfev,
+            )
+        except _FitDeadline:
+            logger.warning(
+                "hand_fit: %.0fs deadline hit at outer %d/%d — using the last iterate",
+                fc.deadline_s, outer + 1, fc.outer_iterations,
+            )
+            break
         step = result.x.reshape(T, nv)
         q_new = np.asarray([pin.integrate(hand.model, q_ref[t], step[t]) for t in range(T)])
         step_norm = float(np.sqrt(np.mean(step ** 2)))

@@ -5,16 +5,11 @@
 
 set -e
 
-# DRI access for Kinect depth engine (OpenGL via llvmpipe)
-chmod a+rw /dev/dri/renderD* 2>/dev/null || true
-chmod a+rw /dev/dri/card*    2>/dev/null || true
-
-# USB access for cameras
-chmod a+rw /dev/bus/usb/*/*  2>/dev/null || true
-
-# Increase USB DMA memory limit for multiple high-bandwidth devices (Kinect x2)
-# errno=12 (ENOMEM) fix
-echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb 2>/dev/null || true
+# Loosen node perms in case the host udev rules didn't fire (harmless if they
+# did — the rules already set 0666). The container is no longer privileged, so
+# host-kernel knobs (usbcore.usbfs_memory_mb) live in scripts/host_setup.sh now.
+chmod a+rw /dev/dri/renderD* /dev/dri/card* 2>/dev/null || true
+chmod a+rw /dev/bus/usb/*/*                 2>/dev/null || true
 
 # Wrap the main command so signals reach it (the FastAPI lifespan stops the
 # cameras itself on shutdown).
