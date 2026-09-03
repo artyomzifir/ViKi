@@ -251,6 +251,8 @@ class SceneRecorder:
         except Exception:  # noqa: BLE001
             logger.warning("record: setup artifacts not snapshotted", exc_info=True)
 
+        self._write_manifest()
+
         meta = load_meta(self.episode)
         meta["cameras"] = cams
         try:
@@ -260,6 +262,53 @@ class SceneRecorder:
         except Exception:  # noqa: BLE001
             pass
         save_meta(self.episode, meta)
+
+    def _write_manifest(self) -> None:
+        """`<episode>/manifest.json` — the setup artifacts this recording was
+        made against (spec §7), by content hash so a stale calibration is
+        detectable after the fact."""
+        import hashlib
+
+        raw = self._raw()
+
+        def _h(p):
+            try:
+                return hashlib.sha256(p.read_bytes()).hexdigest()
+            except OSError:
+                return None
+
+        val = {}
+        vp = raw / "validation_report.json"
+        if vp.exists():
+            try:
+                val = json.loads(vp.read_text())
+            except ValueError:
+                pass
+
+        bg_hashes: dict = {}
+        try:
+            from viki.calibration.artifacts import background_path, background_devices
+            from viki.calibration.presets import current_active
+
+            preset = current_active()
+            if preset:
+                for dev in background_devices(preset):
+                    bg_hashes[dev] = _h(background_path(preset, dev))
+        except Exception:  # noqa: BLE001
+            pass
+
+        manifest = {
+            "extrinsics_hash": _h(raw / "extrinsics.json"),
+            "world_anchor_hash": _h(raw / "world_anchor.json"),
+            "background_hashes": bg_hashes,
+            "validation_verdict": val.get("verdict"),
+            "validation_extrinsics_hash": val.get("extrinsics_hash"),
+            "validated_at": val.get("created_at"),
+        }
+        try:
+            (raw.parent / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        except OSError:
+            logger.warning("record: manifest not written", exc_info=True)
 
     def _finish(self, fps: int) -> None:
         for w in self._writers.values():

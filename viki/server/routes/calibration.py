@@ -686,6 +686,18 @@ async def save_preset(
                 observations=live_anchor["observations"],
                 T_world_display=live_anchor.get("T_world_display"),
             )
+        import json as _j
+
+        from viki.config import VALIDATION_FILENAME as _VF
+
+        try:
+            _live_val = _j.loads(open(_VF).read())
+            _artifacts.write_validation(
+                path.stem, verdict=_live_val.get("verdict", "red"),
+                pairs=_live_val.get("pairs", []),
+            )
+        except (OSError, ValueError, KeyError):
+            pass
     except Exception:  # noqa: BLE001 — never break save-as on this
         logger.warning("preset %r: setup-artifact fold-in failed", path.stem, exc_info=True)
     # Cameras are live during calibration, so grab both device/scene snapshots

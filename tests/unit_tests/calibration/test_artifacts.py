@@ -154,6 +154,55 @@ def test_record_ready_gate(store):
     assert ok
 
 
+def test_record_ready_blocks_on_stale_validation_after_resolve(store):
+    """Acceptance §10.6: a re-solve invalidates the validation report, and
+    recording must not start until it is re-run."""
+    board = {"type": "aruco", "board_size": [5, 4], "square_size": 0.03,
+             "marker_size": 0.022, "aruco_dict": int(cv2.aruco.DICT_4X4_50)}
+    Kd = {"fx": 600.0, "fy": 600.0, "cx": 320.0, "cy": 240.0, "width": 640, "height": 480}
+    Km = np.array([[600, 0, 320], [0, 600, 240], [0, 0, 1.0]])
+    from viki.calibration.bundle import solve_bundle
+    from viki.calibration.samples import _charuco_board
+    obj = np.asarray(_charuco_board(board).getChessboardCorners(), np.float64)
+    ids = np.arange(len(obj))
+
+    def T(rv, t):
+        M = np.eye(4); M[:3, :3] = cv2.Rodrigues(np.asarray(rv, float))[0]; M[:3, 3] = t
+        return M
+
+    T_b_ref = T([0.0, 0.45, 0.0], [0.35, 0.0, 0.08])
+    poses = [([0.05, 0.0, 0.0], [0, 0, 0.65]), ([0.5, -0.1, 0.0], [0, 0, 0.6]),
+             ([-0.4, 0.2, 0.0], [0, 0, 0.62]), ([0.2, 0.35, 0.1], [0, 0, 0.68])]
+    rng = np.random.default_rng(0)
+    sets = []
+    for k, (rv, t) in enumerate(poses):
+        Xr = obj @ T(rv, t)[:3, :3].T + T(rv, t)[:3, 3]
+        o = {}
+        for dev, Tc in (("cam_ref", np.eye(4)), ("cam_b", T_b_ref)):
+            Xc = Xr @ Tc[:3, :3].T + Tc[:3, 3]
+            uv = cv2.projectPoints(Xc, np.zeros(3), np.zeros(3), Km, np.zeros(5))[0].reshape(-1, 2)
+            uv += rng.normal(0, 0.15, uv.shape)
+            o[dev] = {"charuco_ids": ids.tolist(), "charuco_corners": uv.tolist()}
+        sets.append({"set_id": f"s{k}", "observations": o})
+
+    b = solve_bundle(sets, {"cam_ref": Kd, "cam_b": Kd}, board, reference_device="cam_ref")
+    artifacts.write_extrinsics("rig", reference_device="cam_ref", devices=b["devices"],
+                               sets=sets, solve=b["solve"],
+                               intrinsics={"cam_ref": Kd, "cam_b": Kd}, board=board)
+    artifacts.write_world_anchor("rig", observations={"cam_ref": sets[0]["observations"]["cam_ref"]})
+    artifacts.write_background("rig", {
+        "cam_ref": (np.ones((2, 2), np.float32), np.ones((2, 2), bool)),
+        "cam_b": (np.ones((2, 2), np.float32), np.ones((2, 2), bool)),
+    })
+    artifacts.write_validation("rig", verdict="green", pairs=[])
+    assert artifacts.record_ready("rig")[0] is True
+
+    artifacts.resolve_from_observations("rig")            # extrinsics hash moves
+    assert not artifacts.world_anchor_stale("rig")        # anchor auto-recomputed
+    ok, why = artifacts.record_ready("rig")
+    assert not ok and "validation is stale" in why
+
+
 def test_migrate_legacy_v2_preset(store):
     # two cameras, each with a board->camera pose; build a legacy v2 file
     rng = np.random.default_rng(0)
