@@ -161,6 +161,7 @@ class RTMPoseHandBackend(HandPoseBackend):
             confidence=float(mean[best]),
             device_id=frame.device_id,
             timestamp_us=frame.timestamp_us,
+            lm_score=np.asarray(scores[best], dtype=np.float32),  # SimCC per-keypoint
         )
 
     def close(self) -> None:

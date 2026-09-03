@@ -277,6 +277,9 @@ class HandDetection:
     points   : {LM: (u, v)} subpixel pixel coordinates (NaN where missing)
     lm_z_rel : (21,) float32 backend-relative z (NOT metric); wrist-relative
     confidence : overall detection score in [0, 1]
+    lm_score : (21,) float32 per-landmark detector score in [0, 1], or None when
+               the backend only reports one score for the whole hand (callers
+               then fall back to broadcasting ``confidence``).
     """
 
     points: dict
@@ -284,6 +287,7 @@ class HandDetection:
     confidence: float
     device_id: str
     timestamp_us: int
+    lm_score: np.ndarray | None = None
 
 
 @dataclass

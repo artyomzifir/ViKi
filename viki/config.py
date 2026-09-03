@@ -42,6 +42,7 @@ PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
 PERCEPTION_HAND_FIT: bool  # run trajectory-level capsule hand fit at the end of prepare
+PERCEPTION_SAVE_OBSERVATIONS: bool  # extract also writes raw/observations.npz (2-D obs for multi-view triangulation)
 PERCEPTION_HAND_POSE_SOURCE: str  # landmarks | hand_fit; consumers select without overwriting cln pose
 PERCEPTION_HAND_FIT_ROI_MARGIN_M: float  # adaptive capsule-union ROI padding (m)
 PERCEPTION_HAND_FIT_FOREARM_CUT_M: float  # proximal offset of wrist cut plane (m)
@@ -211,6 +212,7 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_INTERP_MAX_GAP": 0,
     "PERCEPTION_CONF_ALPHA": 1.0,
     "PERCEPTION_HAND_FIT": True,
+    "PERCEPTION_SAVE_OBSERVATIONS": True,
     "PERCEPTION_HAND_POSE_SOURCE": "hand_fit",
     "PERCEPTION_HAND_FIT_ROI_MARGIN_M": 0.030,
     "PERCEPTION_HAND_FIT_FOREARM_CUT_M": 0.010,
