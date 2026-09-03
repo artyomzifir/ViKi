@@ -129,7 +129,7 @@ function renderCards() {
   if (key !== builtIds) {
     builtIds = key;
     box.innerHTML = ids.length
-      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running, { depth: true })).join('')
+      ? ids.map(id => cameras.cameraCardHTML(id, state[id].type, state[id].running)).join('')
       : `<div class="empty-state"><h2>No cameras</h2><p>Scan for devices (top bar).</p></div>`;
   }
   for (const id of ids) {
@@ -139,15 +139,8 @@ function renderCards() {
     card.querySelector('[data-role="dot"]').className = 'dot ' + (on ? 'green' : 'grey');
     card.querySelector('[data-role="start"]').disabled = on;
     card.querySelector('[data-role="stop"]').disabled = !on;
-    const col = card.querySelector('img[data-role="color"]');
-    const dep = card.querySelector('img[data-role="depth"]');
-    const want = on ? '1' : '';
-    if (col && col.dataset.on !== want) {
-      cameras.setStream(col, on ? `/api/calibration/${id}/stream` : null); col.dataset.on = want;
-    }
-    if (dep && dep.dataset.on !== want) {
-      cameras.setStream(dep, on ? `/api/cameras/${id}/depth` : null); dep.dataset.on = want;
-    }
+    // one stream per card; RGB shows the board overlay, D the raw depth
+    cameras.syncCardStream(card, id, on, `/api/calibration/${id}/stream`);
   }
 }
 
@@ -471,6 +464,7 @@ function onClick(e) {
   switch (btn.id || btn.dataset.role) {
     case 'start': cameras.startCamera(id, cameras.readCardConfig(view, id)); break;
     case 'stop': cameras.stopCamera(id); break;
+    case 'view': cameras.setCardView(btn, `/api/calibration/${id}/stream`); break;
     case 'calib-start-session': startSession(); break;
     case 'calib-capture-all': captureAll(); break;
     case 'calib-solve': solve(); break;

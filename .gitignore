@@ -240,7 +240,9 @@ models/
 
 AGENTS.md
 CLAUDE.md
-.claude/*
+.claude
+.agents
+.codex
 
 assets/
 node_modules/

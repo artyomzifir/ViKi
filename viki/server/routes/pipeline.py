@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from viki import config, datasets
-from viki.contracts import Episode
+from viki.contracts import Episode, cln_pose_keys
 from viki.episode import read_status
 from viki.server import jobs
 
@@ -240,17 +240,20 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
 
     if ep.cln_npz.exists():
         with np.load(ep.cln_npz) as d:
+            p_key, r_key = cln_pose_keys(
+                d.files, getattr(config, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+            )
             out["n_frames"] = int(len(d["positions"]))
             out["fps"] = float(
                 1e6 / max(np.median(np.diff(d["timestamps"].astype(float))), 1.0)
             )
-            out["wrist_traj"] = np.asarray(d["positions"], np.float32).tolist()
+            out["wrist_traj"] = np.asarray(d[p_key], np.float32).tolist()
             out["palm_rot"] = (
-                np.asarray(d["rotations"], np.float32).reshape(-1, 9).tolist()
+                np.asarray(d[r_key], np.float32).reshape(-1, 9).tolist()
             )
             out["valid"] = np.asarray(d["valid"], bool).tolist()
-            if "hand_capsule_radii" in d.files:
-                out["hand_capsule_radii"] = np.asarray(d["hand_capsule_radii"], np.float32).tolist()
+            if "hand_fit_capsule_radii" in d.files:
+                out["hand_capsule_radii"] = np.asarray(d["hand_fit_capsule_radii"], np.float32).tolist()
 
     if include_raw and ep.rec_npz.exists():
         with np.load(ep.rec_npz) as d:
@@ -276,8 +279,8 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
                     out["landmark_ids"] = np.asarray(d["landmark_ids"], int).tolist()
                     out["gripper"] = bool(d["gripper"][frame])
                     out["frame_valid"] = bool(d["valid"][frame])
-                    if "hand_capsules" in d.files and frame < len(d["hand_capsules"]):
-                        hc = np.asarray(d["hand_capsules"][frame], np.float32)  # (C, 2, 3)
+                    if "hand_fit_capsules" in d.files and frame < len(d["hand_fit_capsules"]):
+                        hc = np.asarray(d["hand_fit_capsules"][frame], np.float32)  # (C, 2, 3)
                         out["hand_capsules"] = (
                             None if not np.isfinite(hc).any() else hc.tolist()
                         )

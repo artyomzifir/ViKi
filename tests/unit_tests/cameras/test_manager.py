@@ -137,3 +137,68 @@ def test_manager_nearest_frame():
         assert manager.nearest_frame("mock_dev", 5000).timestamp_us == f3.timestamp_us
 
         manager.stop("mock_dev")
+
+
+def test_concurrent_start_stop_never_orphans_a_backend():
+    """Two clients hammering start/stop on the SAME device must not leak a
+    backend: without the per-device lock the second start races the first,
+    overwrites ``_workers[id]`` and the displaced worker keeps its device
+    handle open forever (real-world: k4a_device_open=1 on the next start)."""
+    import threading
+    import time
+
+    live = {"n": 0, "max": 0}
+    live_lock = threading.Lock()
+
+    class CountingBackend(CameraBackend):
+        def __init__(self, device_id="dev"):
+            self._device_id = device_id
+            self._running = False
+
+        @property
+        def device_id(self):
+            return self._device_id
+
+        def start(self):
+            with live_lock:
+                live["n"] += 1
+                live["max"] = max(live["max"], live["n"])
+            time.sleep(0.005)  # widen the race window
+            self._running = True
+
+        def stop(self):
+            with live_lock:
+                live["n"] -= 1
+            self._running = False
+
+        def get_frame(self):
+            raise RuntimeError("not used")
+
+        @property
+        def is_running(self):
+            return self._running
+
+        def project_color_to_depth(self, u, v, z):
+            return (u, v)
+
+    mgr = CameraManager()
+    with patch.object(
+        CameraManager, "_make_backend", side_effect=lambda *a, **k: CountingBackend()
+    ):
+        def hammer():
+            for _ in range(20):
+                mgr.start("dev")
+                mgr.stop("dev")
+
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        mgr.stop("dev")
+
+    # never more than one backend alive at a time, and all are released
+    assert live["max"] == 1, f"raced: {live['max']} backends alive at once"
+    assert live["n"] == 0, f"leaked {live['n']} backend(s)"
+    assert mgr.active_device_ids() == []

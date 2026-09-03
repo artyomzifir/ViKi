@@ -494,13 +494,31 @@ CLN_KEYS: tuple[str, ...] = (
     "landmark_ids",
 )
 CLN_OPTIONAL_KEYS: tuple[str, ...] = (
+    "landmark_confidence",  # (T, L) — fused confidence retained for hand-fit anchors
     "T_world_obj",  # (T, 4, 4)  — object pose track  (stub: absent)
     "T_obj_hand",  # (T, 4, 4)  — object-relative form  (stub: absent)
-    "hand_joint_angles",  # (T, nq)  — capsule-hand fit result (PERCEPTION_HAND_FIT)
-    "hand_model_nq",  # scalar int — nq of the fitted hand model
-    "hand_capsules",  # (T, C, 2, 3) — world capsule endpoints per frame (viewer)
-    "hand_capsule_radii",  # (C,) — capsule radii (m)
+    "hand_fit_positions",  # (T, 3) — fitted pose; landmark positions remain untouched
+    "hand_fit_rotations",  # (T, 3, 3)
+    "hand_fit_joint_angles",  # (T, nq) — complete articulated trajectory
+    "hand_fit_model_nq",  # scalar int — nq of the fitted hand model
+    "hand_fit_capsules",  # (T, C, 2, 3) — world capsule endpoints per frame
+    "hand_fit_capsule_radii",  # (C,) — capsule radii (m)
+    "hand_fit_metrics_json",  # scalar JSON — episode-level diagnostics
 )
+
+
+def cln_pose_keys(files, source: str) -> tuple[str, str]:
+    """Resolve the configured wrist-pose source without mutating the artifact.
+
+    ``hand_fit`` gracefully falls back for old/unfitted episodes so changing the
+    global source does not make historical datasets unreadable.
+    """
+    available = set(files)
+    if str(source).strip().lower() == "hand_fit" and {
+        "hand_fit_positions", "hand_fit_rotations"
+    }.issubset(available):
+        return "hand_fit_positions", "hand_fit_rotations"
+    return "positions", "rotations"
 
 REPLAY_KEYS: tuple[str, ...] = (
     "q_attained",  # (T, nq)

@@ -270,11 +270,19 @@ header h1 {
 .cam-card .card-header .name { flex: 1; }
 .card-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border); }
 .card-controls .sep { width: 1px; height: 18px; background: var(--border); }
-.streams { display: grid; grid-template-columns: 1fr 1px 1fr; }
-.cam-card.no-depth .streams { grid-template-columns: 1fr; }
+.streams { display: block; }
 .stream-panel { position: relative; background: #000; aspect-ratio: 4/3; max-height: 40vh; overflow: hidden; }
 .stream-panel img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.stream-divider { background: var(--border); }
+
+/* RGB / D stream selector — one MJPEG connection per card at a time */
+.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.view-toggle button {
+  border: 0; background: var(--surface); color: var(--muted);
+  font-size: 10px; font-weight: 600; padding: 2px 8px; cursor: pointer;
+}
+.view-toggle button + button { border-left: 1px solid var(--border); }
+.view-toggle button.active { background: var(--accent); color: #fff; }
+.view-toggle button:not(.active):hover { color: var(--text); }
 
 .record-episodes { flex: 1; min-height: 0; display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }

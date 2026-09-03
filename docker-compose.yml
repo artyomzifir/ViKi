@@ -16,10 +16,30 @@ x-common: &common
     target: test
   image: viki
   network_mode: host
-  privileged: true
   gpus: all                      # host NVIDIA GPU for model inference (nvidia-container-toolkit)
+  # ── resource ceilings ──────────────────────────────────────────────────────
+  # The box is 16 core / 15 GiB / 4 GiB swap. Without caps a runaway (an
+  # unpinned BLAS solve, a leak) takes the bare host down and systemd-oomd kills
+  # a random cgroup — often dockerd or the desktop session, and USB drops from
+  # IRQ starvation. Cap the container so it OOM-kills *itself* and the host keeps
+  # headroom for Xorg / USB / ssh.
+  mem_limit: 11g
+  memswap_limit: 11g             # == mem_limit ⇒ no swap thrashing
+  cpus: "12"
+  pids_limit: 512
+  oom_score_adj: 800             # if something must die under pressure, it's us
+  # ── device access without full privilege ──────────────────────────────────
+  # was `privileged: true` + `/dev:/dev`. Cameras need libusb (/dev/bus/usb) and
+  # the k4a depth engine needs /dev/dri; nothing needs to touch xhci, usbcore
+  # params, or the rest of the host. SYS_NICE: k4a raises capture-thread priority.
+  cap_add:
+    - SYS_NICE
+  device_cgroup_rules:
+    - "c 189:* rwm"              # usb (usbfs / usb-serial)
+    - "c 226:* rwm"              # dri (render + card nodes)
+    - "c 81:* rwm"               # v4l, in case a backend opens a video node
   volumes:
-    - /dev:/dev
+    - /dev/bus/usb:/dev/bus/usb  # dynamic — new/re-enumerated nodes show through
     - /run/udev:/run/udev:ro
     - /tmp/.X11-unix:/tmp/.X11-unix
     - ./viki:/app/viki
@@ -32,8 +52,19 @@ x-common: &common
     - PYTHONPATH=/app
     - GIT_PYTHON_REFRESH=quiet
     - DISPLAY=${DISPLAY}
+    # Cap BLAS/OpenMP so no single numpy/scipy stage (hand_fit lsmr, retarget IK)
+    # pegs every core — read at library load, so this is the reliable lever.
+    # hand_fit's window pool pins to 1/worker on top of this (threadpoolctl).
+    - OMP_NUM_THREADS=6
+    - OPENBLAS_NUM_THREADS=6
+    - MKL_NUM_THREADS=6
+    - NUMEXPR_NUM_THREADS=6
+    # LIBGL_ALWAYS_SOFTWARE governs GL *rendering* (k4a depth engine, viewer),
+    # NOT CUDA compute — leave it; RTMPose's CUDA EP is unaffected.
     - LIBGL_ALWAYS_SOFTWARE=1
     - GALLIUM_DRIVER=llvmpipe
+    - NVIDIA_VISIBLE_DEVICES=all
+    - NVIDIA_DRIVER_CAPABILITIES=compute,utility
   devices:
     - /dev/dri:/dev/dri
 

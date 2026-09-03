@@ -169,7 +169,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pc.add_argument("episode")
     pc.set_defaults(func=_cmd_cloud)
 
-    phf = sub.add_parser("hand-fit", help="refine cln.npz wrist poses by fitting a capsule hand to the cloud")
+    phf = sub.add_parser("hand-fit", help="batch-fit a capsule hand trajectory and append hand_fit_* to cln.npz")
     phf.add_argument("episode")
     phf.set_defaults(func=_cmd_hand_fit)
 

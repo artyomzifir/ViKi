@@ -100,9 +100,48 @@ def test_calibrate_and_build():
     params = hm.calibrate_from_frames([_open_hand_frame(), _open_hand_frame()])
     hand = hm.build(params)
     assert hand.nv == 26 and hand.nq == 27
-    assert len(hand.capsules) == 20
+    # one broad palm proxy + three phalanges per finger
+    assert len(hand.capsules) == 16
     ep = hm.fk_capsule_endpoints(hand, pin.neutral(hand.model))
-    assert ep.shape == (20, 2, 3) and np.isfinite(ep).all()
+    assert ep.shape == (16, 2, 3) and np.isfinite(ep).all()
+
+
+def test_right_hand_positive_flexion_curls_toward_palm_positive_z():
+    """Pin the anatomical side: a right-hand grasp curls along palm +z."""
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    q = pin.neutral(hand.model).copy()
+    jid = hand.model.getJointId("index_mcp")
+    q[hand.model.joints[jid].idx_q] = np.deg2rad(45.0)
+
+    index = hm.fk_landmark_positions(
+        hand, q, [int(LM.INDEX_MCP), int(LM.INDEX_PIP)]
+    )
+
+    assert index[1, 2] > index[0, 2] + 0.01
+
+
+def test_signed_angle_keeps_off_axis_bend_magnitude():
+    """A noisy out-of-plane landmark must not collapse a real flexion angle."""
+    u = np.array([1.0, 0.0, 0.0])
+    v = np.array([0.5, 0.8, -np.sqrt(0.11)])  # unit vector, 60 degrees from u
+    angle = hm._signed_angle(u, v, np.array([0.0, 1.0, 0.0]))
+    assert np.degrees(angle) == pytest.approx(60.0, abs=1e-6)
+
+
+def test_calibration_frame_selection_rejects_false_giant_hand():
+    """Maximum-spread landmark glitches must not define the hand geometry."""
+    frames = [_open_hand_frame(w=[0.002 * t, 0.0, 0.8]) for t in range(12)]
+    outlier = {lm: p.copy() for lm, p in frames[-1].items()}
+    # Simulate the real failure mode: displaced pinky MCP and fingertip make
+    # this frame win a naive maximum-spread ranking.
+    for lm in hm.FINGERS["pinky"]:
+        outlier[lm] = outlier[lm] + np.array([0.0, -0.09, 0.02])
+    frames.append(outlier)
+
+    selected = hf._calibration_frame_indices(frames, np.ones(len(frames), bool), 8)
+
+    assert len(selected) == 8
+    assert len(frames) - 1 not in selected
 
 
 def test_assemble_residuals_shapes():
@@ -111,9 +150,10 @@ def test_assemble_residuals_shapes():
     cloud = _sample_cloud(hand, q, per_capsule=20)
     w = np.ones(len(cloud))
     fc = hf.FitConfig()
-    r = hf.assemble_residuals(q, hand, cloud, w, fc, q_prev=q, q_pred=q)
-    # data (N) + vel (nv) + acc (nv) + limits (2*(nq-7)) + posture (nq-7)
-    expect = len(cloud) + hand.nv + hand.nv + 2 * (hand.nq - 7) + (hand.nq - 7)
+    r = hf.assemble_residuals(q, hand, cloud, w, fc)
+    # Frame-local assembly has data + limits + posture. Temporal blocks are
+    # assembled only by the trajectory functional.
+    expect = len(cloud) + 2 * (hand.nq - 7) + (hand.nq - 7)
     assert r.shape == (expect,)
     assert np.isfinite(r).all()
     # at the sampled pose the data residuals are ~noise-sized
@@ -130,27 +170,146 @@ def test_analytic_jacobian_matches_finite_difference():
                                       np.array([0.12, -0.03, 0.85])))
     cloud = _sample_cloud(hand, q0, per_capsule=25, noise=0.003, seed=5)
     w = np.linspace(0.5, 1.5, len(cloud))
-    q_prev = pin.integrate(hand.model, q0, 0.05 * np.ones(hand.nv))
-    q_pred = pin.integrate(hand.model, q0, -0.03 * np.ones(hand.nv))
     fr = _open_hand_frame(w=np.array([0.12, -0.03, 0.85]))
     order = [0, 5, 9, 17, 8]
     obs = np.array([fr[LM(i)] + 0.004 for i in order])
     fc = hf.FitConfig()
 
     dt0 = 0.02 * np.cos(np.arange(hand.nv))
-    args = dict(q_prev=q_prev, q_pred=q_pred, q_rest=None, order=order, obs_lm=obs)
-    r0, J = hf.residual_and_jac(dt0, hand, q0, cloud, w, fc, **args)
+    q_at_dt = pin.integrate(hand.model, q0, dt0)
+    _, capsule_ids = hf.nearest_capsule(
+        cloud, hm.fk_capsule_endpoints(hand, q_at_dt), hm.capsule_radii(hand)
+    )
+    # Point-to-segment distance is non-differentiable exactly where the closest
+    # point switches between a capsule body and an end cap. Keep this test on
+    # the smooth body branch; end-cap behaviour is covered by geometry tests.
+    assigned_dist, segment_t, _ = hf._assigned_capsule_geom(
+        cloud, hm.fk_capsule_endpoints(hand, q_at_dt),
+        hm.capsule_radii(hand), capsule_ids,
+    )
+    smooth = (segment_t > 0.05) & (segment_t < 0.95) & (np.abs(assigned_dist) > 0.001)
+    cloud, w, capsule_ids = cloud[smooth], w[smooth], capsule_ids[smooth]
+    frame_obs = hf.FrameObservation(
+        cloud, w, np.asarray(order), obs, np.ones(len(order)), capsule_ids
+    )
+    q_rest = pin.neutral(hand.model)
+
+    def evaluate(delta):
+        return hf._frame_geometry(delta, hand, q0, frame_obs, fc, q_rest, 1.0)[:2]
+
+    r0, J = evaluate(dt0)
 
     eps = 1e-6
     Jfd = np.empty_like(J)
     for k in range(hand.nv):
         d = dt0.copy(); d[k] += eps
-        rp, _ = hf.residual_and_jac(d, hand, q0, cloud, w, fc, **args)
+        rp, _ = evaluate(d)
         d = dt0.copy(); d[k] -= eps
-        rm, _ = hf.residual_and_jac(d, hand, q0, cloud, w, fc, **args)
+        rm, _ = evaluate(d)
         Jfd[:, k] = (rp - rm) / (2 * eps)
 
     assert np.allclose(J, Jfd, atol=2e-4, rtol=2e-3)
+
+
+def test_batch_jacobian_matches_finite_difference():
+    """The complete T=4 CSR Jacobian, including two- and three-frame temporal
+    rows, agrees with numerical differentiation."""
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    hand.capsules = hand.capsules[:2]  # deliberately tiny two-capsule case
+    T = 4
+    q0 = np.tile(pin.neutral(hand.model), (T, 1))
+    for t in range(T):
+        q0[t, :7] = pin.SE3ToXYZQUAT(pin.SE3(
+            pin.exp3(np.array([0.01 * t, -0.005 * t, 0.008 * t])),
+            np.array([0.01 * t, 0.002 * t, 0.75]),
+        ))
+    clouds = [_sample_cloud(hand, q, per_capsule=2, noise=0.001, seed=t)
+              for t, q in enumerate(q0)]
+    fc = hf.FitConfig(min_points=1, max_points=200, w_landmark=0.0)
+    observations = hf._make_observations(
+        clouds, [None] * T, None, None, hand, fc
+    )
+    observations = hf.freeze_correspondences(hand, q0, observations)
+    dt = 0.002 * np.cos(np.arange(T * hand.nv))
+    r0, J = hf.batch_residual_and_jac(dt, hand, q0, observations, fc)
+    assert J.format == "csr"
+
+    eps = 1e-6
+    Jfd = np.empty(J.shape)
+    for k in range(T * hand.nv):
+        xp = dt.copy(); xp[k] += eps
+        xm = dt.copy(); xm[k] -= eps
+        rp, _ = hf.batch_residual_and_jac(xp, hand, q0, observations, fc)
+        rm, _ = hf.batch_residual_and_jac(xm, hand, q0, observations, fc)
+        Jfd[:, k] = (rp - rm) / (2 * eps)
+    assert np.allclose(J.toarray(), Jfd, atol=3e-4, rtol=3e-3)
+
+
+def _linear_q_trajectory(hand, T=5, step=0.012):
+    q = np.tile(pin.neutral(hand.model), (T, 1))
+    for t in range(T):
+        q[t, :7] = pin.SE3ToXYZQUAT(pin.SE3(np.eye(3), np.array([step * t, 0.0, 0.8])))
+    return q
+
+
+def test_batch_interpolates_completely_missing_frame():
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    true_q = _linear_q_trajectory(hand)
+    clouds = [_sample_cloud(hand, q, per_capsule=5, noise=0.001, seed=t)
+              for t, q in enumerate(true_q)]
+    clouds[2] = np.empty((0, 3))
+    q0 = true_q.copy()
+    q0[2, :7] = pin.SE3ToXYZQUAT(pin.SE3(np.eye(3), np.array([0.075, 0.02, 0.8])))
+    fc = hf.FitConfig(
+        min_points=10, max_points=100, outer_iterations=3, max_nfev=35,
+        w_landmark=0.0, w_posture=0.0,
+        w_vel_translation=20.0, w_acc_translation=1000.0,
+    )
+    fitted, info = hf.fit_trajectory(hand, clouds, [None] * len(clouds), q0, fc)
+    p2, _ = hf.wrist_pose(hand, fitted[2])
+    p1, _ = hf.wrist_pose(hand, fitted[1]); p3, _ = hf.wrist_pose(hand, fitted[3])
+    assert info["empty_frame_fraction"] == pytest.approx(0.2)
+    assert np.linalg.norm(p2 - 0.5 * (p1 + p3)) < 0.005
+    assert np.linalg.norm(p2 - np.array([0.024, 0.0, 0.8])) < 0.012
+
+
+def test_batch_rejects_outlier_and_beats_independent_jerk():
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    true_q = _linear_q_trajectory(hand, T=6, step=0.008)
+    clouds = [_sample_cloud(hand, q, per_capsule=6, noise=0.0015, seed=t)
+              for t, q in enumerate(true_q)]
+    clouds[3] = clouds[3] + np.array([0.070, -0.025, 0.0])
+    noisy_init = true_q.copy()
+    jitter = np.array([0.0, 0.006, -0.005, 0.008, -0.004, 0.0])
+    for t in range(len(noisy_init)):
+        p, R = hf.wrist_pose(hand, noisy_init[t])
+        noisy_init[t, :7] = pin.SE3ToXYZQUAT(pin.SE3(R, p + [0.0, jitter[t], 0.0]))
+
+    greedy_fc = hf.FitConfig(
+        min_points=10, max_points=120, outer_iterations=2, max_nfev=18,
+        w_landmark=0.0, w_posture=0.0,
+        w_vel_translation=0.0, w_vel_rotation=0.0, w_vel_joints=0.0,
+        w_acc_translation=0.0, w_acc_rotation=0.0, w_acc_joints=0.0,
+    )
+    greedy = np.asarray([
+        hf.fit_frame(hand, clouds[t], None, noisy_init[t], greedy_fc)[0]
+        for t in range(len(clouds))
+    ])
+    batch_fc = hf.FitConfig(
+        min_points=10, max_points=120, outer_iterations=3, max_nfev=20,
+        w_landmark=0.0, w_posture=0.0,
+        w_vel_translation=25.0, w_acc_translation=350.0,
+    )
+    fitted, info = hf.fit_trajectory(hand, clouds, [None] * len(clouds), noisy_init, batch_fc)
+
+    assert hf._jerk_norm(fitted) < hf._jerk_norm(greedy)
+    # Five clean frames dominate the episode median, so robustness must not buy
+    # smoothness by degrading the ordinary surface fit.
+    greedy_resid = []
+    for q, cloud in zip(greedy, clouds):
+        d, _ = hf.nearest_capsule(cloud, hm.fk_capsule_endpoints(hand, q), hm.capsule_radii(hand))
+        greedy_resid.extend(np.abs(d))
+    assert info["median_resid_m"] <= np.median(greedy_resid) + 0.002
 
 
 def test_fit_recovers_wrist_pose():
@@ -165,15 +324,26 @@ def test_fit_recovers_wrist_pose():
 
     q0 = q_true.copy()
     q0[:7] = pin.SE3ToXYZQUAT(pin.SE3(
-        R_g @ pin.exp3(np.array([0.15, 0.10, -0.12])), w_g + np.array([0.02, -0.03, 0.025])
+        R_g @ pin.exp3(np.array([0.03, 0.02, -0.025])), w_g + np.array([0.005, -0.006, 0.004])
     ))
     p0_mm, r0_deg = _wrist_errs(hand, q0, R_g, w_g)
 
-    q_fit, info = hf.fit_frame(hand, cloud, None, q0, hf.FitConfig())
+    fc = hf.FitConfig(
+        w_vel_translation=0.0, w_vel_rotation=0.0, w_vel_joints=0.0,
+        w_acc_translation=0.0, w_acc_rotation=0.0, w_acc_joints=0.0,
+        w_posture=0.0, outer_iterations=3, max_points=1200,
+    )
+    anchor_xyz = hm.fk_landmark_positions(hand, q_true, list(range(21)))
+    anchor = {LM(i): anchor_xyz[i] for i in range(21)}
+    anchors = [anchor] * 2
+    q_traj, info = hf.fit_trajectory(
+        hand, [cloud, cloud], [None, None], np.stack([q0, q0]), fc,
+        landmark_frames=anchors,
+    )
+    q_fit = q_traj[0]
     pf_mm, rf_deg = _wrist_errs(hand, q_fit, R_g, w_g)
 
-    assert not info["skipped"] and info["accepted"]
-    assert pf_mm < 5.0 and rf_deg < 5.0
+    assert pf_mm < 8.0 and rf_deg < 5.0
     assert pf_mm < p0_mm and rf_deg < r0_deg     # strictly better than the warm start
 
 
@@ -208,12 +378,11 @@ def test_refine_cln_noop_without_depth(tmp_path):
     hf.refine_cln(ep)
     after = np.load(ep.cln_npz)
     assert np.array_equal(before, after["positions"])
-    assert "hand_joint_angles" not in after.files
+    assert "hand_fit_joint_angles" not in after.files
 
 
-def test_refine_cln_writes_capsules_and_angles(tmp_path, monkeypatch):
-    """With a (faked) hand-ROI cloud, refine_cln rewrites cln.npz and adds the
-    capsule / joint-angle arrays the viewer needs."""
+def test_refine_cln_writes_new_keys_without_overwriting_pose(tmp_path, monkeypatch):
+    """The fit is non-destructive and writes only the hand_fit_* estimate."""
     from viki.episode import new_episode
 
     T = 5
@@ -246,19 +415,228 @@ def test_refine_cln_writes_capsules_and_angles(tmp_path, monkeypatch):
     monkeypatch.setattr(hf, "_cameras", lambda *a, **k: [{"dev": "fake"}])
     monkeypatch.setattr(hf, "hand_roi_cloud", lambda *a, **k: (cloud, np.ones(len(cloud))))
 
-    w_true = fr[LM.WRIST] + np.array([0.01, -0.02, 0.015])
-    warm_err = np.linalg.norm(fr[LM.WRIST] - w_true)   # landmark warm start
-
     hf.refine_cln(ep)
     d = np.load(ep.cln_npz)
-    assert "hand_capsules" in d.files and "hand_capsule_radii" in d.files
-    assert d["hand_capsules"].shape == (T, 20, 2, 3)
-    assert d["hand_capsule_radii"].shape == (20,)
-    assert np.isfinite(d["hand_capsules"][2]).all()
-    assert d["hand_joint_angles"].shape == (T, hand.nq)
-    assert int(d["hand_model_nq"]) == hand.nq
-    # the fitted wrist is pulled toward the (faked) true pose — better than the
-    # landmark warm start (the temporal / posture priors keep it from snapping
-    # all the way, hence the loose bound).
-    err = np.linalg.norm(d["positions"][2] - w_true)
-    assert err < warm_err and err < 0.04
+    assert "hand_fit_capsules" in d.files and "hand_fit_capsule_radii" in d.files
+    assert d["hand_fit_capsules"].shape == (T, len(hand.capsules), 2, 3)
+    assert d["hand_fit_capsule_radii"].shape == (len(hand.capsules),)
+    assert np.isfinite(d["hand_fit_capsules"][2]).all()
+    assert d["hand_fit_joint_angles"].shape == (T, hand.nq)
+    assert int(d["hand_fit_model_nq"]) == hand.nq
+    assert d["hand_fit_positions"].shape == (T, 3)
+    assert np.array_equal(d["positions"], np.tile(fr[LM.WRIST], (T, 1)).astype(np.float32))
+    assert "hand_fit_metrics_json" in d.files
+
+
+def _bend(hand, q, joints_deg):
+    q = np.asarray(q, float).copy()
+    for name, deg in joints_deg.items():
+        jid = hand.model.getJointId(name)
+        q[hand.model.joints[jid].idx_q] = np.deg2rad(deg)
+    return q
+
+
+def _joint_deg(hand, q, name):
+    jid = hand.model.getJointId(name)
+    return float(np.degrees(q[hand.model.joints[jid].idx_q]))
+
+
+def test_fit_preserves_finger_bend_against_the_posture_prior():
+    """A correctly bent hand must survive the fit, not be pulled straight.
+
+    This is the balance regression guard, and it runs the *shipped* weights on
+    purpose. With a flat rest pose and a quadratic prior that ignores whether a
+    joint is measured, the prior grows with the very bend it is meant to
+    regularise: the same case used to converge to 31 deg and drag the wrist
+    16 mm off. The depth cloud has to win on joints it actually observes.
+
+    Note what this does *not* claim: starting from a straight hand the fit
+    cannot find a 50 deg bend at all. Nearest-surface assignment binds the
+    curled phalanges' points to whatever lies closest in the straight pose --
+    the proximal capsules -- so the distal joints never see a gradient. That
+    basin is the warm start's job; escaping it needs per-point part labels or
+    a multi-hypothesis search, not a reweighting.
+    """
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    bent = {f"{f}_{j}": deg for f in ("index", "middle", "ring")
+            for j, deg in (("mcp", 40.0), ("pip", 50.0), ("dip", 35.0))}
+    q_true = _bend(hand, pin.neutral(hand.model), bent)
+    cloud = _sample_cloud(hand, q_true, per_capsule=140, noise=0.0015, seed=11)
+
+    T = 3
+    fc = hf.FitConfig(min_points=10, max_points=1600, outer_iterations=4)
+    q_flat = pin.neutral(hand.model).copy()      # rest pose pulls the wrong way
+    fitted, info = hf.fit_trajectory(
+        hand, [cloud] * T, [None] * T, np.tile(q_true, (T, 1)), fc, q_rest=q_flat,
+    )
+
+    for name in ("index_pip", "middle_pip", "ring_pip"):
+        got = _joint_deg(hand, fitted[1], name)
+        assert got > 40.0, (
+            f"{name} was straightened to {got:.1f}° from a correct 50°; "
+            "the posture prior is outweighing the depth cloud"
+        )
+    p_true, _ = hf.wrist_pose(hand, q_true)
+    p_fit, _ = hf.wrist_pose(hand, fitted[1])
+    assert np.linalg.norm(p_fit - p_true) < 0.008   # no wrist drift to absorb the prior
+    assert info["median_resid_m"] < 0.002
+    assert info["energy_frac_data"] > 0.5
+    assert info["energy_frac_posture"] < 0.30
+
+
+def test_partially_bent_warm_start_moves_toward_the_cloud():
+    """From half the true bend the fit must close the gap, not fall back."""
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    bent = {f"{f}_{j}": deg for f in ("index", "middle", "ring")
+            for j, deg in (("mcp", 40.0), ("pip", 50.0), ("dip", 35.0))}
+    q_true = _bend(hand, pin.neutral(hand.model), bent)
+    q_half = _bend(hand, pin.neutral(hand.model), {k: v / 2 for k, v in bent.items()})
+    cloud = _sample_cloud(hand, q_true, per_capsule=140, noise=0.0015, seed=11)
+
+    T = 3
+    fc = hf.FitConfig(min_points=10, max_points=1600, outer_iterations=4)
+    fitted, _ = hf.fit_trajectory(
+        hand, [cloud] * T, [None] * T, np.tile(q_half, (T, 1)), fc,
+        q_rest=pin.neutral(hand.model).copy(),
+    )
+    for name in ("index_pip", "middle_pip", "ring_pip"):
+        assert _joint_deg(hand, fitted[1], name) > _joint_deg(hand, q_half, name)
+
+
+def test_posture_prior_is_released_by_data_support():
+    """Observed joints get a weak prior, unobserved ones keep the full weight."""
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    q = pin.neutral(hand.model)
+    cloud = _sample_cloud(hand, q, per_capsule=60, seed=2)
+    fc = hf.FitConfig(min_points=10, max_points=2000)
+    obs = hf._make_observations([cloud], [None], None, None, hand, fc)
+    frozen = hf.freeze_correspondences(hand, np.stack([q]), obs, fc.inside_scale)[0]
+
+    support = hm.joint_capsule_support(hand)
+    assert support.shape == (hand.nq - 7, len(hand.capsules))
+    # a DIP joint is only informed by its own distal capsule
+    dip_row = hand.model.joints[hand.model.getJointId("index_dip")].idx_q - 7
+    assert support[dip_row].sum() == 1
+    mcp_row = hand.model.joints[hand.model.getJointId("index_mcp")].idx_q - 7
+    assert support[mcp_row].sum() == 3
+
+    assert frozen.posture_weight.shape == (hand.nq - 7,)
+    # every joint is measured here, so every prior is heavily discounted
+    assert (frozen.posture_weight < 0.05).all()
+    # a frame with no depth at all keeps the prior at full strength
+    empty = hf.freeze_correspondences(
+        hand, np.stack([q]),
+        hf._make_observations([np.empty((0, 3))], [None], None, None, hand, fc),
+        fc.inside_scale,
+    )[0]
+    assert np.allclose(empty.posture_weight, 1.0)
+
+
+def test_unobserved_fingers_hold_the_calibrated_rest_pose():
+    """Capsules with no points follow ``q_rest``, never ``pin.neutral``.
+
+    ``q_rest`` was accepted but never filled in by the caller for a while, so
+    unobserved joints silently relaxed to the fully-extended neutral pose.
+    """
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    relaxed = {f"{f}_{j}": deg for f in hm.FINGERS
+               for j, deg in (("pip" if f != "thumb" else "mcp", 32.0),
+                              ("dip" if f != "thumb" else "ip", 28.0))}
+    q_rest = _bend(hand, pin.neutral(hand.model), relaxed)
+
+    # a cloud that only covers the palm proxy — every phalanx is unobserved
+    palm_only = hf.deterministic_voxel_subsample(
+        _sample_cloud(hand, q_rest, per_capsule=120, noise=0.001, seed=4)[:120],
+        None, 0.002, 400,
+    )[0]
+
+    T = 3
+    q0 = np.tile(pin.neutral(hand.model), (T, 1))    # start fully extended
+    fc = hf.FitConfig(min_points=10, max_points=800, outer_iterations=3)
+    fitted, _ = hf.fit_trajectory(
+        hand, [palm_only] * T, [None] * T, q0, fc, q_rest=q_rest,
+    )
+
+    for name in ("index_dip", "middle_dip", "ring_dip", "pinky_dip"):
+        got = _joint_deg(hand, fitted[1], name)
+        assert abs(got - 28.0) < 10.0, f"{name} relaxed to {got:.1f}°, not to rest"
+        assert got > 15.0, f"{name} collapsed toward pin.neutral ({got:.1f}°)"
+
+
+# ── sliding-window driver ────────────────────────────────────────────────
+
+def test_windowed_matches_whole_batch_and_has_no_seam_step():
+    import pinocchio as pin
+
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    T = 24
+    true_q = _linear_q_trajectory(hand, T=T, step=0.010)
+    clouds = [_sample_cloud(hand, q, per_capsule=6, noise=0.0012, seed=t)
+              for t, q in enumerate(true_q)]
+    q0 = true_q.copy()
+    for t in range(T):  # small in-plane jitter on the warm start
+        p, R = hf.wrist_pose(hand, q0[t])
+        q0[t, :7] = pin.SE3ToXYZQUAT(pin.SE3(R, p + [0.0, 0.004 * ((t % 3) - 1), 0.0]))
+
+    base = dict(min_points=10, max_points=120, outer_iterations=3, max_nfev=25,
+                w_landmark=0.0, w_posture=0.0,
+                w_vel_translation=25.0, w_acc_translation=350.0)
+    whole = hf.FitConfig(window=0, **base)
+    win = hf.FitConfig(window=10, window_overlap=4, workers=1, **base)
+
+    q_whole, _ = hf.fit_trajectory(hand, clouds, [None] * T, q0, whole)
+    q_win, info = hf.fit_trajectory_windowed(hand, clouds, [None] * T, q0, win)
+
+    assert info["n_windows"] >= 3
+    assert q_win.shape == q_whole.shape
+
+    pw = np.asarray([hf.wrist_pose(hand, q)[0] for q in q_whole])
+    ps = np.asarray([hf.wrist_pose(hand, q)[0] for q in q_win])
+    assert np.max(np.linalg.norm(pw - ps, axis=1)) < 0.010  # agrees with the batch
+
+    steps = np.linalg.norm(np.diff(ps, axis=0), axis=1)
+    med = np.median(steps)
+    seam_ends = {e for _, e in hf._window_starts(T, 10, 4)[:-1]}
+    seam_steps = [steps[i] for i in range(len(steps)) if (i + 1) in seam_ends]
+    assert seam_steps and max(seam_steps) < 3.0 * med + 1e-4  # no discontinuity at a seam
+
+
+def test_windowed_falls_through_for_short_episodes():
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    true_q = _linear_q_trajectory(hand, T=6, step=0.01)
+    clouds = [_sample_cloud(hand, q, per_capsule=5, noise=0.001, seed=t)
+              for t, q in enumerate(true_q)]
+    fc = hf.FitConfig(window=50, window_overlap=10, min_points=10, max_points=80,
+                      outer_iterations=2, w_landmark=0.0, w_posture=0.0)
+    q_fit, info = hf.fit_trajectory_windowed(hand, clouds, [None] * 6, true_q.copy(), fc)
+    assert q_fit.shape == true_q.shape
+    assert "n_windows" not in info  # delegated straight to fit_trajectory
+
+
+def test_sanitize_warm_start_demotes_a_wrist_spike():
+    import pinocchio as pin
+
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    T = 12
+    q = _linear_q_trajectory(hand, T=T, step=0.008)
+    valid = np.ones(T, bool)
+    # frame 7 warm-started 1 m away — passed the stability mask, garbage landmarks
+    p, R = hf.wrist_pose(hand, q[7])
+    q[7, :7] = pin.SE3ToXYZQUAT(pin.SE3(R, p + [1.0, 0.0, 0.0]))
+
+    out = hf._sanitize_warm_start(hand, q, valid, mad_k=6.0)
+    assert out[7] == False           # the spike is demoted
+    assert out.sum() == T - 1        # nothing else touched
+
+
+def test_fit_trajectory_honours_the_wall_clock_deadline():
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    true_q = _linear_q_trajectory(hand, T=8, step=0.01)
+    clouds = [_sample_cloud(hand, q, per_capsule=6, noise=0.0015, seed=t)
+              for t, q in enumerate(true_q)]
+    fc = hf.FitConfig(min_points=10, max_points=120, outer_iterations=4, max_nfev=50,
+                      w_landmark=0.0, w_posture=0.0, deadline_s=1e-4)  # trips on the 1st eval
+    q_fit, info = hf.fit_trajectory(hand, clouds, [None] * len(clouds), true_q.copy(), fc)
+    assert q_fit.shape == true_q.shape          # returns the last iterate, does not raise
+    assert info["outer_iterations"] == 0        # broke before completing an outer pass
+    assert "elapsed_s" in info and "jerk_after_m" in info

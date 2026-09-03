@@ -211,6 +211,7 @@ def build_cloud(
             logger.warning("cloud %s: background load failed (%s)", ep.id, exc)
 
     from viki.perception.k4a_offline import K4ACalibration
+    from viki.perception.rs_offline import RealSenseCalibration
 
     cams = []
     for mp4 in sorted(raw.glob("*.mp4")):
@@ -224,12 +225,13 @@ def build_cloud(
         ).transform_matrix
         cal = None
         try:
-            cal = K4ACalibration.from_episode(raw, dev, meta_all)
+            cal = K4ACalibration.from_episode(raw, dev, meta_all) \
+                or RealSenseCalibration.from_episode(raw, dev, meta_all)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("cloud %s/%s: k4a calib unavailable (%s)", ep.id, dev, exc)
+            logger.warning("cloud %s/%s: depth calib unavailable (%s)", ep.id, dev, exc)
         if cal is None:
             logger.warning(
-                "cloud %s/%s: no k4a blob — pinhole fallback (assumes colour-aligned depth)",
+                "cloud %s/%s: no depth calib — pinhole fallback (assumes colour-aligned depth)",
                 ep.id, dev,
             )
         cams.append({

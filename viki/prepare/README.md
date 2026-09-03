@@ -22,14 +22,13 @@ track exists — the object-relative form.
 
 - **out:** `cln.npz` — keys in `contracts.CLN_KEYS`:
   `timestamps`, `positions (T,3)`, `rotations (T,3,3)`, `valid (T,)`,
-  `omega (T,)` *(stub: = `valid`)*, `gripper (T,)`, `coordinate_frame`,
+  `omega (T,)` (aggregated confidence), `gripper (T,)`, `coordinate_frame`,
   `raw_points`, `smoothed_points`, `landmark_ids`.
-  Optional `T_world_obj` / `T_obj_hand` when object tracking lands.
+  Optional `landmark_confidence (T,L)`, `T_world_obj` / `T_obj_hand`, and the
+  non-destructive `hand_fit_*` trajectory arrays when those stages run.
 
 ## Stubbed
 
 - fusion weights: the caller passes detector visibility only — the range and
   incidence factors of eq. 2 are not computed.
-- `omega` (per-frame confidence weight ω_t for the retarget cost): derived from
-  `valid`, not the aggregated landmark weights.
 - object-relative representation, SE(3) spline interpolation.

@@ -68,9 +68,9 @@ def _depth_K(entry: dict) -> np.ndarray | None:
 
 def _load_projector(raw: Path, dev_id: str, meta: dict):
     """Real SDK colour→depth projector, tried in order:
-    the episode's ``raw/<dev>_k4a_calib.bin`` → the k4a blob stored on the
-    episode's calibration preset (``meta['calibration_preset']``) → ``None``
-    (caller falls back to identity)."""
+    the episode's ``raw/<dev>_k4a_calib.bin`` (Kinect) → ``raw/<dev>_rs_calib.json``
+    (RealSense) → the k4a blob on the episode's calibration preset
+    (``meta['calibration_preset']``) → ``None`` (caller falls back to identity)."""
     try:
         from viki.perception.k4a_offline import K4ACalibration
 
@@ -79,6 +79,15 @@ def _load_projector(raw: Path, dev_id: str, meta: dict):
             return cal
     except Exception as exc:  # noqa: BLE001 — never let calib issues abort extract
         logger.warning("extract %s: episode k4a blob unusable (%s)", dev_id, exc)
+
+    try:
+        from viki.perception.rs_offline import RealSenseCalibration
+
+        cal = RealSenseCalibration.from_episode(raw, dev_id, meta)
+        if cal is not None:
+            return cal
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("extract %s: rs calib unusable (%s)", dev_id, exc)
 
     preset = (meta or {}).get("calibration_preset")
     if preset:

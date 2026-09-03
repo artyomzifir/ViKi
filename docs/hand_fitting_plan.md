@@ -1,5 +1,9 @@
 # Plan — articulated hand-to-point-cloud fitting
 
+> Historical per-frame design. The implemented trajectory-level design, the
+> measured functional balance (before/after) and the target-host measurements
+> are in `hand_fit_batch_design.md`.
+
 ## Goal
 
 Refine the wrist pose (`EndEffectorPose`: `position` + `R_world_palm`) by fitting

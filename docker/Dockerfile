@@ -63,13 +63,28 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN mkdir -p viki && touch viki/__init__.py
 RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps -e .
 
-# ── Perception backend: RTMPose-Hand via rtmlib on ONNX Runtime ───────────────
+# ── Perception backend: RTMPose-Hand via rtmlib on ONNX Runtime (CUDA) ────────
 # rtmlib hard-depends on opencv-python, which would fight the
 # opencv-python-headless pinned in pyproject.toml — install it without deps and
-# bring its real needs (onnxruntime, tqdm; cv2 comes from headless) explicitly.
+# bring its real needs (onnxruntime-gpu, tqdm; cv2 comes from headless) explicitly.
+#
+# GPU: onnxruntime-gpu ships CUDA 12 wheels (sm_120 / Blackwell OK) and the
+# nvidia-*-cu12 runtime wheels carry the CUDA/cuDNN .so files, so no CUDA base
+# image. The driver is injected by nvidia-container-toolkit (`gpus: all`).
+# `onnx` is for _pick_device()'s CUDA-EP probe session.
+#
+# CRITICAL: libonnxruntime_providers_cuda.so links libcublas.so.12 / libcudnn.so.9
+# / libcudart.so.12 etc. by SONAME, and the nvidia wheels drop those under
+# site-packages/nvidia/*/lib which is NOT on the default loader path — without
+# the ldconfig entry below the CUDA EP fails to load and ORT *silently* falls
+# back to CPU. (rtmpose.py also calls onnxruntime.preload_dlls() as a backstop.)
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install "onnxruntime>=1.17" "tqdm>=4.66" && \
-    pip install --no-deps rtmlib
+    pip install "onnxruntime-gpu>=1.22" "tqdm>=4.66" onnx \
+        nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cublas-cu12 \
+        nvidia-cufft-cu12 nvidia-curand-cu12 && \
+    pip install --no-deps rtmlib && \
+    ls -d /usr/local/lib/python3.*/dist-packages/nvidia/*/lib \
+        > /etc/ld.so.conf.d/nvidia-pip.conf && ldconfig
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh

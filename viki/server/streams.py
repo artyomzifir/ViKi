@@ -58,20 +58,33 @@ def camera_stream(
     pw, ph = PLACEHOLDER_SIZE
     last_ts = -1
 
-    # SDK intrinsics of the running camera; build an undistorter only if present.
-    intrinsics = cal.get_intrinsics(device_id)
-    if not intrinsics:
-        msg = f"Could not create camera stream: No SDK intrinsics for {device_id}"
-        logging.warning(msg)
-        undistorter = None
-    else:
-        undistorter = Undistorter(intrinsics.camera_matrix, intrinsics.dist_coeffs)
+    # SDK intrinsics come from the newest buffered frame, so right after start()
+    # (thread spawned, no frame yet) there are none. Resolve lazily in the loop
+    # instead of giving up for the whole stream — otherwise whichever <img>
+    # connects first races the first frame and stays un-undistorted until reload.
+    undistorter = None
+    intrinsics_tries = 60 if undistort else 0  # ~2 s of frames, then give up
     colorizer = DepthColorizer()
     # stabilizer = DepthStabilizer(use_bilateral=True)
 
 
     while True:
         frame = mgr.latest_frame(device_id)
+
+        if intrinsics_tries and frame is not None:
+            intrinsics = cal.get_intrinsics(device_id)
+            if intrinsics:
+                undistorter = Undistorter(
+                    intrinsics.camera_matrix, intrinsics.dist_coeffs
+                )
+                intrinsics_tries = 0
+            else:
+                intrinsics_tries -= 1
+                if intrinsics_tries == 0:
+                    logging.warning(
+                        "camera stream %s: no SDK intrinsics after 2 s — "
+                        "serving without undistortion", device_id,
+                    )
 
         if frame is None:
             if device_id not in mgr.active_device_ids():
@@ -135,6 +148,11 @@ def marked_camera_stream(
                 if worker is not None:
                     break
         if worker is None:
+            # camera_stream returned without a worker appearing → the device
+            # stopped. End the response instead of spinning this generator.
+            if device_id not in mgr.active_device_ids():
+                return
+            time.sleep(STREAM_IDLE_SLEEP)
             continue
         frame = mgr.latest_frame(device_id)
         if frame is None: # I think it's impossible

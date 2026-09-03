@@ -39,15 +39,33 @@ CLOUD_BG_TOLERANCE_MM: float  # |depth - background| below this = static scene, 
 PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
-PERCEPTION_HAND_FIT: bool  # refine wrist pose by fitting a capsule hand to the per-frame cloud (prepare stage)
-PERCEPTION_HAND_FIT_ROI_M: float  # radius (m) of the depth ROI re-deprojected around the wrist estimate
+PERCEPTION_HAND_FIT: bool  # run trajectory-level capsule hand fit at the end of prepare
+PERCEPTION_HAND_POSE_SOURCE: str  # landmarks | hand_fit; consumers select without overwriting cln pose
+PERCEPTION_HAND_FIT_ROI_MARGIN_M: float  # adaptive capsule-union ROI padding (m)
+PERCEPTION_HAND_FIT_FOREARM_CUT_M: float  # proximal offset of wrist cut plane (m)
+PERCEPTION_HAND_FIT_VOXEL_M: float  # deterministic voxel sample size (m)
 PERCEPTION_HAND_FIT_HUBER_M: float  # Huber δ (m) on the point→capsule data residual
-PERCEPTION_HAND_FIT_W_VEL: float  # λ_vel — temporal velocity regulariser
-PERCEPTION_HAND_FIT_W_ACC: float  # λ_acc — temporal acceleration regulariser
+PERCEPTION_HAND_FIT_W_DATA: float  # depth-cloud weight; multiplies the per-frame mean squared point→surface distance
+PERCEPTION_HAND_FIT_W_VEL_TRANSLATION: float
+PERCEPTION_HAND_FIT_W_VEL_ROTATION: float
+PERCEPTION_HAND_FIT_W_VEL_JOINTS: float
+PERCEPTION_HAND_FIT_W_ACC_TRANSLATION: float
+PERCEPTION_HAND_FIT_W_ACC_ROTATION: float
+PERCEPTION_HAND_FIT_W_ACC_JOINTS: float
 PERCEPTION_HAND_FIT_W_PRIOR: float  # λ_prior — joint-limit barrier weight
-PERCEPTION_HAND_FIT_W_POSTURE: float  # λ_posture — pull fingers toward the rest pose
-PERCEPTION_HAND_FIT_W_LANDMARK: float  # λ_landmark — anchor the model joints to the fused landmarks
-PERCEPTION_HAND_FIT_MAX_POINTS: int  # random-subsample the hand-ROI cloud to this many points before the fit
+PERCEPTION_HAND_FIT_W_POSTURE: float  # weak pull toward calibrated rest pose
+PERCEPTION_HAND_FIT_W_LANDMARK: float  # confidence-weighted initial landmark anchor
+PERCEPTION_HAND_FIT_LANDMARK_DECAY: float  # multiplier per outer ICP iteration
+PERCEPTION_HAND_FIT_INSIDE_SCALE: float  # one-sided attenuation for points inside capsules
+PERCEPTION_HAND_FIT_MIN_POINTS: int  # below this, frame has an empty data block
+PERCEPTION_HAND_FIT_MAX_POINTS: int  # max deterministic voxel representatives per frame
+PERCEPTION_HAND_FIT_MAX_NFEV: int
+PERCEPTION_HAND_FIT_OUTER_ITERATIONS: int
+PERCEPTION_HAND_FIT_WINDOW: int  # frames per sliding window; 0 = whole-episode batch
+PERCEPTION_HAND_FIT_WINDOW_OVERLAP: int  # overlapping frames blended between windows
+PERCEPTION_HAND_FIT_WORKERS: int  # window-solver threads; 0 = auto (min(4, cpu/2))
+PERCEPTION_HAND_FIT_WARM_START_MAD_K: float  # wrist warm-start spike gate (robust MAD units)
+PERCEPTION_HAND_FIT_DEADLINE_S: float  # wall-clock guard per fit_trajectory call; 0 = off
 KINECT_SYNC: dict  # {"master": "kinect_0", "subordinates": [...], "subordinate_delay_us": 160}; {} = software sync only
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
@@ -178,14 +196,32 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_INTERP_MAX_GAP": 0,
     "PERCEPTION_CONF_ALPHA": 1.0,
     "PERCEPTION_HAND_FIT": True,
-    "PERCEPTION_HAND_FIT_ROI_M": 0.12,
+    "PERCEPTION_HAND_POSE_SOURCE": "hand_fit",
+    "PERCEPTION_HAND_FIT_ROI_MARGIN_M": 0.030,
+    "PERCEPTION_HAND_FIT_FOREARM_CUT_M": 0.010,
+    "PERCEPTION_HAND_FIT_VOXEL_M": 0.004,
     "PERCEPTION_HAND_FIT_HUBER_M": 0.010,
-    "PERCEPTION_HAND_FIT_W_VEL": 40.0,
-    "PERCEPTION_HAND_FIT_W_ACC": 10.0,
-    "PERCEPTION_HAND_FIT_W_PRIOR": 200.0,
-    "PERCEPTION_HAND_FIT_W_POSTURE": 2.0,
-    "PERCEPTION_HAND_FIT_W_LANDMARK": 20.0,
-    "PERCEPTION_HAND_FIT_MAX_POINTS": 2500,
+    "PERCEPTION_HAND_FIT_W_DATA": 500.0,
+    "PERCEPTION_HAND_FIT_W_VEL_TRANSLATION": 40.0,
+    "PERCEPTION_HAND_FIT_W_VEL_ROTATION": 4.0,
+    "PERCEPTION_HAND_FIT_W_VEL_JOINTS": 0.8,
+    "PERCEPTION_HAND_FIT_W_ACC_TRANSLATION": 120.0,
+    "PERCEPTION_HAND_FIT_W_ACC_ROTATION": 10.0,
+    "PERCEPTION_HAND_FIT_W_ACC_JOINTS": 1.6,
+    "PERCEPTION_HAND_FIT_W_PRIOR": 100.0,
+    "PERCEPTION_HAND_FIT_W_POSTURE": 0.004,
+    "PERCEPTION_HAND_FIT_W_LANDMARK": 4.0,
+    "PERCEPTION_HAND_FIT_LANDMARK_DECAY": 0.35,
+    "PERCEPTION_HAND_FIT_INSIDE_SCALE": 0.15,
+    "PERCEPTION_HAND_FIT_MIN_POINTS": 40,
+    "PERCEPTION_HAND_FIT_MAX_POINTS": 400,
+    "PERCEPTION_HAND_FIT_MAX_NFEV": 35,
+    "PERCEPTION_HAND_FIT_OUTER_ITERATIONS": 4,
+    "PERCEPTION_HAND_FIT_WINDOW": 120,
+    "PERCEPTION_HAND_FIT_WINDOW_OVERLAP": 30,
+    "PERCEPTION_HAND_FIT_WORKERS": 0,
+    "PERCEPTION_HAND_FIT_WARM_START_MAD_K": 6.0,
+    "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
 }

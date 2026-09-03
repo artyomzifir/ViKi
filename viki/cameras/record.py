@@ -5,11 +5,11 @@ Record synchronised RGB-D scenes into an episode directory.
 
 Pipeline stage 1. Writes ``<dataset>/<id>/raw/`` — one colour ``.mp4`` and one
 folder of raw ``uint16`` depth ``.npy`` per camera, plus ``timestamps.json``, the
-SDK-reported intrinsics + active extrinsics in force at capture time, and (Kinect
-only) the raw calibration blob ``<dev>_k4a_calib.bin`` for offline depth↔colour
-projection — then marks ``status.json``. ``raw/`` is written once and never touched again; every
-later stage writes new artifacts alongside it, so re-processing can never
-corrupt the recording.
+SDK-reported intrinsics + active extrinsics in force at capture time, and the
+offline colour↔depth calibration (Kinect: ``<dev>_k4a_calib.bin``; RealSense:
+``<dev>_rs_calib.json``) — then marks ``status.json``. ``raw/`` is written once and
+never touched again; every later stage writes new artifacts alongside it, so
+re-processing can never corrupt the recording.
 
 There is no live skeleton path: you record as many scenes as you want, then run
 ``viki extract`` / ``prepare`` / ``retarget`` offline.
@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 import time
 from pathlib import Path
 
@@ -61,24 +63,52 @@ class SceneRecorder:
         self._depth_dirs: dict[str, Path] = {}
         self._timestamps: list[dict] = []
         self._n = 0
+        self._dropped = 0
 
     def record(self, seconds: float, fps: int = 15, stop_event=None) -> Episode:
         """Write every synced group until ``seconds`` elapse or ``stop_event``
-        is set (the Stop button). ``seconds`` is the safety cap. Returns the episode."""
+        is set (the Stop button). ``seconds`` is the safety cap. Returns the episode.
+
+        The capture loop only samples the synced group and hands it to a writer
+        thread — the mp4 encode + depth ``.npy`` writes never block the loop, so
+        it holds the ``1/fps`` cadence and the constant-fps mp4 stays true to
+        real time. If the writer can't keep up the queue fills and groups are
+        dropped (a shorter clean take beats a juddering full one)."""
         sync = MultiCameraSync(self._mgr, sync_fps=fps)
         self._write_sensor_meta()
+
+        q: queue.Queue = queue.Queue(maxsize=max(4, fps * 3))
+        self._dropped = 0
+        writer = threading.Thread(
+            target=self._writer_loop, args=(q, fps), name="scene-writer", daemon=True
+        )
+        writer.start()
+
         period = 1.0 / fps
         deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            if stop_event is not None and stop_event.is_set():
-                break
-            t0 = time.monotonic()
-            group = sync.get_synced_frame()
-            if group is not None:
-                self._save(group, fps)
-            slp = period - (time.monotonic() - t0)
-            if slp > 0:
-                time.sleep(slp)
+        try:
+            while time.monotonic() < deadline:
+                if stop_event is not None and stop_event.is_set():
+                    break
+                t0 = time.monotonic()
+                group = sync.get_synced_frame()
+                if group is not None:
+                    try:
+                        q.put_nowait(group)
+                    except queue.Full:
+                        self._dropped += 1
+                slp = period - (time.monotonic() - t0)
+                if slp > 0:
+                    time.sleep(slp)
+        finally:
+            q.put(None)  # sentinel — drain and stop the writer
+            writer.join(timeout=30.0)
+
+        if self._dropped:
+            logger.warning(
+                "recorder: dropped %d group(s) — writer/disk could not keep up at %d fps",
+                self._dropped, fps,
+            )
         self._finish(fps)
         return self.episode
 
@@ -86,6 +116,19 @@ class SceneRecorder:
 
     def _raw(self) -> Path:
         return self.episode.raw_dir
+
+    def _writer_loop(self, q: "queue.Queue", fps: int) -> None:
+        """Drain synced groups from the capture loop and persist them. Runs on
+        its own thread; ``cv2.VideoWriter.write`` and ``np.save`` release the GIL
+        during the encode/IO so the capture loop keeps its cadence."""
+        while True:
+            group = q.get()
+            if group is None:
+                return
+            try:
+                self._save(group, fps)
+            except Exception:  # noqa: BLE001 — never let one bad group kill the take
+                logger.exception("recorder: failed to write a group")
 
     def _save(self, group, fps: int) -> None:
         for dev_id, frame in group.frames.items():
@@ -119,25 +162,34 @@ class SceneRecorder:
             "dist_coeffs": np.asarray(intr.dist_coeffs).tolist(),
         }
 
-    def _stamp_k4a_calibration(self, dev_id: str, backend, cam_entry: dict) -> None:
-        """Save the k4a raw calibration blob + the enum ints an offline
-        ``k4a_calibration_get_from_raw`` rebuild needs. No-op for backends that
-        don't expose one (RealSense, or a Kinect that failed the size query)."""
-        blob = getattr(backend, "get_raw_calibration", lambda: None)() if backend else None
-        if not blob:
+    def _stamp_depth_calibration(self, dev_id: str, backend, cam_entry: dict) -> None:
+        """Persist whatever the offline colour↔depth reprojection needs for this
+        camera: the Kinect's raw k4a blob (+ enum ints), or the RealSense's
+        stream intrinsics + depth→colour extrinsic as ``<dev>_rs_calib.json``.
+        No-op for a backend that exposes neither."""
+        if backend is None:
             return
-        (self._raw() / f"{dev_id}_k4a_calib.bin").write_bytes(blob)
-        cam_entry["k4a_calib"] = f"{dev_id}_k4a_calib.bin"
-        try:
-            from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
 
-            cfg = backend.config or {}
-            cam_entry["k4a_depth_mode_int"] = _DEPTH_MODE_MAP.get(cfg.get("depth_mode"))
-            cam_entry["k4a_color_res_int"] = _COLOR_RES_MAP.get(
-                (int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        blob = getattr(backend, "get_raw_calibration", lambda: None)()
+        if blob:
+            (self._raw() / f"{dev_id}_k4a_calib.bin").write_bytes(blob)
+            cam_entry["k4a_calib"] = f"{dev_id}_k4a_calib.bin"
+            try:
+                from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
+
+                cfg = backend.config or {}
+                cam_entry["k4a_depth_mode_int"] = _DEPTH_MODE_MAP.get(cfg.get("depth_mode"))
+                cam_entry["k4a_color_res_int"] = _COLOR_RES_MAP.get(
+                    (int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return
+
+        rs_cal = getattr(backend, "get_rs_calibration", lambda: None)()
+        if rs_cal:
+            (self._raw() / f"{dev_id}_rs_calib.json").write_text(json.dumps(rs_cal, indent=2))
+            cam_entry["rs_calib"] = f"{dev_id}_rs_calib.json"
 
     def _write_sensor_meta(self) -> None:
         """Snapshot everything an offline run needs: SDK intrinsics, the active
@@ -176,7 +228,7 @@ class SceneRecorder:
                 "color_shape": list(frame.color.shape) if frame is not None else None,
                 "depth_shape": list(frame.depth.shape) if frame is not None and frame.has_depth() else None,
             }
-            self._stamp_k4a_calibration(dev_id, backend, cams[dev_id])
+            self._stamp_depth_calibration(dev_id, backend, cams[dev_id])
 
         (self._raw() / "intrinsics.json").write_text(json.dumps(intr, indent=2))
         (self._raw() / "extrinsics.json").write_text(json.dumps(extr, indent=2))
@@ -209,7 +261,7 @@ class SceneRecorder:
         mark_stage(
             self.episode, "record",
             frames=self._n, fps=fps, cameras=sorted(self._writers),
-            sync_bounded=stats["bounded"],
+            sync_bounded=stats["bounded"], dropped=self._dropped,
         )
         logger.info("recorded %d frames → %s", self._n, self.episode.root)
 

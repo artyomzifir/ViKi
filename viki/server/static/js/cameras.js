@@ -24,8 +24,12 @@ export async function scanDevices() {
     for (const [type, ids] of [['realsense', data.realsense], ['kinect', data.kinect]]) {
       for (const id of ids) {
         seen.add(id);
-        state[id] = { running: (data.active || []).includes(id), type, fresh: false,
-                      ...(state[id] || {}) };
+        // keep any per-session extras (want config, cfg) but always take
+        // `running` from the server — the spread must not re-apply a stale flag,
+        // or a camera the server dropped (e.g. after a web restart) still shows
+        // as running and "Start session" acts on a dead device.
+        state[id] = { fresh: false, ...(state[id] || {}),
+                      type, running: (data.active || []).includes(id) };
         state[id].type = type;
       }
     }
@@ -68,7 +72,12 @@ export async function stopCamera(id) {
 }
 
 export async function startAll() {
-  for (const id of Object.keys(state)) if (!state[id].running) await startCamera(id);
+  // Send each card's session config (res / fps / depth mode), same as the
+  // per-card Start button. With an empty body every camera would fall back to
+  // the Kinect-shaped API defaults — wrong resolution for a RealSense.
+  for (const id of Object.keys(state)) {
+    if (!state[id].running) await startCamera(id, readCardConfig(null, id));
+  }
 }
 
 export async function stopAll() {
@@ -136,29 +145,65 @@ export function noteCardChange(root, id) {
 
 // ── per-tab camera card helpers ───────────────────────────────────────────
 
-// Shared card markup used by the Record and Calibration tabs. The tab points
-// the COLOR / DEPTH <img>s at whatever stream it wants (via setStream).
-// Pass {depth:false} to omit the DEPTH panel (calibration doesn't need it, and
-// each held MJPEG stream costs a browser connection slot).
-export function cameraCardHTML(id, type, running, opts = {}) {
-  const depthPanel = opts.depth === false ? '' : `
-      <div class="stream-divider"></div>
-      <div class="stream-panel"><img data-role="depth" data-id="${id}"><span class="stream-label">DEPTH</span></div>`;
+// Shared card markup used by the Record and Calibration tabs. ONE MJPEG stream
+// per card — Chrome allows only 6 connections per host and an MJPEG response
+// never ends, so N cameras × (colour + depth) exhausts the budget and every
+// other request stalls. The RGB/D toggle in the header flips the single <img>
+// between the colour and depth feeds; only the selected one holds a connection.
+// Default: colour. The tab supplies the colour URL (Record: raw; Calibration:
+// board-overlay) via `syncCardStream` / `setCardView`; depth is always raw.
+export function cameraCardHTML(id, type, running, _opts = {}) {
   return `
-  <div class="cam-card${opts.depth === false ? ' no-depth' : ''}" data-id="${id}">
+  <div class="cam-card" data-id="${id}" data-view="color">
     <div class="card-header">
       <span class="dot ${running ? 'green' : 'grey'}" data-role="dot" data-id="${id}"></span>
       <span class="name">${id}</span>
       <span class="tag ${type}">${type}</span>
+      <span class="view-toggle">
+        <button data-role="view" data-view="color" data-id="${id}" class="active">RGB</button>
+        <button data-role="view" data-view="depth" data-id="${id}">D</button>
+      </span>
       <button data-role="start" data-id="${id}" ${running ? 'disabled' : ''}>▶ Start</button>
       <button data-role="stop" data-id="${id}" class="danger" ${running ? '' : 'disabled'}>■ Stop</button>
       <span class="cam-warn" data-role="warn" data-id="${id}" hidden></span>
     </div>
     <div class="card-controls">${controlsHTML(id, type)}</div>
     <div class="streams">
-      <div class="stream-panel"><img data-role="color" data-id="${id}"><span class="stream-label">COLOR</span></div>${depthPanel}
+      <div class="stream-panel">
+        <img data-role="stream" data-id="${id}">
+        <span class="stream-label" data-role="stream-label" data-id="${id}">COLOR</span>
+      </div>
     </div>
   </div>`;
+}
+
+// Point a card's single stream <img> at its selected view, or detach it when the
+// camera is off. `colorUrl` is tab-specific; depth is always the raw feed. A
+// no-op when the wanted (view, on/off) state already matches.
+export function syncCardStream(card, id, running, colorUrl) {
+  const img = card.querySelector('img[data-role="stream"]');
+  if (!img) return;
+  const view = card.dataset.view === 'depth' ? 'depth' : 'color';
+  const label = card.querySelector('[data-role="stream-label"]');
+  if (label) label.textContent = view === 'depth' ? 'DEPTH' : 'COLOR';
+  const tag = running ? view : 'off';
+  if (img.dataset.on === tag) return;
+  img.dataset.on = tag;
+  setStream(img, !running ? null
+    : view === 'depth' ? `/api/cameras/${id}/depth` : colorUrl);
+}
+
+// Handle an RGB/D toggle-button click: flip the card's view and re-point its
+// stream. Call from the tab's click handler (case 'view'); it passes the
+// tab-specific colour URL.
+export function setCardView(btn, colorUrl) {
+  const card = btn.closest('.cam-card');
+  if (!card) return;
+  const id = btn.dataset.id;
+  card.dataset.view = btn.dataset.view === 'depth' ? 'depth' : 'color';
+  card.querySelectorAll('[data-role="view"]').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === card.dataset.view));
+  syncCardStream(card, id, !!state[id]?.running, colorUrl);
 }
 
 export function controlsHTML(id, type) {

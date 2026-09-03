@@ -74,6 +74,15 @@ udevadm control --reload-rules
 udevadm trigger
 info "udev rules installed."
 
+# ── 4b. USB DMA memory limit for the Kinect pair ─────────────────────────────
+# Two high-bandwidth Kinects hit the default 16 MB usbfs cap (ENOMEM, errno 12).
+# Persist it here instead of poking /sys from the container (that needs
+# privileged / CAP_SYS_ADMIN, which the container no longer has).
+info "Setting usbcore.usbfs_memory_mb=1000 (modprobe.d + live)..."
+echo "options usbcore usbfs_memory_mb=1000" > /etc/modprobe.d/viki-usbfs.conf
+echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb 2>/dev/null || \
+    warn "could not set live usbfs_memory_mb (usbcore built-in?) — reboot applies the modprobe.d value"
+
 # ── 5. Add user to plugdev + video ───────────────────────────────────────────
 info "Adding '$CURRENT_USER' to plugdev, video, render groups..."
 usermod -aG plugdev,video,render "$CURRENT_USER"
