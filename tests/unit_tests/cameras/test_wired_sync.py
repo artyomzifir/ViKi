@@ -14,10 +14,12 @@ class _FakeMgr:
         return []
 
 
-@pytest.mark.parametrize("fps,expect_us", [(30, 25000), (15, 50000), (5, 150000)])
+@pytest.mark.parametrize("fps,expect_us", [(30, 50000), (15, 100000), (5, 300000)])
 def test_max_offset_default_tracks_frame_period(fps, expect_us):
     s = MultiCameraSync(_FakeMgr(), sync_fps=fps)
-    assert s._max_offset_us == expect_us  # 0.75 / sync_fps, a stale-frame guard
+    # 1.5 / sync_fps — clear of the half-period phase + jitter (a threshold
+    # under one frame period drops good frames), still trips on a real stall.
+    assert s._max_offset_us == expect_us
 
 
 def test_explicit_max_offset_still_wins():

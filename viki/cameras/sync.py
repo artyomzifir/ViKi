@@ -57,13 +57,15 @@ class MultiCameraSync:
     max_offset_us : int | None
         A frame is accepted if |frame.host_timestamp_us - tick_us| <= this value.
         This is a **stale-frame guard**, not a phase gate: ``nearest_to`` already
-        returns the closest frame, so free-running cameras whose phase differs
-        from the tick still group correctly — the check only rejects a frame that
-        is more than a fraction of a period from the tick, i.e. a camera that has
-        stalled and is handing back an old frame. ``None`` (default) ⇒
-        ``0.75 / sync_fps`` (25 ms at 30 fps, 50 ms at 15 fps). The previous
-        fixed 150 ms let a stalled camera's frame through silently for ~4½
-        frames; pass an explicit value only to widen it deliberately.
+        returns the closest frame. The loop tick has an arbitrary phase relative
+        to frame arrival, so even a healthy camera's nearest frame is routinely
+        up to half a period away (16.7 ms at 30 fps) plus USB jitter — a
+        threshold below one frame period silently drops good frames and starves
+        the output rate (25 ms cost ~25 % of frames at 30 fps in practice).
+        ``None`` (default) ⇒ ``1.5 / sync_fps`` (50 ms at 30 fps, 100 ms at
+        15 fps): well clear of the phase + jitter, still trips on a camera that
+        has stalled for more than a frame. The previous fixed 150 ms was ~4½
+        frames — too loose; pass an explicit value only to widen it deliberately.
     required_devices : list[str] | None
         Device IDs that must all have an in-tolerance frame for a group to be
         emitted.  None means all currently active devices are required.
@@ -80,7 +82,7 @@ class MultiCameraSync:
         self._sync_fps = sync_fps
         self._max_offset_us = (
             int(max_offset_us) if max_offset_us is not None
-            else int(round(0.75e6 / max(1, sync_fps)))
+            else int(round(1.5e6 / max(1, sync_fps)))
         )
         self._required_devices = required_devices
 
