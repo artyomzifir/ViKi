@@ -17,7 +17,7 @@ import logging
 import cv2
 import numpy as np
 
-from viki.calibration.geometry import canonical_board_extrinsics
+from viki.calibration.geometry import canonical_board_extrinsics, robust_planar_pnp
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +97,11 @@ def solve_extrinsics(
         if not obj_pts:
             logger.warning("no usable sets for %s; skipping", dev)
             continue
-        ok, rvec, tvec = cv2.solvePnP(
-            np.vstack(obj_pts), np.vstack(img_pts), _K(intr), dist,
-            flags=cv2.SOLVEPNP_ITERATIVE,
-        )
-        if not ok:
+        try:
+            rvec, tvec = robust_planar_pnp(
+                np.vstack(obj_pts), np.vstack(img_pts), _K(intr), dist, tag=dev
+            )
+        except RuntimeError:
             logger.warning("solvePnP failed for %s", dev)
             continue
         rvec, tvec = canonical_board_extrinsics(rvec, tvec, bs, ss)

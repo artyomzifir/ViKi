@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 from typing import List
 from viki.cameras.base import Frame
-from viki.calibration.geometry import canonical_board_extrinsics
+from viki.calibration.geometry import canonical_board_extrinsics, robust_planar_pnp
 from viki.contracts import (
     CalibrationSample,
     CalibrationIntrinsics,
@@ -111,12 +111,14 @@ class ChessboardWorker(_CalibrationWorker):
 
         camera_matrix = intrinsics.camera_matrix
         dist_coeffs = intrinsics.dist_coeffs
-        ret, rvec, tvec = cv2.solvePnP(objp, sample.corners, camera_matrix, dist_coeffs)
-
-        if not ret:
-            msg = f"{self.device_id} extrinsics calibration: cv2.solvePnP failed"
+        try:
+            rvec, tvec = robust_planar_pnp(
+                objp, sample.corners, camera_matrix, dist_coeffs, tag=self.device_id
+            )
+        except RuntimeError as exc:
+            msg = f"{self.device_id} extrinsics calibration: cv2.solvePnP failed ({exc})"
             self._logger.debug(msg)
-            raise RuntimeError(msg)
+            raise RuntimeError(msg) from exc
 
         rvec, tvec = canonical_board_extrinsics(
             rvec, tvec, sample.board_params.board_size, sample.board_params.square_size

@@ -14,7 +14,7 @@ from typing import List
 from cv2.typing import MatLike
 from viki.cameras.base import Frame
 from viki.cameras.manager import CameraManager
-from viki.calibration.geometry import canonical_board_extrinsics
+from viki.calibration.geometry import canonical_board_extrinsics, robust_planar_pnp
 from viki.contracts import (
     ArucoBoardParameters,
     BoardParameters,
@@ -220,13 +220,14 @@ class ArucoWorker(_CalibrationWorker):
             raise RuntimeError(msg)
 
         obj_v, img_v = np.vstack(obj_pts), np.vstack(img_pts)
-        ret, rvec, tvec = cv2.solvePnP(
-            obj_v, img_v, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE,
-        )
-        if not ret:
-            msg = f"{self.device_id} extrinsics: pose estimation failed"
+        try:
+            rvec, tvec = robust_planar_pnp(
+                obj_v, img_v, camera_matrix, dist_coeffs, tag=self.device_id
+            )
+        except RuntimeError as exc:
+            msg = f"{self.device_id} extrinsics: pose estimation failed ({exc})"
             self._logger.debug(msg)
-            raise RuntimeError(msg)
+            raise RuntimeError(msg) from exc
 
         # Reprojection RMS — a healthy solve is ~1 px. A large value means the
         # intrinsics don't match the images (wrong resolution) or the board
