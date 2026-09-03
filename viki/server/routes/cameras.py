@@ -107,6 +107,26 @@ async def start_camera(
             role = "master" if wired_sync_mode == _WIRED_MASTER else "subordinate"
             logger.info("cameras: %s starting as hardware-sync %s", device_id, role)
 
+    # Ordering: a subordinate must be running (listening for trigger pulses)
+    # before the master starts firing them. If this is the master, bring any
+    # configured-but-inactive subordinate up first with matching capture params.
+    if wired_sync_mode == _WIRED_MASTER and req.wired_sync_mode == 0:
+        spec = getattr(config, "KINECT_SYNC", {}) or {}
+        for sub in spec.get("subordinates") or []:
+            if sub in mgr.active_device_ids():
+                continue
+            _sm, _sd = _wired_sync_for(sub)
+            try:
+                mgr.start(
+                    sub, fps=req.fps, color_width=req.color_width,
+                    color_height=req.color_height, depth_mode=req.depth_mode,
+                    wired_sync_mode=_sm, subordinate_delay_us=_sd,
+                    synchronized_images_only=req.synchronized_images_only,
+                )
+                logger.info("cameras: auto-started subordinate %s before master %s", sub, device_id)
+            except Exception:  # noqa: BLE001 — master start will still be attempted
+                logger.exception("cameras: subordinate %s auto-start failed", sub)
+
     try:
         outcome = mgr.start(
             device_id,

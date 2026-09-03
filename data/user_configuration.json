@@ -145,7 +145,13 @@
   "KINECT_DEPTH_MODE_MAX_FPS": {
     "WFOV_UNBINNED": 15
   },
-  "KINECT_SYNC": {},
+  "KINECT_SYNC": {
+    "master": "kinect_0",
+    "subordinates": [
+      "kinect_1"
+    ],
+    "subordinate_delay_us": 160
+  },
   "SKELETON_COORDINATE_FRAME": "robot_base",
   "SKELETON_RECS_DIR": "data/skeleton_recs",
   "SKELETON_SMOOTHED_DIR": "data/skeleton_smoothed",
@@ -208,5 +214,5 @@
   "EXPORT_FPS": 15,
   "EPISODES_DIR": "data/episodes",
   "DATASETS_DIR": "data/datasets",
-  "ACTIVE_CALIBRATION": "popka"
+  "ACTIVE_CALIBRATION": "arteom_dont_kill_me_pls"
 }

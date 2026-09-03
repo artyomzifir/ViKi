@@ -54,10 +54,16 @@ class MultiCameraSync:
     sync_fps : int
         Output tick rate.  Must be <= the slowest camera's FPS or groups will
         be dropped whenever the slow camera hasn't produced a fresh frame.
-    max_offset_us : int
+    max_offset_us : int | None
         A frame is accepted if |frame.host_timestamp_us - tick_us| <= this value.
-        Default: half a 30 fps frame (≈ 16.7 ms), which is conservative enough
-        for USB delivery jitter at any supported frame rate.
+        This is a **stale-frame guard**, not a phase gate: ``nearest_to`` already
+        returns the closest frame, so free-running cameras whose phase differs
+        from the tick still group correctly — the check only rejects a frame that
+        is more than a fraction of a period from the tick, i.e. a camera that has
+        stalled and is handing back an old frame. ``None`` (default) ⇒
+        ``0.75 / sync_fps`` (25 ms at 30 fps, 50 ms at 15 fps). The previous
+        fixed 150 ms let a stalled camera's frame through silently for ~4½
+        frames; pass an explicit value only to widen it deliberately.
     required_devices : list[str] | None
         Device IDs that must all have an in-tolerance frame for a group to be
         emitted.  None means all currently active devices are required.
@@ -67,12 +73,15 @@ class MultiCameraSync:
         self,
         manager: CameraManager,
         sync_fps: int = 15,
-        max_offset_us: int = 150000,
+        max_offset_us: Optional[int] = None,
         required_devices: Optional[list] = None,
     ) -> None:
         self._manager = manager
         self._sync_fps = sync_fps
-        self._max_offset_us = max_offset_us
+        self._max_offset_us = (
+            int(max_offset_us) if max_offset_us is not None
+            else int(round(0.75e6 / max(1, sync_fps)))
+        )
         self._required_devices = required_devices
 
     def get_synced_frame(self) -> Optional[SyncedFrameGroup]:
