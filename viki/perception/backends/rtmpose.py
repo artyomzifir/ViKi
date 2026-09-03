@@ -54,7 +54,13 @@ def _pick_device() -> str:
             [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
             [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
         )
-        model = helper.make_model(g, opset_imports=[helper.make_opsetid("", 13)])
+        # Pin a low IR version: onnx>=1.18 defaults new models to IR 13, which
+        # onnxruntime 1.23 rejects ("max supported IR version: 11"), making the
+        # probe fail and this fall back to CPU even though the real rtmlib models
+        # (IR<=10) load on CUDA fine. The probe must not out-run the runtime.
+        model = helper.make_model(
+            g, ir_version=10, opset_imports=[helper.make_opsetid("", 13)]
+        )
         so = ort.SessionOptions()
         so.log_severity_level = 3
         sess = ort.InferenceSession(
