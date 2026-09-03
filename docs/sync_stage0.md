@@ -1,7 +1,33 @@
 # Stage 0 — rig time-sync measurement (multi-view triangulation task)
 
-Status: **measurement complete. Verdict: sync is the blocker — the triangulation
-task pauses until the Kinect pair is hardware-synced.**
+Status: **RESOLVED.** The Kinect pair was wired for hardware sync; a fresh take
+measures inter-camera P95 = **2.5 ms** (was 20–31 ms software-only). The
+triangulation task is unblocked.
+
+## After wiring the hardware sync (2026-09-03, take `2026-09-03_16-25-03`)
+
+| | median | P95 | max | groups > 16.7 ms |
+|---|---|---|---|---|
+| software-only (5 takes) | 7–16 ms | 20–31 ms | 22–39 ms | 8–44 % |
+| **wired sync** | **1.6 ms** | **2.5 ms** | **5.0 ms** | **0 %** |
+
+At 1 m/s hand speed the spatial error from desync drops from ~30 mm to ~2.5 mm —
+well inside the budget for multi-view triangulation.
+
+Cable direction: **kinect_1 SYNC OUT → kinect_0 SYNC IN**, i.e. master =
+`kinect_1`, subordinate = `kinect_0` (the SDK's cable-presence check fails on
+*both* devices when the roles are assigned the wrong way round — that is how the
+direction was determined). `KINECT_SYNC` in the config is set accordingly;
+`record.py` stamps `meta["kinect_sync"]` so a take is self-identifying.
+
+`std_offset_us` (offset-from-tick jitter, a separate quantity) also roughly
+halved, 9 ms → 4.8 ms. The `drift_ms_per_min` in `sync_stats.json` for a 10 s
+take is a meaningless fit (too short); ignore `sync_bounded: false` on short
+clips.
+
+---
+
+## Original measurement (software-only) — kept for the record
 
 Measured from the existing `raw/timestamps.json` of every recorded episode
 (`data/_sync_stage0.py`, since removed). No pipeline changes.
