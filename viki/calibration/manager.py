@@ -10,6 +10,7 @@ computing intrinsics/extrinsics, and persisting results to JSON files.
 import cv2
 import json
 import logging
+import os
 from typing import Dict, List
 from viki.cameras.manager import CameraManager
 from viki.contracts import (
@@ -37,6 +38,19 @@ from viki.calibration.file import (
 from viki.calibration.worker import _CalibrationWorker
 from viki.calibration.chessboard_worker import ChessboardWorker
 from viki.calibration.aruco_worker import ArucoWorker
+
+
+def _to_list(x) -> list:
+    try:
+        return [float(v) for v in x]
+    except TypeError:
+        return []
+
+
+def _np_arr(x):
+    import numpy as np
+
+    return np.asarray(x, dtype=float)
 
 
 class CalibrationManager:
@@ -396,6 +410,13 @@ class CalibrationManager:
             return {"captured": False, "missing": missing}
 
         idx = self._workers[devs[0]].samples_count - 1
+
+        reject = self._reject_if_pose_too_close(devs)
+        if reject is not None:
+            for d in devs:  # roll the whole set back
+                self._workers[d].pop_sample(self._workers[d].samples_count - 1)
+            return {"captured": False, "missing": [], "rejected": True, **reject}
+
         images = {}
         for d in devs:
             w = self._workers[d]
@@ -406,6 +427,139 @@ class CalibrationManager:
                 images[d] = frame.color
         captures.save_set(captures.LIVE, idx, images)
         return {"captured": True, "missing": [], "index": idx}
+
+    # ── multi-pose diversity (spec §4.1–4.2) ─────────────────────────────
+
+    def _reference_device(self) -> str | None:
+        return sorted(self._workers)[0] if self._workers else None
+
+    def _reject_if_pose_too_close(self, devs: list[str]) -> dict | None:
+        """After a set is appended to every worker, refuse it if its board pose
+        (in the reference camera) is within both thresholds of an earlier set —
+        ten shots of one pose is what makes the joint solve degenerate.
+        Returns a ``{conflict, reason}`` dict to reject, or ``None`` to keep."""
+        from viki import config
+        from viki.calibration import coverage
+
+        board = self.board_cfg()
+        ref = self._reference_device()
+        if not board or board.get("type") != "aruco" or ref is None:
+            return None
+        intr = self.get_intrinsics(ref)
+        if intr is None:
+            return None
+        obj_all = coverage.board_obj_points(board)
+        K, dist = intr.camera_matrix, intr.dist_coeffs
+        samples = self._workers[ref].samples
+        if len(samples) < 2:
+            return None
+        cand = coverage.board_pose(samples[-1].c_ids, samples[-1].corners, K, dist, obj_all)
+        if cand is None:
+            return None
+        existing = [
+            p for s in samples[:-1]
+            if (p := coverage.board_pose(s.c_ids, s.corners, K, dist, obj_all)) is not None
+        ]
+        j = coverage.nearest_pose(
+            cand, existing,
+            min_angle_deg=config.CALIB_POSE_MIN_ANGLE_DEG,
+            min_translation_m=config.CALIB_POSE_MIN_TRANSLATION_M,
+        )
+        if j is None:
+            return None
+        return {
+            "conflict": j,
+            "reason": (f"board pose too close to set #{j} "
+                       f"(< {config.CALIB_POSE_MIN_ANGLE_DEG:.0f}° / "
+                       f"{config.CALIB_POSE_MIN_TRANSLATION_M * 100:.0f} cm) — "
+                       f"move or tilt the board"),
+        }
+
+    def _observation_sets(self) -> list[dict]:
+        """Every capture set as ``{observations: {dev: {charuco_ids,
+        charuco_corners}}}`` — the shape the bundle solver and the readiness
+        check consume."""
+        by_cam = self.sets_payload()
+        devs = list(by_cam)
+        n = max((len(v) for v in by_cam.values()), default=0)
+        out = []
+        for k in range(n):
+            obs = {}
+            for d in devs:
+                if k < len(by_cam[d]):
+                    row = by_cam[d][k]
+                    obs[d] = {
+                        "charuco_ids": row.get("c_ids", []),
+                        "charuco_corners": row.get("corners", []),
+                    }
+            out.append({"set_id": f"live-{k:03d}", "observations": obs})
+        return out
+
+    def intrinsics_payload(self) -> dict[str, dict]:
+        """SDK colour intrinsics incl. distortion + frame size for every active
+        worker — the form the bundle solver / readiness check want."""
+        out: dict[str, dict] = {}
+        for dev in self._workers:
+            ci = self.get_intrinsics(dev)
+            if ci is None:
+                continue
+            frame = self._mgr.latest_frame(dev)
+            entry = {"fx": ci.fx, "fy": ci.fy, "cx": ci.cx, "cy": ci.cy,
+                     "dist_coeffs": _to_list(ci.dist_coeffs)}
+            shape = getattr(getattr(frame, "color", None), "shape", None)
+            if shape and len(shape) >= 2:
+                entry["width"], entry["height"] = int(shape[1]), int(shape[0])
+            out[dev] = entry
+        return out
+
+    def readiness(self) -> dict:
+        """Solve-ready criteria over the collected sets (spec §4.2)."""
+        from viki import config
+        from viki.calibration import coverage
+
+        board = self.board_cfg() or {}
+        return coverage.readiness(
+            self._observation_sets(),
+            self.intrinsics_payload(),
+            board,
+            reference_device=self._reference_device(),
+            min_sets=config.CALIB_MIN_SETS,
+            min_covisible_sets=config.CALIB_MIN_COVISIBLE_SETS,
+            min_tilted_sets=config.CALIB_MIN_TILTED_SETS,
+            tilt_min_deg=config.CALIB_TILT_MIN_DEG,
+            min_frame_coverage=config.CALIB_MIN_FRAME_COVERAGE,
+        )
+
+    def solve_bundle_live(self, path: str = EXTRINSICS_FILENAME) -> dict:
+        """Joint multi-pose bundle over the collected sets (spec §4.3). Writes
+        each camera's pose in the **rig (reference-camera) frame** to ``path``
+        as the legacy ``[{device_id, rvec, tvec}]`` list — downstream reads that
+        shape — and caches it. The board-relative world orientation is a
+        separate artifact (the world anchor, S4)."""
+        from viki.calibration import artifacts
+        from viki.calibration.bundle import solve_bundle
+
+        board = self.board_cfg() or {}
+        out = solve_bundle(
+            self._observation_sets(), self.intrinsics_payload(), board,
+            reference_device=self._reference_device(),
+        )
+        try:  # drop any stale entries from a previous solve
+            os.remove(path)
+        except OSError:
+            pass
+        for dev, T in out["devices"].items():
+            pair = artifacts.as_camera_extrinsics(T)
+            extr = CalibrationExtrinsics(
+                rvec=_np_arr(pair["rvec"]), tvec=_np_arr(pair["tvec"])
+            )
+            self.set_extrinsics(dev, extr, path)
+        self._logger.info(
+            "bundle solve: ref=%s rms=%s%s",
+            out["reference_device"], out["solve"].get("rms_reproj_px"),
+            " DEGENERATE" if out["solve"].get("degenerate") else "",
+        )
+        return out
 
     def clear_all(self) -> None:
         """Drop every sample on every worker and wipe the live capture photos."""

@@ -84,6 +84,13 @@ CALIB_ARUCO_BOARD_SIZE: list[int]
 CALIB_ARUCO_SQUARE_SIZE: float
 CALIB_ARUCO_MARKER_SIZE: float
 CALIB_ARUCO_DICT: int
+CALIB_POSE_MIN_ANGLE_DEG: float       # reject a capture set whose board pose is within this angle …
+CALIB_POSE_MIN_TRANSLATION_M: float   # … AND this translation of an already-collected set
+CALIB_TILT_MIN_DEG: float             # a set counts as "tilted" when board-normal vs ref optical axis exceeds this
+CALIB_MIN_SETS: int                   # Solve gate: minimum capture sets
+CALIB_MIN_COVISIBLE_SETS: int         # Solve gate: sets seen by every active camera at once
+CALIB_MIN_TILTED_SETS: int            # Solve gate: sets above CALIB_TILT_MIN_DEG
+CALIB_MIN_FRAME_COVERAGE: float       # Solve gate: min fraction of a 4×4 image grid touched by corners, per camera
 RECORDING_DURATION: int
 RECORDING_FPS: int
 RETARGET_DEFAULT_ROBOT: str
@@ -224,6 +231,13 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
+    "CALIB_POSE_MIN_ANGLE_DEG": 8.0,
+    "CALIB_POSE_MIN_TRANSLATION_M": 0.05,
+    "CALIB_TILT_MIN_DEG": 25.0,
+    "CALIB_MIN_SETS": 8,
+    "CALIB_MIN_COVISIBLE_SETS": 6,
+    "CALIB_MIN_TILTED_SETS": 3,
+    "CALIB_MIN_FRAME_COVERAGE": 0.60,
 }
 
 

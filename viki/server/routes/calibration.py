@@ -148,6 +148,39 @@ async def capture_all(
     return res
 
 
+@router.get("/readiness")
+async def readiness(cal: CalibrationManager = Depends(get_calibrator)):
+    """Solve-ready criteria over the collected capture sets (spec §4.2): set
+    count, all-camera-covisible count, tilted-set count and per-camera frame
+    coverage, each with its threshold, plus a single ``ready`` flag that gates
+    the *Solve* button."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    return cal.readiness()
+
+
+@router.post("/solve")
+async def solve_bundle(
+    force: bool = False, cal: CalibrationManager = Depends(get_calibrator)
+):
+    """Joint multi-pose bundle solve (spec §4.3) over every collected set.
+    Refused unless the readiness criteria are met (pass ``force=true`` to
+    override — the result carries ``solve.degenerate`` when the geometry is
+    under-constrained)."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    rd = cal.readiness()
+    if not rd["ready"] and not force:
+        unmet = [c["name"] for c in rd["criteria"] if not c["ok"]]
+        raise HTTPException(422, f"not ready to solve — unmet: {', '.join(unmet)}")
+    try:
+        out = cal.solve_bundle_live(EXTRINSICS_FILENAME)
+    except (ValueError, RuntimeError) as exc:
+        logger.warning("bundle solve failed: %s", exc)
+        raise HTTPException(422, f"bundle solve failed: {exc}") from exc
+    return {"reference_device": out["reference_device"], "solve": out["solve"]}
+
+
 @router.post("/clear")
 async def clear_all(cal: CalibrationManager = Depends(get_calibrator)):
     """Drop every sample on every camera and wipe the live capture photos."""
