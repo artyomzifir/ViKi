@@ -261,6 +261,15 @@ class SceneRecorder:
             meta["calibration_preset"] = current_active()
         except Exception:  # noqa: BLE001
             pass
+        # Record whether the Kinect pair ran on the wired hardware sync, so the
+        # sync-measurement script (and any downstream time-budget check) can tell
+        # a hardware-synced take from a software-only one.
+        try:
+            from viki import config as _cfg
+
+            meta["kinect_sync"] = getattr(_cfg, "KINECT_SYNC", {}) or {}
+        except Exception:  # noqa: BLE001
+            pass
         save_meta(self.episode, meta)
 
     def _write_manifest(self) -> None:

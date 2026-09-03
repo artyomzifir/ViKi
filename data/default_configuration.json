@@ -158,9 +158,9 @@
     "WFOV_UNBINNED": 15
   },
   "KINECT_SYNC": {
-    "master": "kinect_0",
+    "master": "kinect_1",
     "subordinates": [
-      "kinect_1"
+      "kinect_0"
     ],
     "subordinate_delay_us": 160
   },
