@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -232,6 +234,19 @@ class SceneRecorder:
 
         (self._raw() / "intrinsics.json").write_text(json.dumps(intr, indent=2))
         (self._raw() / "extrinsics.json").write_text(json.dumps(extr, indent=2))
+
+        # World anchor — T_world_display for the viewer / AABB / export only.
+        # extrinsics.json above is the RIG (reference-camera) frame; this is the
+        # separate presentation transform. Absent ⇒ downstream treats it as
+        # identity (rig frame == display frame).
+        try:
+            from viki import config as _cfg
+
+            _ap = getattr(_cfg, "WORLD_ANCHOR_FILENAME", "data/world_anchor.json")
+            if os.path.exists(_ap):
+                shutil.copyfile(_ap, self._raw() / "world_anchor.json")
+        except Exception:  # noqa: BLE001
+            logger.warning("record: world anchor not snapshotted", exc_info=True)
 
         meta = load_meta(self.episode)
         meta["cameras"] = cams

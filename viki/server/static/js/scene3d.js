@@ -64,8 +64,15 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   scene.add(boardGroup);
   const bboxGroup = new THREE.Group();
   scene.add(bboxGroup);
+
+  // Everything data-driven lives in the RIG (reference-camera) frame; the
+  // world anchor's T_world_display is applied here, for presentation only.
+  const worldGroup = new THREE.Group();
+  worldGroup.matrixAutoUpdate = false;
+  scene.add(worldGroup);
+
   const frustaGroup = new THREE.Group();
-  scene.add(frustaGroup);
+  worldGroup.add(frustaGroup);
 
   // ── dynamic ───────────────────────────────────────────────────────────
   const cloud = new THREE.Points(
@@ -73,22 +80,22 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     new THREE.PointsMaterial({ size: 0.006, vertexColors: true, sizeAttenuation: true })
   );
   cloud.frustumCulled = false;
-  scene.add(cloud);
+  worldGroup.add(cloud);
 
   const trajLine = new THREE.Line(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0x9aa4b2 })
   );
-  scene.add(trajLine);
+  worldGroup.add(trajLine);
 
   const fusedSkel = new THREE.LineSegments(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0xffd166, linewidth: 2 })
   );
-  scene.add(fusedSkel);
+  worldGroup.add(fusedSkel);
 
   const camSkelGroup = new THREE.Group();
-  scene.add(camSkelGroup);
+  worldGroup.add(camSkelGroup);
 
   // Fitted hand: translucent cylinders are used because WebGL ignores line
   // widths. Reconstructing the MediaPipe joints from capsule endpoints lets us
@@ -107,17 +114,17 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   );
   handBones.count = handJoints.count = 0;
   handBones.frustumCulled = handJoints.frustumCulled = false;
-  scene.add(handBones, handJoints);
+  worldGroup.add(handBones, handJoints);
 
   const palmTriad = new THREE.AxesHelper(0.05);
   palmTriad.visible = false;
-  scene.add(palmTriad);
+  worldGroup.add(palmTriad);
   const gripDot = new THREE.Mesh(
     new THREE.SphereGeometry(0.012, 12, 12),
     new THREE.MeshBasicMaterial({ color: 0x4ade80 })
   );
   gripDot.visible = false;
-  scene.add(gripDot);
+  worldGroup.add(gripDot);
 
   // ── state ─────────────────────────────────────────────────────────────
   let geo = null, cmeta = null, epId = null, episodes = [], epIndex = -1;
@@ -174,6 +181,21 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     gripDot.visible = layers.palm && gripDot.userData.have;
     handBones.visible = layers.handFit;
     handJoints.visible = layers.handFit;
+  }
+
+  function applyWorldDisplay(m) {
+    // m is a row-major 4x4 (rig -> display). three.js Matrix4.set() takes
+    // row-major args, so this is a direct load.
+    if (Array.isArray(m) && m.length === 4) {
+      worldGroup.matrix.set(
+        m[0][0], m[0][1], m[0][2], m[0][3],
+        m[1][0], m[1][1], m[1][2], m[1][3],
+        m[2][0], m[2][1], m[2][2], m[2][3],
+        m[3][0], m[3][1], m[3][2], m[3][3]);
+    } else {
+      worldGroup.matrix.identity();
+    }
+    worldGroup.matrixWorldNeedsUpdate = true;
   }
 
   function buildBoard() {
@@ -425,6 +447,7 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     if (!id) { clearCloud(); geo = null; return { hasCloud: false }; }
     try {
       geo = await api('GET', `/api/pipeline/episode/${id}/geometry`);
+      applyWorldDisplay(geo && geo.t_world_display);
     } catch (e) { geo = null; log && log('scene: ' + e, 'error'); }
     buildBoard(); buildBbox(); buildFrusta(); buildTrajectory(); frameCamera();
     try { cmeta = await api('GET', `/api/pipeline/episode/${id}/cloud`); }

@@ -224,6 +224,7 @@ async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
         except Exception:  # noqa: BLE001
             pass
     out["workspace_bbox"] = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
+    out["t_world_display"] = _world_display(ep)
 
     extr_path = ep.raw_dir / "extrinsics.json"
     if extr_path.exists():
@@ -316,6 +317,22 @@ def _nan_rows(arr) -> list:
     return [[None if not np.isfinite(v) else float(v) for v in row] for row in a]
 
 
+def _world_display(ep) -> list:
+    """The episode's ``T_world_display`` (4x4 nested list) from
+    ``raw/world_anchor.json``, or identity. Data in the geometry response and
+    the cloud are in the RIG (reference-camera) frame; the viewer applies this
+    for presentation only."""
+    p = ep.raw_dir / "world_anchor.json"
+    if p.exists():
+        try:
+            m = json.loads(p.read_text()).get("T_world_display")
+            if m and len(m) == 4:
+                return [[float(v) for v in row] for row in m]
+        except (ValueError, OSError, TypeError):
+            pass
+    return [[1.0 if i == j else 0.0 for j in range(4)] for i in range(4)]
+
+
 # ── coloured point cloud (Viewer tab) ────────────────────────────────
 
 
@@ -325,7 +342,9 @@ async def cloud_meta(ep_id: str):
     p = ep.cloud_dir / "meta.json"
     if not p.exists():
         raise HTTPException(404, "no cloud; run the 'cloud' stage first")
-    return json.loads(p.read_text())
+    meta = json.loads(p.read_text())
+    meta.setdefault("t_world_display", _world_display(ep))
+    return meta
 
 
 @_ep.get("/episode/{ep_id}/cloud/{frame}")

@@ -240,10 +240,44 @@ def test_resolve_from_observations_reproduces(store):
     artifacts.write_world_anchor("rig", T_world_display=np.eye(4), observations={})
     h0 = artifacts.extrinsics_hash("rig")
 
+    # world anchor stored from real observations -> re-solve keeps it fresh
+    anchor_obs = {"cam_ref": sets[0]["observations"]["cam_ref"]}
+    artifacts.write_world_anchor("rig", observations=anchor_obs)
+    assert not artifacts.world_anchor_stale("rig")
+
     artifacts.resolve_from_observations("rig")
     np.testing.assert_allclose(
         artifacts.device_transforms("rig")["cam_b"],
         np.asarray(first["devices"]["cam_b"]), atol=1e-6,
     )
     assert artifacts.extrinsics_hash("rig") != h0          # created_at moved
-    assert artifacts.world_anchor_stale("rig")             # dependent went stale
+    assert not artifacts.world_anchor_stale("rig")         # recomputed automatically
+
+
+def test_compute_world_display_puts_the_board_at_origin_z_up(store):
+    board = {"type": "aruco", "board_size": [5, 4], "square_size": 0.03,
+             "marker_size": 0.022, "aruco_dict": int(cv2.aruco.DICT_4X4_50)}
+    Kd = {"fx": 600.0, "fy": 600.0, "cx": 320.0, "cy": 240.0, "width": 640, "height": 480,
+          "dist_coeffs": [0, 0, 0, 0, 0]}
+    Km = np.array([[600, 0, 320], [0, 600, 240], [0, 0, 1.0]])
+    from viki.calibration.samples import _charuco_board
+    obj = np.asarray(_charuco_board(board).getChessboardCorners(), np.float64)
+
+    # tilted board in the reference camera
+    rvec = np.array([0.6, -0.2, 0.05])
+    tvec = np.array([0.03, -0.02, 0.65])
+    R, _ = cv2.Rodrigues(rvec)
+    uv = cv2.projectPoints(obj, rvec, tvec, Km, np.zeros(5))[0].reshape(-1, 2)
+    obs = {"cam_ref": {"charuco_ids": list(range(len(obj))), "charuco_corners": uv.tolist()}}
+
+    T = artifacts.compute_world_display(
+        obs, {"cam_ref": Kd}, board, {"cam_ref": np.eye(4)}
+    )
+    assert T[2, 3] > 0        # reference camera sits at world +Z (board reads face-up)
+
+    # board corners in the rig frame -> apply T -> canonical board coords
+    Xrig = obj @ R.T + tvec
+    Xworld = Xrig @ T[:3, :3].T + T[:3, 3]
+    assert abs(Xworld[:, 2]).max() < 1e-6       # board lies exactly on world Z = 0
+    # centred to within the canonical_board_extrinsics half-square rounding
+    assert np.linalg.norm(Xworld[:, :2].mean(axis=0)) < board["square_size"]

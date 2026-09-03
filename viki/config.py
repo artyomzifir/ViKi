@@ -19,6 +19,7 @@ USER_CONFIG_PATH = "data/user_configuration.json"
 
 # Duck variables which LSP can catch and use
 EXTRINSICS_FILENAME: str
+WORLD_ANCHOR_FILENAME: str  # live world-anchor (T_world_display); folded into a preset on save-as
 ACTIVE_CALIBRATION: str  # name of the active preset under data/calibrations/, or ""
 DEFAULT_FPS: int
 DEFAULT_COLOR_WIDTH: int
@@ -231,6 +232,7 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
+    "WORLD_ANCHOR_FILENAME": "data/world_anchor.json",
     "CALIB_POSE_MIN_ANGLE_DEG": 8.0,
     "CALIB_POSE_MIN_TRANSLATION_M": 0.05,
     "CALIB_TILT_MIN_DEG": 25.0,

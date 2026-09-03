@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,8 @@ from typing import Any
 import numpy as np
 
 from viki.calibration.presets import PRESETS_DIR, _safe_name, preset_path
+
+logger = logging.getLogger(__name__)
 
 EXTRINSICS_SCHEMA = 2
 WORLD_ANCHOR_SCHEMA = 1
@@ -178,7 +181,7 @@ def resolve_from_observations(name: str, *, reference_device: str | None = None)
         data.get("board") or {},
         reference_device=reference_device or data.get("reference_device"),
     )
-    return write_extrinsics(
+    payload = write_extrinsics(
         name,
         reference_device=out["reference_device"],
         devices=out["devices"],  # {dev: 4x4 list}
@@ -187,6 +190,11 @@ def resolve_from_observations(name: str, *, reference_device: str | None = None)
         intrinsics=data.get("intrinsics", {}),
         board=data.get("board"),
     )
+    try:
+        recompute_world_anchor(name)  # keep the anchor on the new rig frame
+    except (ValueError, KeyError) as exc:
+        logger.warning("resolve %s: world anchor not recomputed (%s)", name, exc)
+    return payload
 
 
 def read_extrinsics(name: str) -> dict | None:
@@ -217,13 +225,81 @@ def rig_extrinsics(name: str) -> dict[str, dict]:
 # ── world_anchor.json ────────────────────────────────────────────────────
 
 
+def compute_world_display(
+    observations: dict[str, Any],
+    intrinsics: dict[str, dict],
+    board_cfg: dict,
+    device_transforms: dict[str, Any],
+) -> np.ndarray:
+    """``T_world_display`` (4x4, rig frame → display/world frame) from one set of
+    home-pose ChArUco observations.
+
+    The board is solved in whichever observing camera has a known rig pose,
+    lifted into the rig (reference-camera) frame, then re-centred on the board
+    centre with +Z out of the table (:func:`canonical_board_extrinsics`). The
+    result is *only* a presentation transform — it never re-enters the solve,
+    the cloud or hand-fit.
+    """
+    import cv2
+
+    from viki.calibration.geometry import canonical_board_extrinsics
+    from viki.calibration.samples import _K, _charuco_board
+    from viki.contracts import CalibrationExtrinsics
+
+    if board_cfg.get("type") != "aruco":
+        raise ValueError("world anchor needs a ChArUco board")
+    obj_all = np.asarray(_charuco_board(board_cfg).getChessboardCorners(), np.float64)
+    bs = tuple(board_cfg["board_size"])
+    ss = float(board_cfg["square_size"])
+
+    for dev, o in (observations or {}).items():
+        if dev not in intrinsics or dev not in device_transforms:
+            continue
+        ids = np.asarray(o.get("charuco_ids", []), int).reshape(-1)
+        uv = np.asarray(o.get("charuco_corners", []), float).reshape(-1, 2)
+        if ids.size < 4 or ids.size != len(uv) or int(ids.max(initial=-1)) >= len(obj_all):
+            continue
+        K = _K(intrinsics[dev])
+        dist = np.asarray(intrinsics[dev].get("dist_coeffs", np.zeros(5)), float).reshape(-1)
+        ok, rvec, tvec = cv2.solvePnP(obj_all[ids], uv, K, dist, flags=cv2.SOLVEPNP_SQPNP)
+        if not ok:
+            continue
+        rvec, tvec = cv2.solvePnPRefineLM(obj_all[ids], uv, K, dist, rvec, tvec)
+        T_cam_board = np.eye(4)
+        T_cam_board[:3, :3] = cv2.Rodrigues(rvec)[0]
+        T_cam_board[:3, 3] = np.asarray(tvec).reshape(3)
+        # board → rig  (T_ref_cam @ T_cam_board);  reference cam ⇒ T_ref_cam = I
+        T_rig_board = _mat(device_transforms[dev]) @ T_cam_board
+        r_rig, _ = cv2.Rodrigues(T_rig_board[:3, :3])
+        rc, tc = canonical_board_extrinsics(r_rig.reshape(3), T_rig_board[:3, 3], bs, ss)
+        T_world_display = np.asarray(CalibrationExtrinsics(rvec=rc, tvec=tc).transform_matrix)
+        # canonical_board_extrinsics already maps the board normal to world +Z;
+        # explicit sanity that "up" is the camera side (rig origin sits at +Z in
+        # the display frame), i.e. the board reads face-up out of the table.
+        cam_z_world = float(T_world_display[2, 3])
+        if cam_z_world <= 0:
+            logger.warning("world anchor: reference camera lands at world Z=%.3f "
+                           "(expected > 0) — check the board orientation in the "
+                           "anchor frame", cam_z_world)
+        return T_world_display
+    raise ValueError("no anchor observation with a known camera pose + intrinsics")
+
+
 def write_world_anchor(
     name: str,
     *,
-    T_world_display: Any,
     observations: dict[str, Any],
+    T_world_display: Any | None = None,
     extrinsics_hash_: str | None = None,
 ) -> dict:
+    """Persist the world anchor. If ``T_world_display`` is omitted it is computed
+    from ``observations`` against the preset's current extrinsics."""
+    if T_world_display is None:
+        extr = read_extrinsics(name) or {}
+        T_world_display = compute_world_display(
+            observations, extr.get("intrinsics", {}), extr.get("board") or {},
+            {d: e["T_ref_cam"] for d, e in (extr.get("devices") or {}).items()},
+        )
     payload = {
         "schema": WORLD_ANCHOR_SCHEMA,
         "created_at": _now_iso(),
@@ -233,6 +309,16 @@ def write_world_anchor(
     }
     _dump(_world_anchor_path(name), payload)
     return payload
+
+
+def recompute_world_anchor(name: str) -> dict | None:
+    """Redo ``T_world_display`` from the stored home-pose observations against
+    the *current* extrinsics, and stamp the fresh hash. Called after a re-solve
+    so the anchor tracks the rig frame without operator involvement."""
+    cur = read_world_anchor(name)
+    if not cur or not cur.get("observations"):
+        return None
+    return write_world_anchor(name, observations=cur["observations"])
 
 
 def read_world_anchor(name: str) -> dict | None:

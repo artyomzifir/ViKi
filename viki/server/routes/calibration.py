@@ -181,6 +181,26 @@ async def solve_bundle(
     return {"reference_device": out["reference_device"], "solve": out["solve"]}
 
 
+@router.post("/anchor")
+async def capture_anchor(cal: CalibrationManager = Depends(get_calibrator)):
+    """Anchor step (spec §5): board at the marked home spot, ONE frame →
+    ``T_world_display`` (viz / AABB / export only — never the solve)."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    try:
+        return cal.capture_anchor()
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/anchor")
+async def get_anchor(cal: CalibrationManager = Depends(get_calibrator)):
+    a = cal.world_anchor()
+    if a is None:
+        raise HTTPException(404, "no world anchor — run the Anchor step")
+    return a
+
+
 @router.post("/clear")
 async def clear_all(cal: CalibrationManager = Depends(get_calibrator)):
     """Drop every sample on every camera and wipe the live capture photos."""
@@ -628,6 +648,21 @@ async def save_preset(
         logger.warning("save-as %r -> 400 %s", body.name, exc)
         raise HTTPException(400, str(exc)) from exc
     logger.info("calibration preset %r saved (%d cams)", path.stem, len(extr))
+    # Fold the setup artifacts into calib/<preset>/ : migrate the just-written
+    # legacy JSON to extrinsics.json, then snapshot the live world anchor.
+    try:
+        from viki.calibration import artifacts as _artifacts
+
+        _artifacts.ensure_migrated(path.stem)
+        live_anchor = cal.world_anchor()
+        if live_anchor and live_anchor.get("observations"):
+            _artifacts.write_world_anchor(
+                path.stem,
+                observations=live_anchor["observations"],
+                T_world_display=live_anchor.get("T_world_display"),
+            )
+    except Exception:  # noqa: BLE001 — never break save-as on this
+        logger.warning("preset %r: setup-artifact fold-in failed", path.stem, exc_info=True)
     # Cameras are live during calibration, so grab both device/scene snapshots
     # now — no separate button. k4a raw calibration is a device property; the
     # background depth is the static scene as it sits during the solve (the

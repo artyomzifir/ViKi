@@ -1,5 +1,6 @@
 {
   "EXTRINSICS_FILENAME": "data/extrinsics_calibration.json",
+  "WORLD_ANCHOR_FILENAME": "data/world_anchor.json",
   "ACTIVE_CALIBRATION": "",
   "DEFAULT_FPS": 30,
   "DEFAULT_COLOR_WIDTH": 1280,

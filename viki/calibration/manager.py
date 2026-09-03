@@ -53,6 +53,12 @@ def _np_arr(x):
     return np.asarray(x, dtype=float)
 
 
+def _to_list_int(x) -> list:
+    import numpy as np
+
+    return np.asarray(x, int).reshape(-1).tolist()
+
+
 class CalibrationManager:
     """
     Central manager for multi‑camera calibration.
@@ -560,6 +566,84 @@ class CalibrationManager:
             " DEGENERATE" if out["solve"].get("degenerate") else "",
         )
         return out
+
+    # ── world anchor (spec §5) ──────────────────────────────────────────
+
+    def _rig_device_transforms(self, extr_path: str = EXTRINSICS_FILENAME) -> dict:
+        """``{device_id: 4x4 T_ref_cam}`` from the current (rig-frame) extrinsics
+        file — camera → reference-camera frame."""
+        try:
+            data = json.loads(open(extr_path).read())
+        except (OSError, ValueError):
+            return {}
+        out = {}
+        for e in data if isinstance(data, list) else []:
+            dev = e.get("device_id")
+            if dev and e.get("rvec") is not None and e.get("tvec") is not None:
+                out[dev] = CalibrationExtrinsics(
+                    rvec=_np_arr(e["rvec"]), tvec=_np_arr(e["tvec"])
+                ).transform_matrix
+        return out
+
+    def capture_anchor(
+        self,
+        extr_path: str = EXTRINSICS_FILENAME,
+        anchor_path: str | None = None,
+    ) -> dict:
+        """One-frame 'board at the home spot' capture → ``T_world_display`` (spec
+        §5). Detects the board in every active camera, lifts it into the rig
+        frame with the current extrinsics, re-centres on the board with +Z up.
+        Persists to ``anchor_path`` (``WORLD_ANCHOR_FILENAME``) as a standalone
+        file that a recording snapshots and ``save-as`` folds into the preset.
+        Purely a presentation transform — never re-enters the solve."""
+        import json as _json
+
+        from viki import config as _cfg
+        from viki.calibration import artifacts
+
+        anchor_path = anchor_path or getattr(_cfg, "WORLD_ANCHOR_FILENAME", "data/world_anchor.json")
+        devs = list(self._workers)
+        if not devs:
+            raise RuntimeError("no calibration session")
+
+        observations: dict[str, dict] = {}
+        for d in devs:
+            self._workers[d].capture()
+            s = self._workers[d].samples
+            if not s or s[-1].corners is None or s[-1].c_ids is None:
+                continue
+            observations[d] = {
+                "charuco_ids": _to_list_int(s[-1].c_ids),
+                "charuco_corners": _np_arr(s[-1].corners).reshape(-1, 2).tolist(),
+            }
+            self._workers[d].pop_sample(self._workers[d].samples_count - 1)  # not a solve set
+        if not observations:
+            raise RuntimeError("no camera saw the board in the anchor frame")
+
+        T = artifacts.compute_world_display(
+            observations, self.intrinsics_payload(), self.board_cfg() or {},
+            self._rig_device_transforms(extr_path),
+        )
+        payload = {
+            "schema": artifacts.WORLD_ANCHOR_SCHEMA,
+            "created_at": artifacts._now_iso(),
+            "T_world_display": [[float(v) for v in row] for row in T],
+            "observations": observations,
+        }
+        with open(anchor_path, "w") as f:
+            _json.dump(payload, f, indent=2)
+        self._logger.info("world anchor captured: seen by %s", sorted(observations))
+        return payload
+
+    def world_anchor(self, anchor_path: str | None = None) -> dict | None:
+        from viki import config as _cfg
+        import json as _json
+
+        anchor_path = anchor_path or getattr(_cfg, "WORLD_ANCHOR_FILENAME", "data/world_anchor.json")
+        try:
+            return _json.loads(open(anchor_path).read())
+        except (OSError, ValueError):
+            return None
 
     def clear_all(self) -> None:
         """Drop every sample on every worker and wipe the live capture photos."""
