@@ -43,6 +43,15 @@ PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames u
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
 PERCEPTION_HAND_FIT: bool  # run trajectory-level capsule hand fit at the end of prepare
 PERCEPTION_SAVE_OBSERVATIONS: bool  # extract also writes raw/observations.npz (2-D obs for multi-view triangulation)
+TRI_MIN_SCORE: float            # multi-view triangulation: min per-landmark detector score to use a view
+TRI_MIN_RAY_DEG: float          # drop a camera pair whose rays subtend less than this (ill-conditioned)
+TRI_REPROJ_INLIER_PX: float     # reprojection error below this = inlier view; also least_squares f_scale
+TRI_DEPTH_LAMBDA: float         # weight of the soft depth residual vs reprojection (0 = geometry only)
+TRI_DEPTH_DELTA_M: float        # skin->joint-centre offset for fingertips (scaled up for knuckles/wrist)
+TRI_DEPTH_SPREAD_SCALE_M: float # depth weight decays exp(-local_std / this)
+TRI_RAY_REF_DEG: float          # ray angle at which the quality score's angle term saturates
+TRI_LOSS: str                   # scipy least_squares loss for the joint refine (soft_l1 | huber)
+TRI_GEOMETRY_CAMERAS: list[str] # which cameras feed geometry; [] = all in observations_meta
 PERCEPTION_HAND_POSE_SOURCE: str  # landmarks | hand_fit; consumers select without overwriting cln pose
 PERCEPTION_HAND_FIT_ROI_MARGIN_M: float  # adaptive capsule-union ROI padding (m)
 PERCEPTION_HAND_FIT_FOREARM_CUT_M: float  # proximal offset of wrist cut plane (m)
@@ -213,6 +222,15 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_CONF_ALPHA": 1.0,
     "PERCEPTION_HAND_FIT": True,
     "PERCEPTION_SAVE_OBSERVATIONS": True,
+    "TRI_MIN_SCORE": 0.3,
+    "TRI_MIN_RAY_DEG": 5.0,
+    "TRI_REPROJ_INLIER_PX": 4.0,
+    "TRI_DEPTH_LAMBDA": 0.1,
+    "TRI_DEPTH_DELTA_M": 0.01,
+    "TRI_DEPTH_SPREAD_SCALE_M": 0.02,
+    "TRI_RAY_REF_DEG": 20.0,
+    "TRI_LOSS": "soft_l1",
+    "TRI_GEOMETRY_CAMERAS": [],
     "PERCEPTION_HAND_POSE_SOURCE": "hand_fit",
     "PERCEPTION_HAND_FIT_ROI_MARGIN_M": 0.030,
     "PERCEPTION_HAND_FIT_FOREARM_CUT_M": 0.010,
