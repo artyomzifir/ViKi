@@ -245,8 +245,11 @@ class SceneRecorder:
             _ap = getattr(_cfg, "WORLD_ANCHOR_FILENAME", "data/world_anchor.json")
             if os.path.exists(_ap):
                 shutil.copyfile(_ap, self._raw() / "world_anchor.json")
+            _vp = getattr(_cfg, "VALIDATION_FILENAME", "data/validation_report.json")
+            if os.path.exists(_vp):
+                shutil.copyfile(_vp, self._raw() / "validation_report.json")
         except Exception:  # noqa: BLE001
-            logger.warning("record: world anchor not snapshotted", exc_info=True)
+            logger.warning("record: setup artifacts not snapshotted", exc_info=True)
 
         meta = load_meta(self.episode)
         meta["cameras"] = cams

@@ -59,6 +59,12 @@ def _to_list_int(x) -> list:
     return np.asarray(x, int).reshape(-1).tolist()
 
 
+def _now_iso_z() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 class CalibrationManager:
     """
     Central manager for multi‑camera calibration.
@@ -644,6 +650,113 @@ class CalibrationManager:
             return _json.loads(open(anchor_path).read())
         except (OSError, ValueError):
             return None
+
+    # ── pre-record validation gate (spec §6) ────────────────────────────
+
+    def _live_camera_cloud(self, dev: str, T_ref_cam: "object", stride: int = 4):
+        """One camera's current depth frame as an (N,3) rig-frame point cloud,
+        or ``None``. Mirrors the offline ``cloud._camera_cloud`` path."""
+        import numpy as np
+
+        from viki.perception import cloud as _cloudmod
+        from viki.perception.k4a_offline import K4ACalibration
+
+        frame = self._mgr.latest_frame(dev)
+        if frame is None or not getattr(frame, "has_depth", lambda: False)():
+            return None
+        be = self._mgr.get_backend(dev)
+        ci = getattr(frame, "color_intrinsics", None)
+        if ci is None or not (ci.fx > 0):
+            return None
+        K_color = np.array([[ci.fx, 0, ci.cx], [0, ci.fy, ci.cy], [0, 0, 1.0]])
+
+        cal = None
+        blob = getattr(be, "get_raw_calibration", lambda: None)() if be else None
+        if blob:
+            from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
+
+            cfg = (be.config or {})
+            cal = K4ACalibration.from_blob(
+                blob,
+                _DEPTH_MODE_MAP.get(cfg.get("depth_mode")),
+                _COLOR_RES_MAP.get((int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))),
+                tag=f"validate/{dev}",
+            )
+        if cal is None:
+            rs = getattr(be, "get_rs_calibration", lambda: None)() if be else None
+            if rs:
+                from viki.perception.rs_offline import RealSenseCalibration
+
+                R = np.asarray(rs["depth_to_color"]["rotation"], float).reshape(3, 3).T
+                t = np.asarray(rs["depth_to_color"]["translation"], float).reshape(3)
+                cal = RealSenseCalibration(rs["color"], rs["depth"], R, t)
+
+        xyz, _ = _cloudmod._camera_cloud(
+            np.ascontiguousarray(frame.color), np.asarray(frame.depth), stride,
+            K_color, cal, np.asarray(T_ref_cam, float),
+        )
+        return xyz if len(xyz) else None
+
+    def validate_live(self, out_path: str | None = None) -> dict:
+        """Build a per-camera empty-scene cloud in the rig frame and score how
+        well the cameras agree (spec §6). Writes ``VALIDATION_FILENAME`` with the
+        current extrinsics hash so a later re-solve marks it stale."""
+        import hashlib
+        import json as _json
+
+        from viki import config as _cfg
+        from viki.calibration import validate as _validate
+        from viki.perception.cloud import _bbox_to_frame
+
+        out_path = out_path or getattr(_cfg, "VALIDATION_FILENAME", "data/validation_report.json")
+        transforms = self._rig_device_transforms()
+        if len(transforms) < 2:
+            raise RuntimeError("need ≥2 solved cameras to validate")
+
+        clouds: dict = {}
+        for dev, T in transforms.items():
+            try:
+                c = self._live_camera_cloud(dev, T)
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning("validate: %s cloud failed (%s)", dev, exc)
+                c = None
+            if c is not None:
+                clouds[dev] = c
+        if len(clouds) < 2:
+            raise RuntimeError("could not build a depth cloud for ≥2 cameras")
+
+        anchor = self.world_anchor()
+        aabb = _bbox_to_frame(
+            list(getattr(_cfg, "CLOUD_WORKSPACE_BBOX", []) or []),
+            (anchor or {}).get("T_world_display"),
+        )
+        report = _validate.pairwise_agreement(
+            clouds, aabb=aabb,
+            green={
+                "nn_median_mm": _cfg.CALIB_VALIDATE_GREEN_NN_MM,
+                "icp_translation_mm": _cfg.CALIB_VALIDATE_GREEN_ICP_TRANS_MM,
+                "icp_rotation_deg": _cfg.CALIB_VALIDATE_GREEN_ICP_ROT_DEG,
+            },
+            amber={
+                "nn_median_mm": _cfg.CALIB_VALIDATE_AMBER_NN_MM,
+                "icp_translation_mm": _cfg.CALIB_VALIDATE_AMBER_ICP_TRANS_MM,
+                "icp_rotation_deg": _cfg.CALIB_VALIDATE_AMBER_ICP_ROT_DEG,
+            },
+        )
+        try:
+            h = hashlib.sha256(open(EXTRINSICS_FILENAME, "rb").read()).hexdigest()
+        except OSError:
+            h = None
+        payload = {
+            "schema": 1,
+            "created_at": _now_iso_z(),
+            "extrinsics_hash": h,
+            **report,
+        }
+        with open(out_path, "w") as f:
+            _json.dump(payload, f, indent=2)
+        self._logger.info("validation: %s (%d pairs)", report["verdict"], len(report["pairs"]))
+        return payload
 
     def clear_all(self) -> None:
         """Drop every sample on every worker and wipe the live capture photos."""

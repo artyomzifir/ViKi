@@ -201,6 +201,31 @@ async def get_anchor(cal: CalibrationManager = Depends(get_calibrator)):
     return a
 
 
+@router.post("/validate")
+async def validate(cal: CalibrationManager = Depends(get_calibrator)):
+    """Validate step (spec §6): build a per-camera empty-scene cloud in the rig
+    frame and score how well the cameras agree. Returns the report; a ``red``
+    verdict (or a stale one) blocks recording."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    try:
+        return await asyncio.to_thread(cal.validate_live)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/validate")
+async def get_validation(cal: CalibrationManager = Depends(get_calibrator)):
+    import json as _json
+
+    from viki.config import VALIDATION_FILENAME
+
+    try:
+        return _json.loads(open(VALIDATION_FILENAME).read())
+    except (OSError, ValueError):
+        raise HTTPException(404, "no validation report — run the Validate step")
+
+
 @router.post("/clear")
 async def clear_all(cal: CalibrationManager = Depends(get_calibrator)):
     """Drop every sample on every camera and wipe the live capture photos."""

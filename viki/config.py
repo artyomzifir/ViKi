@@ -20,6 +20,7 @@ USER_CONFIG_PATH = "data/user_configuration.json"
 # Duck variables which LSP can catch and use
 EXTRINSICS_FILENAME: str
 WORLD_ANCHOR_FILENAME: str  # live world-anchor (T_world_display); folded into a preset on save-as
+VALIDATION_FILENAME: str    # live pre-record cloud-agreement report
 ACTIVE_CALIBRATION: str  # name of the active preset under data/calibrations/, or ""
 DEFAULT_FPS: int
 DEFAULT_COLOR_WIDTH: int
@@ -92,6 +93,12 @@ CALIB_MIN_SETS: int                   # Solve gate: minimum capture sets
 CALIB_MIN_COVISIBLE_SETS: int         # Solve gate: sets seen by every active camera at once
 CALIB_MIN_TILTED_SETS: int            # Solve gate: sets above CALIB_TILT_MIN_DEG
 CALIB_MIN_FRAME_COVERAGE: float       # Solve gate: min fraction of a 4×4 image grid touched by corners, per camera
+CALIB_VALIDATE_GREEN_NN_MM: float     # §6 verdict thresholds — green: pairwise NN median …
+CALIB_VALIDATE_GREEN_ICP_TRANS_MM: float  # … ICP correction translation …
+CALIB_VALIDATE_GREEN_ICP_ROT_DEG: float   # … ICP correction rotation
+CALIB_VALIDATE_AMBER_NN_MM: float     # amber band (above ⇒ red): NN median …
+CALIB_VALIDATE_AMBER_ICP_TRANS_MM: float
+CALIB_VALIDATE_AMBER_ICP_ROT_DEG: float
 RECORDING_DURATION: int
 RECORDING_FPS: int
 RETARGET_DEFAULT_ROBOT: str
@@ -240,6 +247,13 @@ _DEFAULTS: dict[str, Any] = {
     "CALIB_MIN_COVISIBLE_SETS": 6,
     "CALIB_MIN_TILTED_SETS": 3,
     "CALIB_MIN_FRAME_COVERAGE": 0.60,
+    "VALIDATION_FILENAME": "data/validation_report.json",
+    "CALIB_VALIDATE_GREEN_NN_MM": 15.0,
+    "CALIB_VALIDATE_GREEN_ICP_TRANS_MM": 20.0,
+    "CALIB_VALIDATE_GREEN_ICP_ROT_DEG": 2.0,
+    "CALIB_VALIDATE_AMBER_NN_MM": 30.0,
+    "CALIB_VALIDATE_AMBER_ICP_TRANS_MM": 50.0,
+    "CALIB_VALIDATE_AMBER_ICP_ROT_DEG": 5.0,
 }
 
 
