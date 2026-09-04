@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from viki import config
+from viki.cameras.hw_sync import HardwareSyncError
 from viki.cameras.manager import CameraManager
 from viki.server import jobs
 from viki.server.deps import get_manager
@@ -72,6 +73,13 @@ class RecordRequest(BaseModel):
 async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_manager)):
     if not mgr.active_device_ids():
         raise HTTPException(400, "no cameras are active — start cameras first")
+
+    # This gate is not bypassed by ``force``: a two-Kinect take recorded in
+    # standalone/software-sync mode is invalid input, not a debug variation.
+    try:
+        mgr.require_hardware_sync_ready()
+    except HardwareSyncError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # Setup-artifact gate (spec §7): the active preset must have fresh extrinsics,
     # a world anchor, a background plate and a non-red validation report whose

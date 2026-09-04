@@ -49,6 +49,9 @@ class SceneRecorder:
         meta: dict | None = None,
     ) -> None:
         self._mgr = manager
+        # Validate before creating an episode directory.  The server checks too,
+        # but SceneRecorder is also a public/CLI entry point.
+        self._hardware_sync = manager.require_hardware_sync_ready()
         if dataset is not None:
             from viki import datasets as _datasets
 
@@ -76,6 +79,7 @@ class SceneRecorder:
         it holds the ``1/fps`` cadence and the constant-fps mp4 stays true to
         real time. If the writer can't keep up the queue fills and groups are
         dropped (a shorter clean take beats a juddering full one)."""
+        self._hardware_sync = self._mgr.require_hardware_sync_ready()
         sync = MultiCameraSync(self._mgr, sync_fps=fps)
         self._write_sensor_meta()
 
@@ -150,7 +154,16 @@ class SceneRecorder:
             if frame.has_depth() and frame.depth.any():
                 np.save(self._depth_dirs[dev_id] / f"{self._n:06d}.npy", frame.depth)
         self._timestamps.append(
-            {"sync_us": group.sync_timestamp_us, "offsets_us": group.offsets_us}
+            {
+                "sync_us": group.sync_timestamp_us,
+                "offsets_us": group.offsets_us,
+                # Preserve native K4A clock evidence. For a verified pair,
+                # subordinate - master follows subordinate_delay_us.
+                "device_timestamps_us": {
+                    dev_id: int(frame.timestamp_us)
+                    for dev_id, frame in group.frames.items()
+                },
+            }
         )
         self._n += 1
 
@@ -261,15 +274,10 @@ class SceneRecorder:
             meta["calibration_preset"] = current_active()
         except Exception:  # noqa: BLE001
             pass
-        # Record whether the Kinect pair ran on the wired hardware sync, so the
-        # sync-measurement script (and any downstream time-budget check) can tell
-        # a hardware-synced take from a software-only one.
-        try:
-            from viki import config as _cfg
-
-            meta["kinect_sync"] = getattr(_cfg, "KINECT_SYNC", {}) or {}
-        except Exception:  # noqa: BLE001
-            pass
+        # Store actual checked roles + jack state, not merely the requested
+        # configuration.  A multi-Kinect recording cannot reach this point
+        # unless ``ready`` is true.
+        meta["kinect_sync"] = self._hardware_sync
         save_meta(self.episode, meta)
 
     def _write_manifest(self) -> None:
@@ -338,6 +346,7 @@ class SceneRecorder:
             self.episode, "record",
             frames=self._n, fps=fps, cameras=sorted(self._writers),
             sync_bounded=stats["bounded"], dropped=self._dropped,
+            hardware_sync=self._hardware_sync,
         )
         logger.info("recorded %d frames → %s", self._n, self.episode.root)
 

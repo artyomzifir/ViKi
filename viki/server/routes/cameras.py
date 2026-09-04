@@ -16,27 +16,13 @@ from pydantic import BaseModel
 
 from viki import config
 from viki.calibration.manager import CalibrationManager
+from viki.cameras.hw_sync import HardwareSyncError, WIRED_STANDALONE
 from viki.cameras.manager import CameraManager
 from viki.server.deps import get_calibrator, get_manager
 from viki.server.streams import camera_stream
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cameras", tags=["cameras"])
-
-# 0 = standalone, 1 = master, 2 = subordinate (viki.cameras.kinect enum values)
-_WIRED_MASTER, _WIRED_SUBORDINATE = 1, 2
-
-
-def _wired_sync_for(device_id: str) -> tuple[int, int]:
-    """Resolve (wired_sync_mode, subordinate_delay_us) for ``device_id`` from
-    ``config.KINECT_SYNC``. Returns (0, 0) when the device has no assigned role,
-    so an un-cabled rig just starts standalone."""
-    spec = getattr(config, "KINECT_SYNC", {}) or {}
-    if device_id == spec.get("master"):
-        return _WIRED_MASTER, 0
-    if device_id in (spec.get("subordinates") or []):
-        return _WIRED_SUBORDINATE, int(spec.get("subordinate_delay_us", 0))
-    return 0, 0
 
 _MJPEG_MEDIA = "multipart/x-mixed-replace; boundary=frame"
 _STREAM_HEADERS = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
@@ -94,58 +80,66 @@ async def start_camera(
     HTTPException 500
         If the backend fails to start.
     """
-    # Honour an explicit request; otherwise fall back to the rig's KINECT_SYNC
-    # wiring so "Start cameras" produces a hardware-synced Kinect pair whenever
-    # the sync cable + config are present (paper §3.3), and a plain standalone
-    # start otherwise. Start subordinates before the master (they must be
-    # listening when the master starts sending trigger pulses).
-    wired_sync_mode = req.wired_sync_mode
-    subordinate_delay_us = req.subordinate_delay_us
-    if wired_sync_mode == 0:
-        wired_sync_mode, subordinate_delay_us = _wired_sync_for(device_id)
-        if wired_sync_mode:
-            role = "master" if wired_sync_mode == _WIRED_MASTER else "subordinate"
-            logger.info("cameras: %s starting as hardware-sync %s", device_id, role)
-
-    # Ordering: a subordinate must be running (listening for trigger pulses)
-    # before the master starts firing them. If this is the master, bring any
-    # configured-but-inactive subordinate up first with matching capture params.
-    if wired_sync_mode == _WIRED_MASTER and req.wired_sync_mode == 0:
-        spec = getattr(config, "KINECT_SYNC", {}) or {}
-        for sub in spec.get("subordinates") or []:
-            if sub in mgr.active_device_ids():
-                continue
-            _sm, _sd = _wired_sync_for(sub)
-            try:
-                mgr.start(
-                    sub, fps=req.fps, color_width=req.color_width,
-                    color_height=req.color_height, depth_mode=req.depth_mode,
-                    wired_sync_mode=_sm, subordinate_delay_us=_sd,
-                    synchronized_images_only=req.synchronized_images_only,
-                )
-                logger.info("cameras: auto-started subordinate %s before master %s", sub, device_id)
-            except Exception:  # noqa: BLE001 — master start will still be attempted
-                logger.exception("cameras: subordinate %s auto-start failed", sub)
-
     try:
-        outcome = mgr.start(
-            device_id,
-            fps=req.fps,
-            color_width=req.color_width,
-            color_height=req.color_height,
-            depth_mode=req.depth_mode,
-            wired_sync_mode=wired_sync_mode,
-            subordinate_delay_us=subordinate_delay_us,
-            synchronized_images_only=req.synchronized_images_only,
-        )
+        if device_id.startswith("kinect_"):
+            plan = mgr.kinect_sync_plan()
+        else:
+            plan = {}
+
+        if len(plan) >= 2:
+            role = plan.get(device_id)
+            if role is None:
+                raise HardwareSyncError(
+                    f"{device_id} is not assigned in the Kinect HW_SYNC rig"
+                )
+            if req.wired_sync_mode not in (WIRED_STANDALONE, role.mode):
+                raise HardwareSyncError(
+                    f"{device_id} must run as {role.name}, not mode {req.wired_sync_mode}"
+                )
+            if req.subordinate_delay_us not in (0, role.delay_us):
+                raise HardwareSyncError(
+                    f"{device_id} must use subordinate_delay_us={role.delay_us}"
+                )
+            if not req.synchronized_images_only:
+                raise HardwareSyncError(
+                    "multi-Kinect HW_SYNC requires synchronized_images_only=true"
+                )
+            # Starting either Kinect means starting the entire rig as one
+            # transaction: subordinate(s) first, master last, rollback on error.
+            outcomes = mgr.start_configured_kinect_rig(
+                fps=req.fps,
+                color_width=req.color_width,
+                color_height=req.color_height,
+                depth_mode=req.depth_mode,
+            )
+            outcome = outcomes[device_id]
+        else:
+            outcome = mgr.start(
+                device_id,
+                fps=req.fps,
+                color_width=req.color_width,
+                color_height=req.color_height,
+                depth_mode=req.depth_mode,
+                wired_sync_mode=req.wired_sync_mode,
+                subordinate_delay_us=req.subordinate_delay_us,
+                synchronized_images_only=req.synchronized_images_only,
+            )
+    except HardwareSyncError as exc:
+        logger.error("camera %s HW_SYNC start refused: %s", device_id, exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as e:
         logger.exception("camera %s start failed", device_id)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
     # outcome: "started" | "restarted" (config changed) | "unchanged"
     logger.info("camera %s %s @ %dx%d/%dfps %s%s", device_id, outcome or "started",
                 req.color_width, req.color_height, req.fps, req.depth_mode,
-                f" sync={wired_sync_mode}" if wired_sync_mode else "")
-    return {"status": outcome or "started", "device_id": device_id}
+                " HW_SYNC" if len(plan) >= 2 else "")
+    return {
+        "status": outcome or "started",
+        "device_id": device_id,
+        "active": mgr.active_device_ids(),
+        "hardware_sync": mgr.hardware_sync_status(),
+    }
 
 
 @router.post("/{device_id}/stop")
@@ -163,9 +157,30 @@ async def stop_camera(device_id: str, mgr: CameraManager = Depends(get_manager))
     dict
         {"status": "stopped", "device_id": device_id}
     """
-    mgr.stop(device_id)
-    logger.info("camera %s stopped", device_id)
-    return {"status": "stopped", "device_id": device_id}
+    stopped = [device_id]
+    if device_id.startswith("kinect_"):
+        try:
+            plan = mgr.kinect_sync_plan()
+        except HardwareSyncError:
+            # The config may have been edited after a valid rig was started.
+            # Still stop every active Kinect rather than leave a half-rig.
+            active_kinects = [
+                active for active in mgr.active_device_ids()
+                if active.startswith("kinect_")
+            ]
+            plan = {active: None for active in active_kinects}
+        if len(plan) >= 2:
+            # Do not leave a master/subordinate half-rig running after a card's
+            # Stop button is pressed.
+            stopped = list(plan)
+            for kinect_id in stopped:
+                mgr.stop(kinect_id)
+        else:
+            mgr.stop(device_id)
+    else:
+        mgr.stop(device_id)
+    logger.info("camera rig stopped via %s: %s", device_id, stopped)
+    return {"status": "stopped", "device_id": device_id, "stopped": stopped}
 
 
 @router.get("/{device_id}/info")
