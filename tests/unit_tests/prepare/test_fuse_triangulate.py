@@ -5,6 +5,7 @@ Stage 3 — prepare consumes multi-view triangulation instead of averaging XYZ.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -89,3 +90,39 @@ def test_prepare_fuses_from_triangulation(tmp_path, monkeypatch):
         col = {int(v): k for k, v in enumerate(ids)}
         assert lc[mid, col[int(LM.MIDDLE_MCP)]] > lc[mid, col[int(LM.WRIST)]]
         assert lc[mid, col[int(LM.PINKY_TIP)]] == 0.0     # gap, not a fake weight
+        assert d["perception_fuse_mode"].item() == "triangulate"
+        assert d["checkpoint_stage"].item() == "smoothed"
+        assert "observed_points" in d.files and "filled_points" in d.files
+        assert "observed_mask" in d.files and "interpolated_mask" in d.files
+
+    from viki.prepare.checkpoints import run_name
+
+    checkpoints = ep.intermediates_dir / "prepare" / run_name(
+        "triangulate", 0, 7, 2
+    )
+    expected = {
+        "00_per_camera_observed.npz", "05_per_camera_filled.npz",
+        "10_fused_observed.npz", "20_fused_filled.npz", "30_smoothed.npz",
+        "manifest.json", "comparison.json",
+    }
+    assert expected <= {p.name for p in checkpoints.iterdir()}
+    with np.load(checkpoints / "10_fused_observed.npz") as observed:
+        assert observed["checkpoint_stage"].item() == "observed"
+        assert np.isnan(observed["smoothed_points"][:, int(LM.PINKY_TIP)]).all()
+    with np.load(checkpoints / "20_fused_filled.npz") as filled:
+        assert filled["checkpoint_stage"].item() == "filled"
+
+    # Explicit A/B generation is non-destructive and keeps the active CLN as a
+    # control row in the cumulative episode comparison.
+    active_before = ep.cln_npz.read_bytes()
+    from viki.prepare.run import generate_stage_checkpoints
+
+    outputs = generate_stage_checkpoints(
+        ep, fusion_modes=("triangulate",), interp_max_gap=3
+    )
+    assert Path(outputs["triangulate"]).name == "cln.npz"
+    assert ep.cln_npz.read_bytes() == active_before
+    comparison = json.loads(
+        (ep.intermediates_dir / "prepare" / "comparison.json").read_text()
+    )
+    assert any(Path(row["file"]) == ep.cln_npz for row in comparison["variants"])

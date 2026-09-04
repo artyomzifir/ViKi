@@ -460,6 +460,11 @@ class Episode:
         return self.root / "cln.npz"
 
     @property
+    def intermediates_dir(self) -> Path:
+        """Lossless stage checkpoints used for A/B inspection and diagnostics."""
+        return self.root / "intermediates"
+
+    @property
     def plan_h5(self) -> Path:
         return self.root / "plan.h5"
 
@@ -499,6 +504,13 @@ CLN_KEYS: tuple[str, ...] = (
 )
 CLN_OPTIONAL_KEYS: tuple[str, ...] = (
     "landmark_confidence",  # (T, L) — fused confidence retained for hand-fit anchors
+    "observed_points",  # (T, L, 3) — fusion output before any gap filling
+    "filled_points",  # (T, L, 3) — after gap fill, before temporal smoothing
+    "observed_mask",  # (T, L) — joints directly present at the fusion boundary
+    "interpolated_mask",  # (T, L) — joints fabricated by the gap-fill stage
+    "perception_fuse_mode",  # scalar string — xyz_mean | triangulate
+    "checkpoint_stage",  # scalar string — observed | filled | smoothed | hand_fit
+    "checkpoint_params_json",  # scalar JSON — exact knobs used for this artifact
     "T_world_obj",  # (T, 4, 4)  — object pose track  (stub: absent)
     "T_obj_hand",  # (T, 4, 4)  — object-relative form  (stub: absent)
     "hand_fit_positions",  # (T, 3) — fitted pose; landmark positions remain untouched

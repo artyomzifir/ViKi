@@ -89,6 +89,116 @@ def stable_palm_orientation_mask(
 
     return valid
 
+
+def _pose_and_gripper(
+    points: np.ndarray, landmark_ids: np.ndarray, grid: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Derive the complete consumer pose contract from one landmark stage."""
+    T, L = points.shape[:2]
+    positions = np.zeros((T, 3), dtype=np.float32)
+    rotations = np.zeros((T, 3, 3), dtype=np.float32)
+    rpy = np.zeros((T, 3), dtype=np.float32)
+    valid = np.zeros(T, dtype=bool)
+    mappings = []
+    for t in range(T):
+        mapping = {LM(landmark_ids[i]): points[t, i] for i in range(L)}
+        mappings.append(mapping)
+        pose = compute_end_effector_pose(mapping, int(grid[t]))
+        positions[t] = pose.position
+        rotations[t] = pose.R_world_palm
+        rpy[t] = pose.rpy_deg
+        valid[t] = pose.valid
+
+    valid = stable_palm_orientation_mask(points, landmark_ids, rotations, valid)
+
+    from viki.gripper import load_gripper
+
+    gripper_model = load_gripper(getattr(config, "GRIPPER", "binary"))
+    gripper = np.zeros(T, dtype=bool)
+    previous = None
+    for t, mapping in enumerate(mappings):
+        previous = gripper_model.estimate(mapping, previous)
+        gripper[t] = previous.closed
+    return positions, rotations, rpy, valid, gripper
+
+
+def _confidence_arrays(
+    grid_conf: np.ndarray, landmark_ids: np.ndarray, valid: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Normalise per-joint evidence and derive the per-frame palm confidence."""
+    wrist_frame = [int(LM.WRIST), int(LM.INDEX_MCP), int(LM.MIDDLE_MCP), int(LM.PINKY_MCP)]
+    columns = [
+        np.where(landmark_ids == lm)[0][0]
+        for lm in wrist_frame if lm in landmark_ids
+    ]
+    omega = (
+        grid_conf[:, columns].mean(axis=1)
+        if columns else np.ones(len(grid_conf), dtype=np.float64)
+    )
+    maximum = float(np.nanmax(omega)) if np.isfinite(omega).any() else 1.0
+    alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
+    omega = np.clip(omega / maximum, 0.0, 1.0) ** alpha
+    omega = np.where(valid, omega, 0.0).astype(np.float32)
+
+    confidence_max = float(np.nanmax(grid_conf)) if grid_conf.size else 0.0
+    landmark_confidence = np.clip(
+        grid_conf / (confidence_max or 1.0), 0.0, 1.0
+    ).astype(np.float32)
+    return omega, landmark_confidence
+
+
+def _cln_payload(
+    *,
+    points: np.ndarray,
+    observed_points: np.ndarray,
+    filled_points: np.ndarray,
+    landmark_ids: np.ndarray,
+    grid: np.ndarray,
+    grid_conf: np.ndarray,
+    fusion_mode: str,
+    checkpoint_stage: str,
+    interp_max_gap: int,
+    window_length: int,
+    polyorder: int,
+) -> dict[str, object]:
+    """Build a viewer/retarget-compatible artifact for any prepare boundary."""
+    positions, rotations, rpy, valid, gripper = _pose_and_gripper(
+        points, landmark_ids, grid
+    )
+    omega, landmark_confidence = _confidence_arrays(grid_conf, landmark_ids, valid)
+    params = {
+        "fusion_mode": fusion_mode,
+        "interp_max_gap": int(interp_max_gap),
+        "smoothing": "savgol" if checkpoint_stage in {"smoothed", "hand_fit"} else "none",
+        "window_length": int(window_length),
+        "polyorder": int(polyorder),
+    }
+    observed_mask = np.isfinite(observed_points).all(axis=2)
+    filled_mask = np.isfinite(filled_points).all(axis=2)
+    return {
+        "positions": positions,
+        "rotations": rotations,
+        "rpy": rpy,
+        "valid": valid,
+        "omega": omega,
+        "landmark_confidence": landmark_confidence,
+        "gripper": gripper,
+        "timestamps": np.asarray(grid, np.int64),
+        "raw_points": np.asarray(filled_points, np.float32),
+        "smoothed_points": np.asarray(points, np.float32),
+        "observed_points": np.asarray(observed_points, np.float32),
+        "filled_points": np.asarray(filled_points, np.float32),
+        "observed_mask": observed_mask,
+        "interpolated_mask": (~observed_mask & filled_mask),
+        "landmark_ids": np.asarray(landmark_ids),
+        "coordinate_frame": np.asarray(getattr(
+            config, "SKELETON_COORDINATE_FRAME", "viki_world_or_camera"
+        )),
+        "perception_fuse_mode": np.asarray(fusion_mode),
+        "checkpoint_stage": np.asarray(checkpoint_stage),
+        "checkpoint_params_json": np.asarray(json.dumps(params, sort_keys=True)),
+    }
+
 class PreparationPipeline:
     """
     Handles listing and preparation of skeleton recording files.
@@ -104,6 +214,10 @@ class PreparationPipeline:
     def __init__(self) -> None:
         self.recs_dir = Path(config.SKELETON_RECS_DIR)
         self.smoothed_dir = Path(config.SKELETON_SMOOTHED_DIR)
+        self.fusion_mode = str(getattr(config, "PERCEPTION_FUSE_MODE", "xyz_mean"))
+        # Optional episode-owned directory.  When present, every material
+        # prepare boundary is persisted instead of disappearing in temporaries.
+        self.checkpoints_dir: Path | None = None
         # >0 leaves interior gaps longer than this many frames unfilled
         self.interp_max_gap = int(getattr(config, "PERCEPTION_INTERP_MAX_GAP", 0))
         # optional explicit fused-output time grid (µs) — the raw synced-frame
@@ -230,6 +344,28 @@ class PreparationPipeline:
         for dev in trajectories:
             raw_filled[dev] = interpolate_nans(trajectories[dev], max_gap=self.interp_max_gap)
 
+        checkpoint_params = {
+            "fusion_mode": self.fusion_mode,
+            "interp_max_gap": int(self.interp_max_gap),
+            "window_length": int(window_length),
+            "polyorder": int(polyorder),
+        }
+        if self.checkpoints_dir is not None:
+            from viki.prepare.checkpoints import save_camera_stage
+
+            save_camera_stage(
+                self.checkpoints_dir / "00_per_camera_observed.npz",
+                stage="per_camera_observed", trajectories=trajectories,
+                timestamps=ts_map, confidence=conf_map,
+                landmark_ids=landmark_ids, params=checkpoint_params,
+            )
+            save_camera_stage(
+                self.checkpoints_dir / "05_per_camera_filled.npz",
+                stage="per_camera_filled", trajectories=raw_filled,
+                timestamps=ts_map, confidence=conf_map,
+                landmark_ids=landmark_ids, params=checkpoint_params,
+            )
+
         # 2. Fusion. Two modes (PERCEPTION_FUSE_MODE, kept switchable for A/B):
         #    - "xyz_mean" (legacy): confidence-weighted average of the per-camera
         #      monocular reconstructions onto a common grid (paper §3.5 eq. 2).
@@ -238,26 +374,32 @@ class PreparationPipeline:
         #      the per-joint triangulation `quality` becomes landmark_confidence.
         from viki.prepare.fuse import fuse_trajectories, snap_to_grid
 
-        _mode = str(getattr(config, "PERCEPTION_FUSE_MODE", "xyz_mean"))
-        _tri = None
-        if _mode == "triangulate" and self.joints3d_path and Path(self.joints3d_path).exists():
-            _tri = np.load(self.joints3d_path)
-        elif _mode == "triangulate":
+        _mode_requested = self.fusion_mode
+        tri_xyz = tri_timestamps = tri_quality = None
+        if (_mode_requested == "triangulate" and self.joints3d_path
+                and Path(self.joints3d_path).exists()):
+            with np.load(self.joints3d_path, allow_pickle=False) as tri:
+                tri_xyz = np.asarray(tri["xyz"], np.float32)
+                tri_timestamps = np.asarray(tri["timestamps"], np.int64)
+                tri_quality = np.asarray(tri["quality"], np.float32)
+        elif _mode_requested == "triangulate":
             logger.warning("prepare: PERCEPTION_FUSE_MODE=triangulate but no "
                            "joints3d.npz — falling back to xyz_mean")
 
         tri_lm_conf = None
-        if _tri is not None:
+        if tri_xyz is not None and tri_timestamps is not None and tri_quality is not None:
+            _mode = "triangulate"
             grid = (self.grid_ts if self.grid_ts is not None
-                    else np.asarray(sorted(_tri["timestamps"]), dtype=np.int64))
-            raw_fused = snap_to_grid(_tri["xyz"].astype(np.float32), _tri["timestamps"], grid)
+                    else np.asarray(sorted(tri_timestamps), dtype=np.int64))
+            raw_fused = snap_to_grid(tri_xyz, tri_timestamps, grid)
             tri_lm_conf = np.nan_to_num(
-                snap_to_grid(_tri["quality"].astype(np.float32), _tri["timestamps"], grid), nan=0.0
+                snap_to_grid(tri_quality, tri_timestamps, grid), nan=0.0
             )
-            landmark_ids = np.arange(_tri["xyz"].shape[1], dtype=landmark_ids.dtype)
+            landmark_ids = np.arange(tri_xyz.shape[1], dtype=landmark_ids.dtype)
             logger.info("prepare: fused from triangulation (%d frames, %d joints)",
                         len(grid), landmark_ids.size)
         else:
+            _mode = "xyz_mean"
             raw_fused, grid = fuse_trajectories(
                 raw_filled, ts_map, landmark_ids, weights=conf_map, grid=self.grid_ts
             )
@@ -265,23 +407,26 @@ class PreparationPipeline:
         if grid.size == 0:
             raise ValueError("Recording contains no valid trajectories.")
 
+        observed_fused = np.asarray(raw_fused, np.float32).copy()
+
         # 2b. Fill remaining gaps in the fused trajectory with a cubic spline
         #     (paper §3.7) before smoothing.
         from viki.prepare.interpolate import fill_se3_spline
 
-        raw_fused = fill_se3_spline(raw_fused)
+        filled_fused = fill_se3_spline(
+            observed_fused, max_gap=self.interp_max_gap
+        )
 
         # 3. Smooth the fused trajectory.
         fused_points = smooth_landmark_sequence(
-            raw_fused,
+            filled_fused,
             window_length=window_length,
             polyorder=polyorder,
         )
 
-        # 3b. Per-frame confidence weight ω_t: mean over the wrist-frame
-        #     landmarks of the max-over-cameras weight (paper §3.5, eq. 5).
-        _wf = [int(LM.WRIST), int(LM.INDEX_MCP), int(LM.MIDDLE_MCP), int(LM.PINKY_MCP)]
-        _cols = [np.where(landmark_ids == lm)[0][0] for lm in _wf if lm in landmark_ids]
+        # 3b. Preserve the per-joint evidence on the common grid.  It is used
+        # unchanged by every checkpoint so A/B differences come only from the
+        # selected processing stage.
         if tri_lm_conf is not None:
             grid_conf = tri_lm_conf.astype(np.float64)   # per-joint triangulation quality
         else:
@@ -290,68 +435,28 @@ class PreparationPipeline:
                 for k, t in enumerate(ts_map[dev]):
                     gi = int(np.argmin(np.abs(grid - t)))
                     grid_conf[gi] = np.maximum(grid_conf[gi], cam_conf[k])
-        omega = (
-            grid_conf[:, _cols].mean(axis=1)
-            if _cols
-            else np.ones(len(grid), dtype=np.float64)
+
+        # 4. Build the complete consumer contract once.  The same builder is
+        # used below for observed/filled/smoothed checkpoints, preventing the
+        # diagnostics from silently using different pose logic than cln.npz.
+        payload = _cln_payload(
+            points=fused_points,
+            observed_points=observed_fused,
+            filled_points=filled_fused,
+            landmark_ids=landmark_ids,
+            grid=grid,
+            grid_conf=grid_conf,
+            fusion_mode=_mode,
+            checkpoint_stage="smoothed",
+            interp_max_gap=self.interp_max_gap,
+            window_length=window_length,
+            polyorder=polyorder,
         )
-        # Normalise to [0, 1] across the episode (eq. 2's w is unbounded through
-        # the d^-2 factor, so ω_t is only meaningful relative to the episode's
-        # best-observed frame), then sharpen with the α exponent (eq. 5): α > 1
-        # discounts low-confidence frames harder, α = 1 leaves the ratio linear.
-        _omax = float(omega.max()) or 1.0
-        _alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
-        omega = np.clip(omega / _omax, 0.0, 1.0) ** _alpha
-        omega = omega.astype(np.float32)
-        # Preserve the per-landmark signal as well as its frame aggregate.
-        # The trajectory hand fit uses this for a confidence-weighted anchor;
-        # collapsing it into omega would make an occluded fingertip as trusted
-        # as a clearly observed wrist in the same frame.
-        _cmax = float(np.nanmax(grid_conf)) if grid_conf.size else 0.0
-        landmark_confidence = (
-            np.clip(grid_conf / (_cmax or 1.0), 0.0, 1.0).astype(np.float32)
-        )
-
-        # 4. Compute end-effector poses on the smoothed fused trajectory.
-        T = fused_points.shape[0]
-        L = fused_points.shape[1]
-
-        positions = np.zeros((T, 3), dtype=np.float32)
-        rotations = np.zeros((T, 3, 3), dtype=np.float32)
-        rpy = np.zeros((T, 3), dtype=np.float32)
-        valid = np.zeros(T, dtype=bool)
-
-        for t in range(T):
-            current_mapping = {LM(landmark_ids[i]): fused_points[t, i] for i in range(L)}
-
-            pose = compute_end_effector_pose(current_mapping, int(grid[t]))
-
-            positions[t] = pose.position
-            rotations[t] = pose.R_world_palm
-            rpy[t] = pose.rpy_deg
-            valid[t] = pose.valid
-
-        valid = stable_palm_orientation_mask(
-            fused_points,
-            landmark_ids,
-            rotations,
-            valid,
-        )
-
-        # 4b. Gripper state per frame, from the fused hand skeleton.
-        from viki.gripper import load_gripper
-
-        gripper_model = load_gripper(getattr(config, "GRIPPER", "binary"))
-        gripper = np.zeros(T, dtype=bool)
-        _g_prev = None
-        for t in range(T):
-            _pts = {LM(landmark_ids[i]): fused_points[t, i] for i in range(L)}
-            _g_prev = gripper_model.estimate(_pts, _g_prev)
-            gripper[t] = _g_prev.closed
-
-        # ω_t computed at step 3b from the fused per-landmark weights; keep only
-        # frames whose EE pose survived validation.
-        omega = np.where(valid, omega, 0.0).astype(np.float32)
+        positions = np.asarray(payload["positions"])
+        rotations = np.asarray(payload["rotations"])
+        rpy = np.asarray(payload["rpy"])
+        valid = np.asarray(payload["valid"])
+        T, L = fused_points.shape[:2]
 
         # 4d. Object-relative representation (paper §3.6). STUB: no object-pose
         #     tracker → returns None, cln.npz stays workspace-anchored.
@@ -363,34 +468,59 @@ class PreparationPipeline:
         T_obj_hand = object_relative(_wrist_T, None)
 
         # 5. Save to smoothed directory as cln-*.npz
-        output_filename = filename.replace("rec-", "cln-")
+        output_filename = (
+            "cln.npz" if filename == "rec.npz" else filename.replace("rec-", "cln-")
+        )
         self.smoothed_dir.mkdir(parents=True, exist_ok=True)
         output_path = self.smoothed_dir / output_filename
 
-        _extra = {}
         if T_obj_hand is not None:
-            _extra["T_obj_hand"] = T_obj_hand.astype(np.float32)
+            payload["T_obj_hand"] = T_obj_hand.astype(np.float32)
 
-        np.savez_compressed(
-            output_path,
-            positions=positions,
-            rotations=rotations,
-            rpy=rpy,
-            valid=valid,
-            omega=omega,
-            landmark_confidence=landmark_confidence,
-            gripper=gripper,
-            timestamps=grid,
-            raw_points=raw_fused.astype(np.float32),
-            smoothed_points=fused_points.astype(np.float32),
-            landmark_ids=landmark_ids,
-            coordinate_frame=getattr(
-                config,
-                "SKELETON_COORDINATE_FRAME",
-                "viki_world_or_camera",
-            ),
-            **_extra,
-        )
+        from viki.prepare.checkpoints import atomic_savez
+
+        atomic_savez(output_path, payload)
+
+        if self.checkpoints_dir is not None:
+            observed_payload = _cln_payload(
+                points=observed_fused, observed_points=observed_fused,
+                filled_points=filled_fused, landmark_ids=landmark_ids,
+                grid=grid, grid_conf=grid_conf, fusion_mode=_mode,
+                checkpoint_stage="observed", interp_max_gap=self.interp_max_gap,
+                window_length=window_length, polyorder=polyorder,
+            )
+            filled_payload = _cln_payload(
+                points=filled_fused, observed_points=observed_fused,
+                filled_points=filled_fused, landmark_ids=landmark_ids,
+                grid=grid, grid_conf=grid_conf, fusion_mode=_mode,
+                checkpoint_stage="filled", interp_max_gap=self.interp_max_gap,
+                window_length=window_length, polyorder=polyorder,
+            )
+            checkpoint_files = [
+                self.checkpoints_dir / "10_fused_observed.npz",
+                self.checkpoints_dir / "20_fused_filled.npz",
+                self.checkpoints_dir / "30_smoothed.npz",
+            ]
+            atomic_savez(checkpoint_files[0], observed_payload)
+            atomic_savez(checkpoint_files[1], filled_payload)
+            atomic_savez(checkpoint_files[2], payload)
+
+            from viki.prepare.checkpoints import atomic_write_json, write_comparison
+
+            atomic_write_json(self.checkpoints_dir / "manifest.json", {
+                "schema": 1,
+                "fusion_mode_requested": _mode_requested,
+                "fusion_mode_used": _mode,
+                "interp_max_gap": int(self.interp_max_gap),
+                "window_length": int(window_length),
+                "polyorder": int(polyorder),
+                "files": [p.name for p in (
+                    self.checkpoints_dir / "00_per_camera_observed.npz",
+                    self.checkpoints_dir / "05_per_camera_filled.npz",
+                    *checkpoint_files,
+                )],
+            })
+            write_comparison(self.checkpoints_dir / "comparison.json", checkpoint_files)
 
         if getattr(config, 'SKELETON_SAVE_JSON_DEBUG', False):
             json_path = output_path.with_suffix(".json")
@@ -426,6 +556,87 @@ def estimate_fps(timestamps_us: np.ndarray) -> float:
     return float(1.0 / np.median(dt))
 
 
+def _configure_episode_inputs(pp: PreparationPipeline, ep) -> None:
+    """Attach the recorded frame grid and requested triangulation artifact."""
+    ts_path = ep.raw_dir / "timestamps.json"
+    if ts_path.exists():
+        try:
+            entries = json.loads(ts_path.read_text())
+            sync = [int(entry["sync_us"]) for entry in entries if "sync_us" in entry]
+            if sync:
+                pp.grid_ts = np.asarray(sorted(sync), dtype=np.int64)
+        except Exception:  # noqa: BLE001 — fall back to the union grid
+            pass
+
+    if pp.fusion_mode != "triangulate":
+        return
+    joints = ep.raw_dir / "joints3d.npz"
+    observations = ep.raw_dir / "observations.npz"
+    try:
+        if observations.exists() and (
+            not joints.exists() or joints.stat().st_mtime < observations.stat().st_mtime
+        ):
+            from viki.perception.triangulate import triangulate_episode
+
+            triangulate_episode(ep.raw_dir)
+        if joints.exists():
+            pp.joints3d_path = joints
+    except Exception:  # noqa: BLE001 — the pipeline records the xyz_mean fallback
+        logger.warning("prepare %s: triangulation step failed", ep.id, exc_info=True)
+
+
+def generate_stage_checkpoints(
+    ep,
+    *,
+    fusion_modes: tuple[str, ...] = ("triangulate", "xyz_mean"),
+    window_length: int = 7,
+    polyorder: int = 2,
+    interp_max_gap: int | None = None,
+) -> dict[str, str]:
+    """Generate non-destructive A/B prepare boundaries for one episode.
+
+    Nothing here replaces ``cln.npz``.  Each fusion mode receives its own
+    parameter-named directory, and a cross-variant metrics file is written at
+    ``intermediates/prepare/comparison.json``.
+    """
+    if not ep.rec_npz.exists():
+        raise FileNotFoundError(f"no rec.npz for episode {ep.id}; run extract first")
+    from viki.prepare.checkpoints import run_name, write_comparison
+
+    outputs: dict[str, str] = {}
+    for mode in fusion_modes:
+        if mode not in {"triangulate", "xyz_mean"}:
+            raise ValueError(f"unknown fusion mode {mode!r}")
+        pp = PreparationPipeline()
+        pp.recs_dir = ep.root
+        pp.fusion_mode = mode
+        if interp_max_gap is not None:
+            pp.interp_max_gap = int(interp_max_gap)
+        name = run_name(mode, pp.interp_max_gap, window_length, polyorder)
+        run_dir = ep.intermediates_dir / "prepare" / name
+        pp.smoothed_dir = run_dir
+        pp.checkpoints_dir = run_dir
+        _configure_episode_inputs(pp, ep)
+        output, _ = pp.smooth_recording("rec.npz", window_length, polyorder)
+        outputs[mode] = output
+    # Keep the episode-level comparison cumulative: a later run with another
+    # gap/window setting must not erase the earlier rows it was meant to compare.
+    prepare_root = ep.intermediates_dir / "prepare"
+    # Include the active and any preserved root CLNs as controls (notably old
+    # hand-fit outputs), but never modify them.
+    viewer_variants: list[Path] = sorted(ep.root.glob("cln*.npz"))
+    for run_dir in sorted(path for path in prepare_root.iterdir() if path.is_dir()):
+        run_variants = sorted(
+            path for path in run_dir.glob("*_*.npz")
+            if path.name[:2] in {"10", "20", "30", "40"}
+        )
+        if run_variants:
+            write_comparison(run_dir / "comparison.json", run_variants)
+            viewer_variants.extend(run_variants)
+    write_comparison(prepare_root / "comparison.json", viewer_variants)
+    return outputs
+
+
 def prepare_episode(
     ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None,
     report=None,
@@ -450,34 +661,12 @@ def prepare_episode(
         pp.smoothed_dir = stage_p
         if interp_max_gap is not None:
             pp.interp_max_gap = int(interp_max_gap)
-        # Fuse onto the raw synced-frame grid so cln.npz has one row per
-        # recorded frame, index-aligned with cloud/<i>.bin and everything else.
-        ts_path = ep.raw_dir / "timestamps.json"
-        if ts_path.exists():
-            try:
-                _ts = json.loads(ts_path.read_text())
-                _sync = [int(e["sync_us"]) for e in _ts if "sync_us" in e]
-                if _sync:
-                    pp.grid_ts = np.asarray(sorted(_sync), dtype=np.int64)
-            except Exception:  # noqa: BLE001 — fall back to the union grid
-                pass
+        from viki.prepare.checkpoints import run_name
 
-        # Multi-view triangulation (Stage 3): if enabled, make sure
-        # raw/joints3d.npz is current before fusion reads it.
-        if str(getattr(config, "PERCEPTION_FUSE_MODE", "xyz_mean")) == "triangulate":
-            j3d = ep.raw_dir / "joints3d.npz"
-            obs = ep.raw_dir / "observations.npz"
-            try:
-                if obs.exists() and (
-                    not j3d.exists() or j3d.stat().st_mtime < obs.stat().st_mtime
-                ):
-                    from viki.perception.triangulate import triangulate_episode
-
-                    triangulate_episode(ep.raw_dir)
-                if j3d.exists():
-                    pp.joints3d_path = j3d
-            except Exception:  # noqa: BLE001 — fusion falls back to xyz_mean
-                logger.warning("prepare %s: triangulation step failed", ep.id, exc_info=True)
+        pp.checkpoints_dir = ep.intermediates_dir / "prepare" / run_name(
+            pp.fusion_mode, pp.interp_max_gap, window_length, polyorder
+        )
+        _configure_episode_inputs(pp, ep)
 
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
@@ -491,6 +680,22 @@ def prepare_episode(
             from viki.perception.hand_fit import refine_cln
 
             refine_cln(ep, report=report)
+            from viki.prepare.checkpoints import atomic_savez, write_comparison
+
+            with np.load(ep.cln_npz, allow_pickle=False) as fitted:
+                fitted_payload = {key: fitted[key] for key in fitted.files}
+            fitted_payload["checkpoint_stage"] = np.asarray("hand_fit")
+            hand_fit_path = pp.checkpoints_dir / "40_hand_fit.npz"
+            atomic_savez(hand_fit_path, fitted_payload)
+            write_comparison(
+                pp.checkpoints_dir / "comparison.json",
+                [
+                    pp.checkpoints_dir / "10_fused_observed.npz",
+                    pp.checkpoints_dir / "20_fused_filled.npz",
+                    pp.checkpoints_dir / "30_smoothed.npz",
+                    hand_fit_path,
+                ],
+            )
         except Exception:  # noqa: BLE001 — never fail prepare on the refinement
             logger.warning("prepare %s: hand-fit refinement failed", ep.id, exc_info=True)
             hand_fit = False

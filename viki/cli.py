@@ -68,6 +68,18 @@ def _cmd_prepare(a) -> None:
     print(prepare_episode(_episode(a.episode), a.window, a.polyorder))
 
 
+def _cmd_checkpoints(a) -> None:
+    from viki.prepare.run import generate_stage_checkpoints
+
+    outputs = generate_stage_checkpoints(
+        _episode(a.episode), fusion_modes=tuple(a.fusion),
+        window_length=a.window, polyorder=a.polyorder,
+        interp_max_gap=a.interp_max_gap,
+    )
+    for mode, path in outputs.items():
+        print(f"{mode}: {path}")
+
+
 def _cmd_hand_fit(a) -> None:
     from viki.perception.hand_fit import refine_cln
 
@@ -178,6 +190,20 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--window", type=int, default=7)
     pp.add_argument("--polyorder", type=int, default=2)
     pp.set_defaults(func=_cmd_prepare)
+
+    pcp = sub.add_parser(
+        "checkpoints",
+        help="save non-destructive observed/filled/smoothed A/B prepare variants",
+    )
+    pcp.add_argument("episode")
+    pcp.add_argument(
+        "--fusion", nargs="+", default=["triangulate", "xyz_mean"],
+        choices=["triangulate", "xyz_mean"],
+    )
+    pcp.add_argument("--interp-max-gap", type=int, default=None)
+    pcp.add_argument("--window", type=int, default=7)
+    pcp.add_argument("--polyorder", type=int, default=2)
+    pcp.set_defaults(func=_cmd_checkpoints)
 
     pt = sub.add_parser("retarget", help="cln.npz -> plan.h5")
     pt.add_argument("episode")

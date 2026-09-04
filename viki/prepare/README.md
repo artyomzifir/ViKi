@@ -11,9 +11,10 @@ track exists — the object-relative form.
 
 | file | what |
 |---|---|
-| `run.py` | `PreparationPipeline` + `prepare_episode(ep)` — orchestrates the below, writes `cln.npz`, marks status |
+| `run.py` | `PreparationPipeline` + `prepare_episode(ep)` — orchestrates the below, writes `cln.npz`, marks status; `generate_stage_checkpoints(ep)` makes non-destructive A/B runs |
 | `fuse.py` | `fuse_trajectories(trajs, ts, ids, weights=None)` — resample to a common grid, then `Σ w·x / Σ w` per landmark per step (paper eq. 2). Plain mean when `weights` is `None`. |
-| `interpolate.py` | `fill_linear` (working) · `fill_se3_spline` *(stub, paper §3.7 — falls back to linear)* |
+| `interpolate.py` | per-coordinate linear and natural-cubic gap filling; `max_gap` prevents fabrication across long occlusions. This is **not** a geometry-preserving SE(3) spline. |
+| `checkpoints.py` | atomic NPZ/JSON checkpoint persistence plus motion/anatomy diagnostics |
 | `represent.py` | `object_relative(wrist_world, object_world)` = `inv(O)·H` *(stub: no object tracker → returns `None`, paper §3.6)* |
 | Savitzky-Golay | in `viki.dsp` (`smooth_landmark_sequence`), shared with `retarget` |
 | gripper | `viki.gripper.BinaryGripper` over the fused frames |
@@ -27,8 +28,33 @@ track exists — the object-relative form.
   Optional `landmark_confidence (T,L)`, `T_world_obj` / `T_obj_hand`, and the
   non-destructive `hand_fit_*` trajectory arrays when those stages run.
 
+Every episode prepare run also keeps its material boundaries under
+`intermediates/prepare/<fusion>__gap-<N>__sg-<window>-<polyorder>/`:
+
+| checkpoint | exact boundary |
+|---|---|
+| `00_per_camera_observed.npz` | detector/lift output separated by camera |
+| `05_per_camera_filled.npz` | per-camera linear gap fill |
+| `10_fused_observed.npz` | fusion/triangulation output, before fabrication |
+| `20_fused_filled.npz` | fused coordinate-wise cubic gap fill |
+| `30_smoothed.npz` | Savitzky–Golay output |
+| `40_hand_fit.npz` | optional capsule trajectory fit |
+
+The last four are complete viewer-compatible artifacts. `manifest.json` records
+the knobs, while `comparison.json` reports finite/direct fractions, motion
+derivatives, anatomical outlier frames, and palm-collapse frame indices.
+
+Generate A/B variants without replacing the active `cln.npz`:
+
+```bash
+viki checkpoints <episode> --fusion triangulate xyz_mean --interp-max-gap 6
+```
+
+Running the command again with another gap/window adds a parameter-named run;
+the episode-level `intermediates/prepare/comparison.json` remains cumulative.
+
 ## Stubbed
 
 - fusion weights: the caller passes detector visibility only — the range and
   incidence factors of eq. 2 are not computed.
-- object-relative representation, SE(3) spline interpolation.
+- object-relative representation and geometry-preserving SE(3) interpolation.
