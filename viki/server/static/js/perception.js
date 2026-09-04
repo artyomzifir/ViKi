@@ -15,6 +15,7 @@ const LM_NAMES = [
 ];
 const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need these
 const DEFAULT_LM = [...Array(21).keys()];           // track every landmark by default
+const CLEAN_BASELINE = 'clean-triangulated-landmarks-v1';
 const LAYER_LABELS = {
   cloud: 'cloud', perCamera: 'per-camera', fused: 'fused', trajectory: 'traj',
   palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox', handFit: 'hand fit',
@@ -38,7 +39,7 @@ const HAND_EDGES = [
 ];
 
 const DEFAULT_OPTS = {
-  model: 'rtmpose-m-hand5', hand: 'right', flip: false,
+  profile: CLEAN_BASELINE, model: 'mediapipe', hand: 'right', flip: false,
   track_lm: DEFAULT_LM, min_confidence: 0.5, interp_max_gap: 0,
   sg_window: 7, sg_polyorder: 2,
   regen_cloud: false, cloud_stride: 1, cloud_bbox: '', dataset: '',
@@ -81,6 +82,12 @@ export function mount(view) {
     <aside class="perc-side">
       <section class="calib-sec">
         <div class="calib-sec-title">1 · Model</div>
+        <div class="cfg-row"><label>Pipeline</label>
+          <select data-role="profile">
+            <option value="${CLEAN_BASELINE}" ${S.profile === CLEAN_BASELINE ? 'selected' : ''}>clean baseline v1</option>
+            <option value="" ${!S.profile ? 'selected' : ''}>custom / config</option>
+          </select></div>
+        <div class="hint" data-role="profile-meta"></div>
         <select data-role="model"></select>
         <div class="hint" data-role="model-meta">—</div>
         <button data-role="download" hidden>Download weights</button>
@@ -162,7 +169,7 @@ async function loadModels(S) {
   const want = (S && S.model) || 'mediapipe';
   if (models.some(m => m.id === want)) sel.value = want;
   root.querySelector('[data-role="hand"]').value = S?.hand || 'right';
-  syncModel();
+  syncProfile();
 }
 
 function syncModel() {
@@ -188,6 +195,31 @@ function syncModel() {
   persist();
 }
 
+function syncProfile() {
+  const profile = root.querySelector('[data-role="profile"]').value;
+  const locked = profile === CLEAN_BASELINE;
+  const fixed = {
+    model: 'mediapipe', flip: false, minconf: 0.5, gap: 0, sgwin: 7, sgpoly: 2,
+  };
+  if (locked) {
+    Object.entries(fixed).forEach(([role, value]) => {
+      const el = root.querySelector(`[data-role="${role}"]`);
+      if (!el) return;
+      if (el.type === 'checkbox') el.checked = !!value;
+      else el.value = String(value);
+    });
+    renderHand(DEFAULT_LM);
+  }
+  ['model', 'flip', 'minconf', 'gap', 'sgwin', 'sgpoly'].forEach(role => {
+    const el = root.querySelector(`[data-role="${role}"]`);
+    if (el) el.disabled = locked;
+  });
+  root.querySelector('[data-role="profile-meta"]').textContent = locked
+    ? 'locked: MediaPipe · all 21 · triangulate · fill all · SG 7/2 · landmarks · no hand fit'
+    : 'experimental settings below are used directly';
+  syncModel();
+}
+
 function renderHand(sel) {
   const set = new Set([...(sel || []), ...REQUIRED_LM]);
   const line = ([a, b]) =>
@@ -208,6 +240,7 @@ function renderHand(sel) {
 let _trackSel = DEFAULT_LM.slice();
 
 function toggleLm(i) {
+  if (root.querySelector('[data-role="profile"]').value === CLEAN_BASELINE) return;
   if (REQUIRED_LM.has(i)) return;
   const s = new Set(_trackSel);
   s.has(i) ? s.delete(i) : s.add(i);
@@ -294,6 +327,7 @@ function opts() {
   const bbox = (root.querySelector('[data-role="cloud-bbox"]').value || '')
     .split(',').map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
   return {
+    profile: root.querySelector('[data-role="profile"]').value || null,
     model: root.querySelector('[data-role="model"]').value || 'rtmpose-m-hand5',
     hand: root.querySelector('[data-role="hand"]').value,
     flip: root.querySelector('[data-role="flip"]').checked,
@@ -387,7 +421,8 @@ function setPlayIcon(playing) {
 
 function onChange(e) {
   const el = e.target;
-  if (el.dataset.role === 'model') syncModel();
+  if (el.dataset.role === 'profile') syncProfile();
+  else if (el.dataset.role === 'model') syncModel();
   else if (el.dataset.role === 'dataset') { persist(); loadEpisodes(); }
   else if (el.dataset.layer) {
     ctl.setLayer(el.dataset.layer, el.checked);

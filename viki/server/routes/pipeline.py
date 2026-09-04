@@ -219,6 +219,7 @@ class _EpReq(BaseModel):
     episode: str
     model: str | None = None
     robot: str | None = None
+    profile: str | None = None
     window: int = 7
     polyorder: int = 2
 
@@ -278,6 +279,13 @@ async def list_models():
     return _lm()
 
 
+@_ep.get("/profiles")
+async def perception_profiles():
+    from viki.perception.profiles import list_profiles
+
+    return {"profiles": list_profiles()}
+
+
 @_ep.post("/models/download")
 async def download_model(req: _ModelReq):
     logger.info("model download requested: %s", req.model)
@@ -326,12 +334,17 @@ async def cloud(req: _EpReq):
 @_ep.post("/prepare")
 async def prepare(req: _EpReq):
     ep = _episode(req.episode)
-    logger.info("prepare: episode=%s sg=%s/%s", ep.id, req.window, req.polyorder)
+    logger.info(
+        "prepare: episode=%s profile=%s sg=%s/%s",
+        ep.id, req.profile or "config", req.window, req.polyorder,
+    )
 
     def _job():
         from viki.prepare.run import prepare_episode
 
-        return prepare_episode(ep, req.window, req.polyorder)
+        return prepare_episode(
+            ep, req.window, req.polyorder, profile=req.profile,
+        )
 
     return {"job_id": jobs.submit("prepare", _job, episode=ep.id)}
 

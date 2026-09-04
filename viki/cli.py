@@ -5,6 +5,7 @@ Thin command-line surface over the pipeline stages. Same package API the web
 server calls — the CLI just parses args and prints results.
 
     viki record  --task "pick cube" --seconds 10
+    viki perceive <episode>             # locked clean baseline by default
     viki extract  <episode>
     viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
     viki prepare  <episode>
@@ -37,16 +38,29 @@ def _cmd_record(a) -> None:
     from viki.cameras.record import SceneRecorder
 
     mgr = CameraManager()
-    for dev in a.cameras or mgr.list_devices().get("realsense", []):
-        mgr.start(dev)
-    rec = SceneRecorder(
-        mgr,
-        dataset=a.dataset,
-        episodes_dir=None if a.dataset else a.episodes_dir,
-        meta={"task": a.task, "demonstrator": a.demonstrator, "hand": a.hand},
-    )
-    ep = rec.record(a.seconds, fps=a.fps)
-    mgr.stop_all()
+    discovered = mgr.list_devices()
+    devices = a.cameras or [
+        *discovered.get("realsense", []), *discovered.get("kinect", []),
+    ]
+    try:
+        kinect_ids = [device_id for device_id in devices if device_id.startswith("kinect_")]
+        if len(discovered.get("kinect", [])) >= 2 and kinect_ids:
+            mgr.start_configured_kinect_rig(fps=a.fps)
+        else:
+            for device_id in kinect_ids:
+                mgr.start(device_id, fps=a.fps)
+        for device_id in devices:
+            if not device_id.startswith("kinect_"):
+                mgr.start(device_id, fps=a.fps)
+        rec = SceneRecorder(
+            mgr,
+            dataset=a.dataset,
+            episodes_dir=None if a.dataset else a.episodes_dir,
+            meta={"task": a.task, "demonstrator": a.demonstrator, "hand": a.hand},
+        )
+        ep = rec.record(a.seconds, fps=a.fps)
+    finally:
+        mgr.stop_all()
     print(ep.root)
 
 
@@ -54,6 +68,20 @@ def _cmd_extract(a) -> None:
     from viki.perception.extract import extract_episode
 
     print(extract_episode(_episode(a.episode), backend=a.backend, hand=a.hand))
+
+
+def _cmd_perceive(a) -> None:
+    from viki.perception.run import PerceiveOpts, perceive_episode
+
+    print(perceive_episode(
+        _episode(a.episode),
+        PerceiveOpts(
+            profile=a.profile,
+            hand=a.hand,
+            build_cloud=a.build_cloud,
+            cloud_stride=a.cloud_stride,
+        ),
+    ))
 
 
 def _cmd_cloud(a) -> None:
@@ -65,7 +93,9 @@ def _cmd_cloud(a) -> None:
 def _cmd_prepare(a) -> None:
     from viki.prepare.run import prepare_episode
 
-    print(prepare_episode(_episode(a.episode), a.window, a.polyorder))
+    print(prepare_episode(
+        _episode(a.episode), a.window, a.polyorder, profile=a.profile,
+    ))
 
 
 def _cmd_checkpoints(a) -> None:
@@ -177,6 +207,21 @@ def _build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--hand", default="right", choices=["left", "right"])
     pe.set_defaults(func=_cmd_extract)
 
+    pper = sub.add_parser(
+        "perceive",
+        help="raw/ -> reproducible baseline rec.npz + joints3d.npz + cln.npz",
+    )
+    pper.add_argument("episode")
+    pper.add_argument(
+        "--profile",
+        choices=["clean-triangulated-landmarks-v1"],
+        default="clean-triangulated-landmarks-v1",
+    )
+    pper.add_argument("--hand", default="right", choices=["left", "right"])
+    pper.add_argument("--build-cloud", action="store_true")
+    pper.add_argument("--cloud-stride", type=int, default=1)
+    pper.set_defaults(func=_cmd_perceive)
+
     pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
     pc.add_argument("episode")
     pc.set_defaults(func=_cmd_cloud)
@@ -189,6 +234,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("episode")
     pp.add_argument("--window", type=int, default=7)
     pp.add_argument("--polyorder", type=int, default=2)
+    pp.add_argument(
+        "--profile",
+        choices=["clean-triangulated-landmarks-v1"],
+        default=None,
+        help="locked reproducible recipe (overrides fusion/gap/SG/hand-fit config)",
+    )
     pp.set_defaults(func=_cmd_prepare)
 
     pcp = sub.add_parser(

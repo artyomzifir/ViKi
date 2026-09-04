@@ -147,6 +147,9 @@ def extract_episode(
     hand: str = "right",
     track_lm: list[int] | None = None,
     min_confidence: float | None = None,
+    depth_radius_px: int | None = None,
+    save_observations: bool | None = None,
+    profile: str | None = None,
     flip: bool = False,
     report=None,
 ) -> str:
@@ -183,10 +186,18 @@ def extract_episode(
 
     # Stage 1 (multi-view triangulation): raw 2-D observations, written alongside
     # rec.npz, never instead of it. See viki/perception/observations.py.
-    save_obs = bool(getattr(_cfg, "PERCEPTION_SAVE_OBSERVATIONS", True))
+    save_obs = bool(
+        save_observations
+        if save_observations is not None
+        else getattr(_cfg, "PERCEPTION_SAVE_OBSERVATIONS", True)
+    )
     obs_rows: list[dict] = []
     obs_cams: dict[str, dict] = {}
-    obs_radius = int(getattr(_cfg, "SKELETON_DEPTH_SAMP_RADIUS", 15))
+    obs_radius = int(
+        depth_radius_px
+        if depth_radius_px is not None
+        else getattr(_cfg, "SKELETON_DEPTH_SAMP_RADIUS", 15)
+    )
     _obs_calib_id = None
     if save_obs:
         from viki.perception import observations as _obs
@@ -309,11 +320,17 @@ def extract_episode(
     if save_obs:
         _obs.write_observations(
             raw / "observations.npz", obs_rows, obs_cams,
-            {"depth_radius_px": obs_radius, "model": model_id, "flip": bool(flip)},
+            {
+                "depth_radius_px": obs_radius,
+                "model": model_id,
+                "min_confidence": min_confidence,
+                "profile": profile,
+                "flip": bool(flip),
+            },
         )
     mark_stage(
         ep, "extract", frames=len(records), model=model_id,
-        track_lm=sorted(keep) if keep else "all",
+        track_lm=sorted(keep) if keep else "all", profile=profile or "config",
     )
     logger.info("extract %s: %d frames -> %s", ep.id, len(records), ep.rec_npz)
     return str(ep.rec_npz)

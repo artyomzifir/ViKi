@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PerceiveOpts:
+    profile: str | None = None
     model: str = "mediapipe"          # registry.MODELS id
     hand: str = "right"
     track_lm: list[int] | None = None
@@ -39,6 +40,7 @@ class PerceiveOpts:
 
         d = dict(d or {})
         return cls(
+            profile=d.get("profile") or None,
             model=(d.get("model") or d.get("backend")            # 'backend' = legacy
                    or getattr(cfg, "POSE_BACKEND", None) or "mediapipe"),
             hand=d.get("hand") or "right",
@@ -64,13 +66,29 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
     """Run the full perception stage for one episode. Returns the cln.npz path."""
     from viki.perception.cloud import build_cloud
     from viki.perception.extract import extract_episode
+    from viki.perception.profiles import get_profile
     from viki.prepare.run import prepare_episode
 
     if not isinstance(opts, PerceiveOpts):
         opts = PerceiveOpts.from_dict(opts)
+    profile = get_profile(opts.profile)
+    if profile is not None:
+        # A baseline profile owns every accuracy-affecting knob.  Hand side and
+        # cloud generation remain episode/UI choices rather than algorithm
+        # parameters.
+        opts.model = profile.detector_model
+        opts.track_lm = list(profile.track_lm)
+        opts.min_confidence = profile.min_confidence
+        opts.interp_max_gap = profile.interp_max_gap
+        opts.sg_window = profile.sg_window
+        opts.sg_polyorder = profile.sg_polyorder
+        opts.flip = profile.flip
     report = report or _noop
 
-    logger.info("perceive %s: model=%s hand=%s cloud=%s", ep.id, opts.model, opts.hand, opts.build_cloud)
+    logger.info(
+        "perceive %s: profile=%s model=%s hand=%s cloud=%s",
+        ep.id, opts.profile or "config", opts.model, opts.hand, opts.build_cloud,
+    )
     report(stage="extract", frame=0, total=0)
     extract_episode(
         ep,
@@ -78,13 +96,17 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
         hand=opts.hand,
         track_lm=opts.track_lm,
         min_confidence=opts.min_confidence,
+        depth_radius_px=profile.depth_radius_px if profile is not None else None,
+        save_observations=(profile.save_observations if profile is not None else None),
+        profile=opts.profile,
         flip=opts.flip,
         report=report,
     )
 
     report(stage="fuse")
     prepare_episode(ep, opts.sg_window, opts.sg_polyorder,
-                    interp_max_gap=opts.interp_max_gap, report=report)
+                    interp_max_gap=opts.interp_max_gap, report=report,
+                    profile=opts.profile)
 
     if opts.build_cloud:
         report(stage="cloud")

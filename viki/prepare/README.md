@@ -53,6 +53,21 @@ viki checkpoints <episode> --fusion triangulate xyz_mean --interp-max-gap 6
 Running the command again with another gap/window adds a parameter-named run;
 the episode-level `intermediates/prepare/comparison.json` remains cumulative.
 
+## Frozen clean baseline
+
+The named profile `clean-triangulated-landmarks-v1` reproduces the validated
+`pick_up_u` output independently of experimental config. It requires real
+two-view triangulation, locks fill-all + SG 7/2 + landmark pose, disables
+`hand_fit`, and protects the first result under `intermediates/baselines/`.
+Run it with:
+
+```bash
+viki perceive <episode> --profile clean-triangulated-landmarks-v1
+```
+
+Full parameters, provenance and the reference hash are documented in
+[`docs/clean_baseline_v1.md`](../../docs/clean_baseline_v1.md).
+
 ## Stubbed
 
 - fusion weights: the caller passes detector visibility only — the range and

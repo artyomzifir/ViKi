@@ -107,18 +107,42 @@ def _ray_deg(Ca, Cb, X) -> float:
 
 
 class TriConfig:
-    def __init__(self):
-        g = lambda k, d: float(getattr(config, k, d))
-        self.min_score = g("TRI_MIN_SCORE", 0.30)
-        self.min_ray_deg = g("TRI_MIN_RAY_DEG", 5.0)
-        self.reproj_inlier_px = g("TRI_REPROJ_INLIER_PX", 4.0)
-        self.depth_lambda = g("TRI_DEPTH_LAMBDA", 0.10)
-        self.depth_delta_m = g("TRI_DEPTH_DELTA_M", 0.010)
-        self.depth_spread_scale_m = g("TRI_DEPTH_SPREAD_SCALE_M", 0.020)
-        self.loss = str(getattr(config, "TRI_LOSS", "soft_l1"))
-        self.ray_ref_deg = g("TRI_RAY_REF_DEG", 20.0)
-        cams = getattr(config, "TRI_GEOMETRY_CAMERAS", []) or []
+    def __init__(self, overrides: dict[str, object] | None = None):
+        """Triangulation knobs from config, or an explicit named-profile map."""
+        values = dict(overrides or {})
+
+        def number(attr: str, config_key: str, default: float) -> float:
+            return float(values.get(attr, getattr(config, config_key, default)))
+
+        self.min_score = number("min_score", "TRI_MIN_SCORE", 0.30)
+        self.min_ray_deg = number("min_ray_deg", "TRI_MIN_RAY_DEG", 5.0)
+        self.reproj_inlier_px = number(
+            "reproj_inlier_px", "TRI_REPROJ_INLIER_PX", 4.0,
+        )
+        self.depth_lambda = number("depth_lambda", "TRI_DEPTH_LAMBDA", 0.10)
+        self.depth_delta_m = number("depth_delta_m", "TRI_DEPTH_DELTA_M", 0.010)
+        self.depth_spread_scale_m = number(
+            "depth_spread_scale_m", "TRI_DEPTH_SPREAD_SCALE_M", 0.020,
+        )
+        self.loss = str(values.get("loss", getattr(config, "TRI_LOSS", "soft_l1")))
+        self.ray_ref_deg = number("ray_ref_deg", "TRI_RAY_REF_DEG", 20.0)
+        cams = values.get(
+            "geometry_cameras", getattr(config, "TRI_GEOMETRY_CAMERAS", []),
+        ) or []
         self.geometry_cameras = list(cams)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "min_score": self.min_score,
+            "min_ray_deg": self.min_ray_deg,
+            "reproj_inlier_px": self.reproj_inlier_px,
+            "depth_lambda": self.depth_lambda,
+            "depth_delta_m": self.depth_delta_m,
+            "depth_spread_scale_m": self.depth_spread_scale_m,
+            "loss": self.loss,
+            "ray_ref_deg": self.ray_ref_deg,
+            "geometry_cameras": self.geometry_cameras,
+        }
 
 
 def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: TriConfig):
@@ -208,7 +232,9 @@ def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: Tr
 # ── episode driver ──────────────────────────────────────────────────────
 
 
-def triangulate_episode(raw: Path, *, write: bool = True) -> dict:
+def triangulate_episode(
+    raw: Path, *, write: bool = True, cfg: TriConfig | None = None,
+) -> dict:
     """Read ``raw/observations.npz`` (Stage 1) and write ``raw/joints3d.npz`` —
     per synced frame, the world-frame joints that triangulated + their quality.
     Frames/joints without ≥2 usable views are gaps (NaN, quality 0)."""
@@ -217,7 +243,7 @@ def triangulate_episode(raw: Path, *, write: bool = True) -> dict:
     obs = read_observations(raw)
     if obs is None or not len(obs.get("camera_id", [])):
         raise FileNotFoundError(f"no observations.npz in {raw}")
-    cfg = TriConfig()
+    cfg = cfg or TriConfig()
     meta_cams = obs["cameras"]
     want = set(cfg.geometry_cameras) if cfg.geometry_cameras else set(meta_cams)
     cams = {c: _Cam(c, meta_cams[c]) for c in meta_cams if c in want and meta_cams[c].get("K")}
@@ -288,6 +314,7 @@ def triangulate_episode(raw: Path, *, write: bool = True) -> dict:
         "reproj_px_median": float(np.nanmedian(out_reproj)) if np.isfinite(out_reproj).any() else None,
         "reproj_px_p95": float(np.nanpercentile(out_reproj, 95)) if np.isfinite(out_reproj).any() else None,
         "quality_median": float(np.median(out_q[out_q > 0])) if (out_q > 0).any() else 0.0,
+        "config": cfg.as_dict(),
     }
     if write:
         np.savez(
