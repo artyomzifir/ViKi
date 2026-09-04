@@ -16,6 +16,7 @@ const LM_NAMES = [
 const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need these
 const DEFAULT_LM = [...Array(21).keys()];           // track every landmark by default
 const CLEAN_BASELINE = 'clean-triangulated-landmarks-v1';
+const STABLE_PIPELINE = 'stable-fused-hand-v1';
 const LAYER_LABELS = {
   cloud: 'cloud', perCamera: 'per-camera', fused: 'fused', trajectory: 'traj',
   palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox', handFit: 'hand fit',
@@ -39,7 +40,7 @@ const HAND_EDGES = [
 ];
 
 const DEFAULT_OPTS = {
-  profile: CLEAN_BASELINE, model: 'mediapipe', hand: 'right', flip: false,
+  profile: STABLE_PIPELINE, model: 'mediapipe', hand: 'right', flip: false,
   track_lm: DEFAULT_LM, min_confidence: 0.5, interp_max_gap: 0,
   sg_window: 7, sg_polyorder: 2,
   regen_cloud: false, cloud_stride: 1, cloud_bbox: '', dataset: '',
@@ -84,6 +85,7 @@ export function mount(view) {
         <div class="calib-sec-title">1 · Model</div>
         <div class="cfg-row"><label>Pipeline</label>
           <select data-role="profile">
+            <option value="${STABLE_PIPELINE}" ${S.profile === STABLE_PIPELINE ? 'selected' : ''}>stable fused + hand fit v1</option>
             <option value="${CLEAN_BASELINE}" ${S.profile === CLEAN_BASELINE ? 'selected' : ''}>clean baseline v1</option>
             <option value="" ${!S.profile ? 'selected' : ''}>custom / config</option>
           </select></div>
@@ -197,7 +199,7 @@ function syncModel() {
 
 function syncProfile() {
   const profile = root.querySelector('[data-role="profile"]').value;
-  const locked = profile === CLEAN_BASELINE;
+  const locked = profile === CLEAN_BASELINE || profile === STABLE_PIPELINE;
   const fixed = {
     model: 'mediapipe', flip: false, minconf: 0.5, gap: 0, sgwin: 7, sgpoly: 2,
   };
@@ -214,9 +216,12 @@ function syncProfile() {
     const el = root.querySelector(`[data-role="${role}"]`);
     if (el) el.disabled = locked;
   });
-  root.querySelector('[data-role="profile-meta"]').textContent = locked
-    ? 'locked: MediaPipe · all 21 · triangulate · fill all · SG 7/2 · landmarks · no hand fit'
-    : 'experimental settings below are used directly';
+  root.querySelector('[data-role="profile-meta"]').textContent =
+    profile === STABLE_PIPELINE
+      ? 'locked: clean triangulated → fused · articulated-landmarks-v1 → hand fit'
+      : profile === CLEAN_BASELINE
+        ? 'locked: MediaPipe · all 21 · triangulate · fill all · SG 7/2 · fused only'
+        : 'experimental settings below are used directly';
   syncModel();
 }
 
@@ -240,7 +245,8 @@ function renderHand(sel) {
 let _trackSel = DEFAULT_LM.slice();
 
 function toggleLm(i) {
-  if (root.querySelector('[data-role="profile"]').value === CLEAN_BASELINE) return;
+  if ([CLEAN_BASELINE, STABLE_PIPELINE].includes(
+    root.querySelector('[data-role="profile"]').value)) return;
   if (REQUIRED_LM.has(i)) return;
   const s = new Set(_trackSel);
   s.has(i) ? s.delete(i) : s.add(i);

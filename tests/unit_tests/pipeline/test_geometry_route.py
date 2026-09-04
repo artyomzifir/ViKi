@@ -53,6 +53,10 @@ def test_geometry_shape(tmp_path, monkeypatch):
     assert len(g["wrist_traj"]) == 8 and len(g["wrist_traj"][0]) == 3
     assert len(g["palm_rot"][0]) == 9
     assert g["pose_source"] == "landmarks"
+    assert g["layer_sources"] == {
+        "fused": "smoothed_points",
+        "hand_fit": None,
+    }
     assert g["cameras"]["cam0"]["pos"] == pytest.approx([0.0, 0.0, -1.5], abs=1e-4)
     assert "raw_points" in g and "cam0" in g["raw_points"]
 
@@ -144,6 +148,41 @@ def test_geometry_lists_and_loads_checkpoint_variant(tmp_path, monkeypatch):
     assert payload["wrist_traj"][3] == [None, None, None]
     assert payload["palm_rot"][3] == [None] * 9
     json.dumps(payload, allow_nan=False)
+
+
+def test_geometry_lists_protected_baseline_and_articulated_variant(tmp_path, monkeypatch):
+    episodes = tmp_path / "episodes"
+    monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
+    ep = new_episode(episodes)
+    _synthetic(ep)
+    with np.load(ep.cln_npz) as source:
+        arrays = {key: source[key] for key in source.files}
+
+    baseline = ep.intermediates_dir / "baselines" / "clean-v1" / "cln.npz"
+    baseline.parent.mkdir(parents=True)
+    np.savez_compressed(baseline, **arrays)
+    geometry_path = (
+        ep.intermediates_dir / "geometry" / "articulated-v1" / "50_optimized.npz"
+    )
+    geometry_path.parent.mkdir(parents=True)
+    arrays["checkpoint_stage"] = np.asarray("geometry_optimized")
+    arrays["pose_source"] = np.asarray("articulated_landmarks")
+    np.savez_compressed(geometry_path, **arrays)
+
+    from viki.server.routes import pipeline
+
+    pipeline._inspect_viewer_variant_file.cache_clear()
+    listing = asyncio.run(pipeline.geometry_variants(ep.id))["variants"]
+    ids = {row["id"] for row in listing}
+    assert "baseline:clean-v1" in ids
+    assert "geometry:articulated-v1/50_optimized" in ids
+
+    payload = asyncio.run(pipeline.geometry(
+        ep.id, variant="geometry:articulated-v1/50_optimized",
+    ))
+    assert payload["checkpoint_stage"] == "geometry_optimized"
+    assert payload["pose_source"] == "articulated_landmarks"
 
 
 def test_geometry_404_for_missing_episode(tmp_path, monkeypatch):

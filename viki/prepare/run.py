@@ -794,12 +794,62 @@ def prepare_episode(
 
         baseline = protect_baseline(ep, profile_spec, ep.cln_npz)
 
+    # A versioned stable profile may own a post-prepare articulated pass.  It
+    # runs only after the landmark CLN has been protected, then installs only
+    # additive ``hand_fit_*`` arrays.  Consequently ``smoothed_points`` remains
+    # the honest fused observation while the anatomical model has its own
+    # independently addressable route.  Unlike the legacy optional fitter
+    # above, failure is fatal for such a profile: a named stable run must never
+    # silently claim success with one of its declared outputs missing.
+    articulated = None
+    articulated_recipe = (
+        profile_spec.articulated_hand_fit if profile_spec is not None else None
+    )
+    if articulated_recipe:
+        from viki.perception.articulated import (
+            ARTICULATED_LANDMARKS_V1,
+            ArticulatedConfig,
+            generate_articulated_variants,
+            install_articulated_overlay,
+        )
+
+        if articulated_recipe != ARTICULATED_LANDMARKS_V1:
+            raise ValueError(
+                f"unsupported articulated recipe {articulated_recipe!r}"
+            )
+        articulated_cfg = ArticulatedConfig(
+            name=articulated_recipe,
+            source_profile=profile_spec.name,
+        )
+        generated = generate_articulated_variants(
+            ep, cfg=articulated_cfg, report=report,
+        )
+        installed = install_articulated_overlay(
+            ep, cfg=articulated_cfg, variant="optimized",
+        )
+        # Refresh the recorded comparison after additive overlay installation:
+        # core still matches, while byte equality is now correctly false.
+        baseline = protect_baseline(ep, profile_spec, ep.cln_npz)
+        articulated = {
+            "recipe": articulated_recipe,
+            "variant": "optimized",
+            "report": generated["report"],
+            "quality_gate": generated["metrics"]["optimized"]["quality_gate"],
+            "clean_core_unchanged": installed["clean_core_unchanged"],
+        }
+
     with np.load(ep.cln_npz) as d:
         n = len(d["positions"])
         obj_rel = "T_obj_hand" in d
         hand_fit = hand_fit and "hand_fit_joint_angles" in d
+        if articulated is not None:
+            hand_fit = "hand_fit_joint_angles" in d
     mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel),
                hand_fit=bool(hand_fit), profile=profile or "config",
-               baseline=baseline)
+               baseline=baseline, articulated=articulated,
+               routing={
+                   "fused": "smoothed_points",
+                   "hand_fit": "hand_fit_capsules" if hand_fit else None,
+               })
     logger.info("prepare %s: %d frames -> %s", ep.id, n, ep.cln_npz)
     return str(ep.cln_npz)

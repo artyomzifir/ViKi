@@ -73,3 +73,13 @@ Full parameters, provenance and the reference hash are documented in
 - fusion weights: the caller passes detector visibility only — the range and
   incidence factors of eq. 2 are not computed.
 - object-relative representation and geometry-preserving SE(3) interpolation.
+## Stable fused + articulated profile
+
+`stable-fused-hand-v1` is the default complete perception route.  It protects
+the clean triangulated CLN, then creates non-destructive `40_projected.npz` and
+`50_optimized.npz` variants under
+`intermediates/geometry/articulated-landmarks-v1/` and installs the optimized
+candidate under additive `hand_fit_*` keys.  The dense depth cloud is excluded.
+Viewer routing is explicit: `smoothed_points` → **fused** and
+`hand_fit_capsules` → **hand fit**.  See `docs/articulated_geometry_v1.md` for
+the contract, metrics, and manual reproduction commands.

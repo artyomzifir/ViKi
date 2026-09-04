@@ -17,12 +17,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from viki.perception.profiles import STABLE_FUSED_HAND_V1
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class PerceiveOpts:
-    profile: str | None = None
+    profile: str | None = STABLE_FUSED_HAND_V1
     model: str = "mediapipe"          # registry.MODELS id
     hand: str = "right"
     track_lm: list[int] | None = None
@@ -40,7 +42,9 @@ class PerceiveOpts:
 
         d = dict(d or {})
         return cls(
-            profile=d.get("profile") or None,
+            # Missing means the stable versioned pipeline.  Explicit null/""
+            # still selects the custom configuration path from the UI/API.
+            profile=(d["profile"] or None) if "profile" in d else STABLE_FUSED_HAND_V1,
             model=(d.get("model") or d.get("backend")            # 'backend' = legacy
                    or getattr(cfg, "POSE_BACKEND", None) or "mediapipe"),
             hand=d.get("hand") or "right",
