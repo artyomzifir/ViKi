@@ -153,6 +153,11 @@ def test_clean_baseline_profile_locks_pipeline_and_protects_output(tmp_path, mon
     manifest = json.loads(protected.with_name("manifest.json").read_text())
     assert protected.read_bytes() == ep.cln_npz.read_bytes()
     assert manifest["artifact_sha256"] == file_sha256(protected)
+    # Input provenance must be real hashes, not a dropped/None field.
+    assert manifest["inputs_sha256"]["rec.npz"] == file_sha256(ep.rec_npz)
+    assert manifest["inputs_sha256"]["raw/timestamps.json"] == file_sha256(
+        ep.raw_dir / "timestamps.json"
+    )
 
     # Adding provenance to the active file does not make its trajectory differ
     # from the protected baseline, while the byte-level distinction stays clear.

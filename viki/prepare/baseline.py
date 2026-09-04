@@ -49,6 +49,11 @@ def _input_hashes(ep) -> dict[str, str]:
         "raw/intrinsics.json": ep.raw_dir / "intrinsics.json",
         "raw/extrinsics.json": ep.raw_dir / "extrinsics.json",
     }
+    return {
+        name: file_sha256(path)
+        for name, path in candidates.items()
+        if path.is_file()
+    }
 
 
 def _same_core_arrays(left: Path, right: Path) -> bool:
@@ -70,11 +75,6 @@ def _same_core_arrays(left: Path, right: Path) -> bool:
             elif not np.array_equal(a, b):
                 return False
     return True
-    return {
-        name: file_sha256(path)
-        for name, path in candidates.items()
-        if path.is_file()
-    }
 
 
 def protect_baseline(ep, profile, source: Path | None = None) -> dict[str, object]:
