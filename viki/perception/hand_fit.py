@@ -782,9 +782,15 @@ def fit_trajectory_windowed(
         lf = landmark_frames[s:e] if landmark_frames is not None else None
         lc = landmark_confidence[s:e] if landmark_confidence is not None else None
         # windows solve independently from the (already sanitised) warm start;
-        # the overlap blend carries continuity across the seam.
+        # the overlap blend carries continuity across the seam.  Pinocchio's
+        # ``Data`` is mutable FK/Jacobian scratch state and is not thread-safe:
+        # sharing ``hand.data`` between window workers made the same episode
+        # produce different (and sometimes violently jittery) trajectories.
+        # Build one equivalent model/data pair per solve; q layouts are
+        # identical because all are generated from the same frozen params.
+        local_hand = hm.build(hand.params)
         return fit_trajectory(
-            hand, list(clouds[s:e]), list(weights[s:e]), q_init[s:e], fc,
+            local_hand, list(clouds[s:e]), list(weights[s:e]), q_init[s:e], fc,
             landmark_frames=lf, landmark_confidence=lc, q_rest=q_rest,
         )
 
