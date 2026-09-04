@@ -1,5 +1,12 @@
 # Multi-view triangulation — A/B results
 
+> Historical A/B summary. The current artifact-level audit, including
+> prepare-stage ablations, interpolation-induced palm collapse, the sync-tail
+> correction, and updated `n_views` counts, is in
+> [`accuracy_audit_pick_up_u_2026-09-04.md`](accuracy_audit_pick_up_u_2026-09-04.md).
+> Where the numbers differ, the newer audit is authoritative for the current
+> `pick_up_u` files.
+
 ## Clean run (hardware-synced, full coverage) — `2026-09-03_16-58-45` (`pick_up_u`)
 
 898 frames, 30 fps, 2×Kinect **wired hardware sync** (inter-camera gap median
