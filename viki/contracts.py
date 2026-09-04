@@ -277,6 +277,9 @@ class HandDetection:
     points   : {LM: (u, v)} subpixel pixel coordinates (NaN where missing)
     lm_z_rel : (21,) float32 backend-relative z (NOT metric); wrist-relative
     confidence : overall detection score in [0, 1]
+    lm_score : (21,) float32 per-landmark detector score in [0, 1], or None when
+               the backend only reports one score for the whole hand (callers
+               then fall back to broadcasting ``confidence``).
     """
 
     points: dict
@@ -284,6 +287,7 @@ class HandDetection:
     confidence: float
     device_id: str
     timestamp_us: int
+    lm_score: np.ndarray | None = None
 
 
 @dataclass
@@ -456,6 +460,11 @@ class Episode:
         return self.root / "cln.npz"
 
     @property
+    def intermediates_dir(self) -> Path:
+        """Lossless stage checkpoints used for A/B inspection and diagnostics."""
+        return self.root / "intermediates"
+
+    @property
     def plan_h5(self) -> Path:
         return self.root / "plan.h5"
 
@@ -495,6 +504,13 @@ CLN_KEYS: tuple[str, ...] = (
 )
 CLN_OPTIONAL_KEYS: tuple[str, ...] = (
     "landmark_confidence",  # (T, L) — fused confidence retained for hand-fit anchors
+    "observed_points",  # (T, L, 3) — fusion output before any gap filling
+    "filled_points",  # (T, L, 3) — after gap fill, before temporal smoothing
+    "observed_mask",  # (T, L) — joints directly present at the fusion boundary
+    "interpolated_mask",  # (T, L) — joints fabricated by the gap-fill stage
+    "perception_fuse_mode",  # scalar string — xyz_mean | triangulate
+    "checkpoint_stage",  # scalar string — observed | filled | smoothed | hand_fit
+    "checkpoint_params_json",  # scalar JSON — exact knobs used for this artifact
     "T_world_obj",  # (T, 4, 4)  — object pose track  (stub: absent)
     "T_obj_hand",  # (T, 4, 4)  — object-relative form  (stub: absent)
     "hand_fit_positions",  # (T, 3) — fitted pose; landmark positions remain untouched

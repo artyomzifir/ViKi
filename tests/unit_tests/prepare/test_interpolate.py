@@ -40,6 +40,15 @@ def test_no_gaps_is_identity():
     np.testing.assert_array_equal(fill_se3_spline(tr), tr)
 
 
+def test_max_gap_fills_short_run_but_preserves_long_occlusion():
+    s = np.arange(12, dtype=float)
+    s[2:4] = np.nan
+    s[6:10] = np.nan
+    out = fill_se3_spline(_traj(s), max_gap=2)[:, 0, 0]
+    np.testing.assert_allclose(out[2:4], [2.0, 3.0], atol=1e-9)
+    assert np.isnan(out[6:10]).all()
+
+
 def test_fill_linear_still_exported():
     s = np.array([0.0, np.nan, 2.0])
     np.testing.assert_allclose(fill_linear(_traj(s))[:, 0, 0], [0, 1, 2])

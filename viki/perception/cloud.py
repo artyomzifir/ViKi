@@ -79,6 +79,25 @@ def _voxel_downsample(xyz: np.ndarray, rgb: np.ndarray, leaf: float) -> tuple[np
     return xyz[idx], rgb[idx]
 
 
+def _bbox_to_frame(bbox, T_world_display) -> list:
+    """Re-express a world-frame AABB in the rig frame. ``T_world_display`` maps
+    rig→world; its inverse takes the 8 box corners back to the rig frame and we
+    take their AABB (a loose bound when the anchor is rotated — fine for a viz
+    crop). Identity / missing ⇒ the box is returned unchanged."""
+    if not bbox or len(bbox) != 6 or not T_world_display:
+        return list(bbox) if bbox else []
+    T = np.asarray(T_world_display, float).reshape(4, 4)
+    if np.allclose(T, np.eye(4)):
+        return list(bbox)
+    Tinv = np.linalg.inv(T)
+    x0, x1, y0, y1, z0, z1 = bbox
+    corners = np.array([[x, y, z, 1.0]
+                        for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)])
+    rig = (Tinv @ corners.T).T[:, :3]
+    lo, hi = rig.min(axis=0), rig.max(axis=0)
+    return [float(lo[0]), float(hi[0]), float(lo[1]), float(hi[1]), float(lo[2]), float(hi[2])]
+
+
 def _crop_bbox(xyz: np.ndarray, rgb: np.ndarray, bbox) -> tuple[np.ndarray, np.ndarray]:
     if not bbox or len(bbox) != 6:
         return xyz, rgb
@@ -190,6 +209,10 @@ def build_cloud(
     stride = max(1, int(stride if stride is not None else getattr(config, "CLOUD_STRIDE", 6)))
     voxel = float(voxel if voxel is not None else getattr(config, "CLOUD_VOXEL_M", 0.005))
     bbox = list(bbox if bbox is not None else (getattr(config, "CLOUD_WORKSPACE_BBOX", []) or []))
+    # The workspace AABB is a world/display-frame concept; the cloud is built in
+    # the RIG (reference-camera) frame (T_world_display never touches the points,
+    # spec §5). Carry the box into the rig frame for the crop test instead.
+    bbox = _bbox_to_frame(bbox, _read_json(raw / "world_anchor.json").get("T_world_display"))
     cap = int(max_points if max_points is not None else getattr(config, "CLOUD_MAX_POINTS_PER_FRAME", 40000))
     bg_subtract = bool(getattr(config, "CLOUD_BG_SUBTRACT", True) if bg_subtract is None else bg_subtract)
     bg_tol_mm = float(getattr(config, "CLOUD_BG_TOLERANCE_MM", 50.0) if bg_tol_mm is None else bg_tol_mm)

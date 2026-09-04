@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -233,6 +235,24 @@ class SceneRecorder:
         (self._raw() / "intrinsics.json").write_text(json.dumps(intr, indent=2))
         (self._raw() / "extrinsics.json").write_text(json.dumps(extr, indent=2))
 
+        # World anchor — T_world_display for the viewer / AABB / export only.
+        # extrinsics.json above is the RIG (reference-camera) frame; this is the
+        # separate presentation transform. Absent ⇒ downstream treats it as
+        # identity (rig frame == display frame).
+        try:
+            from viki import config as _cfg
+
+            _ap = getattr(_cfg, "WORLD_ANCHOR_FILENAME", "data/world_anchor.json")
+            if os.path.exists(_ap):
+                shutil.copyfile(_ap, self._raw() / "world_anchor.json")
+            _vp = getattr(_cfg, "VALIDATION_FILENAME", "data/validation_report.json")
+            if os.path.exists(_vp):
+                shutil.copyfile(_vp, self._raw() / "validation_report.json")
+        except Exception:  # noqa: BLE001
+            logger.warning("record: setup artifacts not snapshotted", exc_info=True)
+
+        self._write_manifest()
+
         meta = load_meta(self.episode)
         meta["cameras"] = cams
         try:
@@ -241,7 +261,63 @@ class SceneRecorder:
             meta["calibration_preset"] = current_active()
         except Exception:  # noqa: BLE001
             pass
+        # Record whether the Kinect pair ran on the wired hardware sync, so the
+        # sync-measurement script (and any downstream time-budget check) can tell
+        # a hardware-synced take from a software-only one.
+        try:
+            from viki import config as _cfg
+
+            meta["kinect_sync"] = getattr(_cfg, "KINECT_SYNC", {}) or {}
+        except Exception:  # noqa: BLE001
+            pass
         save_meta(self.episode, meta)
+
+    def _write_manifest(self) -> None:
+        """`<episode>/manifest.json` — the setup artifacts this recording was
+        made against (spec §7), by content hash so a stale calibration is
+        detectable after the fact."""
+        import hashlib
+
+        raw = self._raw()
+
+        def _h(p):
+            try:
+                return hashlib.sha256(p.read_bytes()).hexdigest()
+            except OSError:
+                return None
+
+        val = {}
+        vp = raw / "validation_report.json"
+        if vp.exists():
+            try:
+                val = json.loads(vp.read_text())
+            except ValueError:
+                pass
+
+        bg_hashes: dict = {}
+        try:
+            from viki.calibration.artifacts import background_path, background_devices
+            from viki.calibration.presets import current_active
+
+            preset = current_active()
+            if preset:
+                for dev in background_devices(preset):
+                    bg_hashes[dev] = _h(background_path(preset, dev))
+        except Exception:  # noqa: BLE001
+            pass
+
+        manifest = {
+            "extrinsics_hash": _h(raw / "extrinsics.json"),
+            "world_anchor_hash": _h(raw / "world_anchor.json"),
+            "background_hashes": bg_hashes,
+            "validation_verdict": val.get("verdict"),
+            "validation_extrinsics_hash": val.get("extrinsics_hash"),
+            "validated_at": val.get("created_at"),
+        }
+        try:
+            (raw.parent / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        except OSError:
+            logger.warning("record: manifest not written", exc_info=True)
 
     def _finish(self, fps: int) -> None:
         for w in self._writers.values():

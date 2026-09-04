@@ -64,12 +64,28 @@ class RecordRequest(BaseModel):
     hand: str = "right"
     dataset: str | None = None
     cloud: CloudOpts | None = None
+    allow_amber: bool = False  # start on an 'amber' validation verdict (explicit)
+    force: bool = False         # skip the whole setup-artifact gate (debug)
 
 
 @router.post("/start")
 async def start_recording(req: RecordRequest, mgr: CameraManager = Depends(get_manager)):
     if not mgr.active_device_ids():
         raise HTTPException(400, "no cameras are active — start cameras first")
+
+    # Setup-artifact gate (spec §7): the active preset must have fresh extrinsics,
+    # a world anchor, a background plate and a non-red validation report whose
+    # hash still matches the extrinsics.
+    if not req.force:
+        from viki.calibration import artifacts as _artifacts
+        from viki.calibration.presets import current_active
+
+        preset = current_active()
+        if not preset:
+            raise HTTPException(409, "no active calibration preset — calibrate and activate one first")
+        ok, why = _artifacts.record_ready(preset, allow_amber=req.allow_amber)
+        if not ok:
+            raise HTTPException(409, f"calibration not record-ready: {why}")
 
     logger.info(
         "recording: dataset=%s cameras=%s max=%.0fs fps=%d task=%r cloud=%s",

@@ -148,6 +148,84 @@ async def capture_all(
     return res
 
 
+@router.get("/readiness")
+async def readiness(cal: CalibrationManager = Depends(get_calibrator)):
+    """Solve-ready criteria over the collected capture sets (spec §4.2): set
+    count, all-camera-covisible count, tilted-set count and per-camera frame
+    coverage, each with its threshold, plus a single ``ready`` flag that gates
+    the *Solve* button."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    return cal.readiness()
+
+
+@router.post("/solve")
+async def solve_bundle(
+    force: bool = False, cal: CalibrationManager = Depends(get_calibrator)
+):
+    """Joint multi-pose bundle solve (spec §4.3) over every collected set.
+    Refused unless the readiness criteria are met (pass ``force=true`` to
+    override — the result carries ``solve.degenerate`` when the geometry is
+    under-constrained)."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    rd = cal.readiness()
+    if not rd["ready"] and not force:
+        unmet = [c["name"] for c in rd["criteria"] if not c["ok"]]
+        raise HTTPException(422, f"not ready to solve — unmet: {', '.join(unmet)}")
+    try:
+        out = cal.solve_bundle_live(EXTRINSICS_FILENAME)
+    except (ValueError, RuntimeError) as exc:
+        logger.warning("bundle solve failed: %s", exc)
+        raise HTTPException(422, f"bundle solve failed: {exc}") from exc
+    return {"reference_device": out["reference_device"], "solve": out["solve"]}
+
+
+@router.post("/anchor")
+async def capture_anchor(cal: CalibrationManager = Depends(get_calibrator)):
+    """Anchor step (spec §5): board at the marked home spot, ONE frame →
+    ``T_world_display`` (viz / AABB / export only — never the solve)."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    try:
+        return cal.capture_anchor()
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/anchor")
+async def get_anchor(cal: CalibrationManager = Depends(get_calibrator)):
+    a = cal.world_anchor()
+    if a is None:
+        raise HTTPException(404, "no world anchor — run the Anchor step")
+    return a
+
+
+@router.post("/validate")
+async def validate(cal: CalibrationManager = Depends(get_calibrator)):
+    """Validate step (spec §6): build a per-camera empty-scene cloud in the rig
+    frame and score how well the cameras agree. Returns the report; a ``red``
+    verdict (or a stale one) blocks recording."""
+    if not cal._workers:
+        raise HTTPException(400, "no calibration session — start one first")
+    try:
+        return await asyncio.to_thread(cal.validate_live)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/validate")
+async def get_validation(cal: CalibrationManager = Depends(get_calibrator)):
+    import json as _json
+
+    from viki.config import VALIDATION_FILENAME
+
+    try:
+        return _json.loads(open(VALIDATION_FILENAME).read())
+    except (OSError, ValueError):
+        raise HTTPException(404, "no validation report — run the Validate step")
+
+
 @router.post("/clear")
 async def clear_all(cal: CalibrationManager = Depends(get_calibrator)):
     """Drop every sample on every camera and wipe the live capture photos."""
@@ -595,6 +673,33 @@ async def save_preset(
         logger.warning("save-as %r -> 400 %s", body.name, exc)
         raise HTTPException(400, str(exc)) from exc
     logger.info("calibration preset %r saved (%d cams)", path.stem, len(extr))
+    # Fold the setup artifacts into calib/<preset>/ : migrate the just-written
+    # legacy JSON to extrinsics.json, then snapshot the live world anchor.
+    try:
+        from viki.calibration import artifacts as _artifacts
+
+        _artifacts.ensure_migrated(path.stem)
+        live_anchor = cal.world_anchor()
+        if live_anchor and live_anchor.get("observations"):
+            _artifacts.write_world_anchor(
+                path.stem,
+                observations=live_anchor["observations"],
+                T_world_display=live_anchor.get("T_world_display"),
+            )
+        import json as _j
+
+        from viki.config import VALIDATION_FILENAME as _VF
+
+        try:
+            _live_val = _j.loads(open(_VF).read())
+            _artifacts.write_validation(
+                path.stem, verdict=_live_val.get("verdict", "red"),
+                pairs=_live_val.get("pairs", []),
+            )
+        except (OSError, ValueError, KeyError):
+            pass
+    except Exception:  # noqa: BLE001 — never break save-as on this
+        logger.warning("preset %r: setup-artifact fold-in failed", path.stem, exc_info=True)
     # Cameras are live during calibration, so grab both device/scene snapshots
     # now — no separate button. k4a raw calibration is a device property; the
     # background depth is the static scene as it sits during the solve (the
@@ -642,6 +747,23 @@ def _grab_k4a_best_effort(name: str, mgr: CameraManager) -> None:
 
 def _grab_background_best_effort(name: str, mgr: CameraManager) -> None:
     try:
+        # Prefer an explicit Background step (board removed) captured this session
+        # over re-grabbing now (board may be back in frame for the anchor).
+        from viki.calibration import captures
+
+        live = captures.ROOT / captures.LIVE
+        staged = sorted(live.glob("*_bg.npz")) if live.is_dir() else []
+        if staged:
+            import numpy as np
+
+            depths = {}
+            for p in staged:
+                dev = p.name[: -len("_bg.npz")]
+                with np.load(p) as z:
+                    depths[dev] = z["depth_mm"].astype(np.float32)
+            _presets.attach_background(name, depths)
+            logger.info("preset %r: folded staged background for %s", name, sorted(depths))
+            return
         depths = _collect_background(mgr)
         if depths:
             _presets.attach_background(name, depths)
@@ -660,6 +782,13 @@ def _grab_background_best_effort(name: str, mgr: CameraManager) -> None:
 def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
     """Median depth (mm) over ~``n`` frames per running camera — the static
     empty scene captured during calibration. 0 stays 0 (no IR reading)."""
+    return {d: med for d, (med, _v, _f) in _collect_background_masked(mgr, n).items()}
+
+
+def _collect_background_masked(mgr: CameraManager, n: int = 30) -> dict:
+    """``{dev: (median_mm, valid_mask, invalid_frac)}``. A pixel is *valid* when
+    at least a third of the frames gave it a reading; invalid pixels are left 0
+    and must not feed the subtraction."""
     import time
 
     import numpy as np
@@ -675,12 +804,43 @@ def _collect_background(mgr: CameraManager, n: int = 30) -> dict:
     for dev, frames in stacks.items():
         if not frames:
             continue
-        arr = np.stack(frames)                 # (F, H, W) mm, 0 = missing
+        arr = np.stack(frames).astype(np.float32)     # (F, H, W) mm, 0 = missing
+        hits = (arr > 0).sum(axis=0)
+        valid = hits >= max(1, len(frames) // 3)
         arr[arr <= 0] = np.nan
         with np.errstate(all="ignore"):
-            med = np.nanmedian(arr, axis=0)
-        out[dev] = np.nan_to_num(med, nan=0.0).astype(np.float32)
+            med = np.nan_to_num(np.nanmedian(arr, axis=0), nan=0.0).astype(np.float32)
+        med[~valid] = 0.0
+        out[dev] = (med, valid, float((~valid).mean()))
     return out
+
+
+@router.post("/background")
+async def capture_background(
+    cal: CalibrationManager = Depends(get_calibrator),
+    mgr: CameraManager = Depends(get_manager),
+):
+    """Background step (spec §8): empty scene, board removed. Writes a per-camera
+    depth plate + validity mask to the live calibration dir; save-as folds it
+    into the preset. Returns the invalid-pixel fraction per camera."""
+    if not mgr.active_device_ids():
+        raise HTTPException(400, "no active cameras")
+    from viki.calibration import captures
+    from viki.calibration.artifacts import write_background
+
+    got = await asyncio.to_thread(_collect_background_masked, mgr)
+    if not got:
+        raise HTTPException(422, "no depth frames — is depth streaming?")
+    live = captures.ROOT / captures.LIVE
+    live.mkdir(parents=True, exist_ok=True)
+    plates = {d: (med, valid) for d, (med, valid, _f) in got.items()}
+    import numpy as np
+
+    for d, (med, valid) in plates.items():
+        np.savez_compressed(live / f"{d}_bg.npz", schema=np.int32(2),
+                            depth_mm=med, valid=valid)
+    return {d: {"invalid_frac": round(f, 4), "shape": list(med.shape)}
+            for d, (med, _v, f) in got.items()}
 
 
 @router.post("/activate")

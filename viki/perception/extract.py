@@ -66,6 +66,16 @@ def _depth_K(entry: dict) -> np.ndarray | None:
     )
 
 
+def _from_fxfy(intr: dict) -> np.ndarray | None:
+    """3x3 K from a flat ``{fx,fy,cx,cy}`` dict, or ``None``."""
+    if not intr or "fx" not in intr:
+        return None
+    return np.array(
+        [[intr["fx"], 0, intr["cx"]], [0, intr["fy"], intr["cy"]], [0, 0, 1]],
+        dtype=np.float64,
+    )
+
+
 def _load_projector(raw: Path, dev_id: str, meta: dict):
     """Real SDK colour→depth projector, tried in order:
     the episode's ``raw/<dev>_k4a_calib.bin`` (Kinect) → ``raw/<dev>_rs_calib.json``
@@ -171,6 +181,18 @@ def extract_episode(
     records: list[tuple[str, SkeletonFrame, dict]] = []
     mp4s = sorted(raw.glob("*.mp4"))
 
+    # Stage 1 (multi-view triangulation): raw 2-D observations, written alongside
+    # rec.npz, never instead of it. See viki/perception/observations.py.
+    save_obs = bool(getattr(_cfg, "PERCEPTION_SAVE_OBSERVATIONS", True))
+    obs_rows: list[dict] = []
+    obs_cams: dict[str, dict] = {}
+    obs_radius = int(getattr(_cfg, "SKELETON_DEPTH_SAMP_RADIUS", 15))
+    _obs_calib_id = None
+    if save_obs:
+        from viki.perception import observations as _obs
+
+        _obs_calib_id = _obs.calib_id(raw)
+
     for mp4 in mp4s:
         dev_id = mp4.stem
         depth_dir = raw / f"{dev_id}_depth"
@@ -235,6 +257,23 @@ def extract_episode(
                 for lm in det.points:
                     det.points[lm][0] = w - 1.0 - det.points[lm][0]
 
+            if save_obs:
+                if dev_id not in obs_cams:
+                    ci = (intr_all.get(dev_id, {}) or {}).get("color") or {}
+                    Kc = _from_fxfy(ci)
+                    obs_cams[dev_id] = {
+                        "K": Kc.tolist() if Kc is not None else None,
+                        "dist": list(ci.get("dist_coeffs", [0.0] * 5)),
+                        "T_wc": (extr.transform_matrix.tolist() if extr is not None else None),
+                        "image_size": [int(ci.get("width", w)), int(ci.get("height", h))],
+                        "calib_id": _obs_calib_id,
+                    }
+                obs_rows.append(_obs.collect_row(
+                    camera_id=dev_id, frame_index=idx - 1, host_timestamp_us=int(ts_us),
+                    detection=det, depth_m=depth_m, projector=projector,
+                    depth_radius=obs_radius,
+                ))
+
             prepared = PreparedFrame(rgb=rgb, depth_m=depth_m, depth_K=K,
                                      device_id=dev_id, timestamp_us=ts_us,
                                      base_depth_m=base_depth_m)
@@ -267,6 +306,11 @@ def extract_episode(
         det_backend.close()
 
     write_rec(ep.rec_npz, records)
+    if save_obs:
+        _obs.write_observations(
+            raw / "observations.npz", obs_rows, obs_cams,
+            {"depth_radius_px": obs_radius, "model": model_id, "flip": bool(flip)},
+        )
     mark_stage(
         ep, "extract", frames=len(records), model=model_id,
         track_lm=sorted(keep) if keep else "all",

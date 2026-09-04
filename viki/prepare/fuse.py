@@ -22,6 +22,36 @@ from __future__ import annotations
 import numpy as np
 
 
+def snap_to_grid(
+    arr: np.ndarray, src_ts: np.ndarray, grid: np.ndarray, tol_us: float | None = None
+) -> np.ndarray:
+    """Place rows of ``arr`` (indexed by ``src_ts``) onto ``grid`` by nearest
+    match within ``tol_us`` (default half the grid period). Grid slots with no
+    match in tolerance are left as NaN. Used to lift the multi-view triangulation
+    output — already on the synced-frame ticks — onto the fused-output grid
+    without re-interpolating it (that is the spline fill's job).
+    ``arr`` is ``(S, ...)``; returns ``(len(grid), ...)``.
+    """
+    src_ts = np.asarray(src_ts, np.int64)
+    grid = np.asarray(grid, np.int64)
+    out = np.full((len(grid),) + arr.shape[1:], np.nan, dtype=np.float32)
+    if len(src_ts) == 0 or len(grid) == 0:
+        return out
+    if tol_us is None:
+        tol_us = float(np.median(np.diff(grid))) / 2.0 if len(grid) > 1 else 1e9
+    order = np.argsort(src_ts)
+    src_ts, arr = src_ts[order], arr[order]
+    j = np.searchsorted(src_ts, grid)
+    for gi, jj in enumerate(j):
+        cands = [k for k in (jj - 1, jj) if 0 <= k < len(src_ts)]
+        if not cands:
+            continue
+        k = min(cands, key=lambda k: abs(int(src_ts[k]) - int(grid[gi])))
+        if abs(int(src_ts[k]) - int(grid[gi])) <= tol_us:
+            out[gi] = arr[k]
+    return out
+
+
 def _resample_to_grid(points: np.ndarray, ts: np.ndarray, grid: np.ndarray) -> np.ndarray:
     """
     Linearly resample a (Tc, L, 3) trajectory onto a common time ``grid``.

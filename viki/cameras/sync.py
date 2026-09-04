@@ -54,10 +54,18 @@ class MultiCameraSync:
     sync_fps : int
         Output tick rate.  Must be <= the slowest camera's FPS or groups will
         be dropped whenever the slow camera hasn't produced a fresh frame.
-    max_offset_us : int
+    max_offset_us : int | None
         A frame is accepted if |frame.host_timestamp_us - tick_us| <= this value.
-        Default: half a 30 fps frame (≈ 16.7 ms), which is conservative enough
-        for USB delivery jitter at any supported frame rate.
+        This is a **stale-frame guard**, not a phase gate: ``nearest_to`` already
+        returns the closest frame. The loop tick has an arbitrary phase relative
+        to frame arrival, so even a healthy camera's nearest frame is routinely
+        up to half a period away (16.7 ms at 30 fps) plus USB jitter — a
+        threshold below one frame period silently drops good frames and starves
+        the output rate (25 ms cost ~25 % of frames at 30 fps in practice).
+        ``None`` (default) ⇒ ``1.5 / sync_fps`` (50 ms at 30 fps, 100 ms at
+        15 fps): well clear of the phase + jitter, still trips on a camera that
+        has stalled for more than a frame. The previous fixed 150 ms was ~4½
+        frames — too loose; pass an explicit value only to widen it deliberately.
     required_devices : list[str] | None
         Device IDs that must all have an in-tolerance frame for a group to be
         emitted.  None means all currently active devices are required.
@@ -67,12 +75,15 @@ class MultiCameraSync:
         self,
         manager: CameraManager,
         sync_fps: int = 15,
-        max_offset_us: int = 150000,
+        max_offset_us: Optional[int] = None,
         required_devices: Optional[list] = None,
     ) -> None:
         self._manager = manager
         self._sync_fps = sync_fps
-        self._max_offset_us = max_offset_us
+        self._max_offset_us = (
+            int(max_offset_us) if max_offset_us is not None
+            else int(round(1.5e6 / max(1, sync_fps)))
+        )
         self._required_devices = required_devices
 
     def get_synced_frame(self) -> Optional[SyncedFrameGroup]:

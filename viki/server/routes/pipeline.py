@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +27,163 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _ep = APIRouter(prefix="/pipeline", tags=["pipeline"])
+
+
+@lru_cache(maxsize=8)
+def _load_npz_for_viewer(
+    path: str, mtime_ns: int, size: int,
+) -> dict[str, np.ndarray]:
+    """Load one viewer artifact once, invalidated by its filesystem signature.
+
+    Geometry playback used to reopen and decompress ``cln.npz`` and ``rec.npz``
+    for every displayed frame.  Keeping a small bounded cache makes a frame
+    request an array lookup while the mtime/size key still notices an artifact
+    replaced by a newly completed pipeline job.
+    """
+    del mtime_ns, size  # only participate in the cache key
+    with np.load(path) as archive:
+        arrays = {key: np.asarray(archive[key]) for key in archive.files}
+    for value in arrays.values():
+        value.setflags(write=False)
+    return arrays
+
+
+def _viewer_npz(path: Path) -> dict[str, np.ndarray]:
+    stat = path.stat()
+    return _load_npz_for_viewer(str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+
+
+_VIEWER_CLN_KEYS = {
+    "positions", "rotations", "valid", "timestamps", "gripper",
+    "smoothed_points", "landmark_ids",
+}
+
+
+@lru_cache(maxsize=128)
+def _inspect_viewer_variant_file(
+    path: str, mtime_ns: int, size: int,
+) -> dict[str, str] | None:
+    """Read only a variant's keys and tiny scalar metadata.
+
+    Variant discovery runs when the picker is opened.  Loading every array here
+    evicted the actively playing CLN/REC pair from the eight-entry data cache;
+    the next geometry frame then decompressed the whole archive again.  NPZ key
+    listing and scalar reads are enough to build the picker.
+    """
+    del mtime_ns, size  # only participate in the cache key
+    with np.load(path) as archive:
+        keys = set(archive.files)
+        if not _VIEWER_CLN_KEYS.issubset(keys):
+            return None
+        mode = (
+            str(np.asarray(archive["perception_fuse_mode"]).item())
+            if "perception_fuse_mode" in keys else ""
+        )
+        stage = (
+            str(np.asarray(archive["checkpoint_stage"]).item())
+            if "checkpoint_stage" in keys else "cln"
+        )
+        source = "hand_fit" if {
+            "hand_fit_positions", "hand_fit_rotations"
+        }.issubset(keys) else "landmarks"
+    return {"fusion_mode": mode, "stage": stage, "pose_source": source}
+
+
+def _variant_metadata(
+    variant_id: str, path: Path, fallback_label: str, *, active: bool = False,
+) -> dict | None:
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    try:
+        metadata = _inspect_viewer_variant_file(
+            str(path.resolve()), stat.st_mtime_ns, stat.st_size,
+        )
+    except Exception:  # noqa: BLE001 — one broken diagnostic must not hide active
+        logger.warning("viewer: cannot inspect variant %s", path, exc_info=True)
+        return None
+    if metadata is None:
+        return None
+    mode = metadata["fusion_mode"]
+    if not mode:
+        mode = "triangulate" if "triangulate" in path.stem else (
+            "xyz_mean" if "xyzmean" in path.stem else "unknown"
+        )
+    label = "active" if active else fallback_label
+    return {
+        "id": variant_id,
+        "label": (
+            f"{label} · {mode} · {metadata['stage']} · "
+            f"{metadata['pose_source']}"
+        ),
+        "path": path,
+        "fusion_mode": mode,
+        "stage": metadata["stage"],
+        "pose_source": metadata["pose_source"],
+        "active": active,
+    }
+
+
+def _viewer_variants(ep: Episode) -> list[dict]:
+    """Discover only known episode-local, CLN-compatible A/B artifacts."""
+    candidates: list[tuple[str, Path, str]] = [("active", ep.cln_npz, "active")]
+    for path in sorted(ep.root.glob("cln_*.npz")):
+        candidates.append((f"root:{path.stem}", path, path.stem))
+    prepare_root = ep.intermediates_dir / "prepare"
+    if prepare_root.is_dir():
+        for path in sorted(prepare_root.glob("*/*_*.npz")):
+            if path.name[:2] not in {"10", "20", "30", "40"}:
+                continue
+            rel = path.relative_to(prepare_root).with_suffix("")
+            candidates.append((f"prepare:{rel.as_posix()}", path, rel.as_posix()))
+
+    variants = []
+    seen: set[Path] = set()
+    for variant_id, path, fallback_label in candidates:
+        if not path.is_file() or path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+        metadata = _variant_metadata(
+            variant_id, path, fallback_label, active=variant_id == "active",
+        )
+        if metadata is not None:
+            variants.append(metadata)
+    return variants
+
+
+def _resolve_viewer_variant(ep: Episode, variant: str) -> dict:
+    if variant == "active":
+        return _variant_metadata(
+            "active", ep.cln_npz, "active", active=True,
+        ) or {
+            "id": "active", "label": "active", "path": ep.cln_npz,
+            "fusion_mode": "unknown", "stage": "cln",
+            "pose_source": "landmarks", "active": True,
+        }
+
+    path: Path | None = None
+    fallback_label = ""
+    if variant.startswith("root:"):
+        stem = variant.removeprefix("root:")
+        if Path(stem).name == stem and stem.startswith("cln_"):
+            path = ep.root / f"{stem}.npz"
+            fallback_label = stem
+    elif variant.startswith("prepare:"):
+        rel = Path(variant.removeprefix("prepare:"))
+        if (
+            not rel.is_absolute()
+            and len(rel.parts) == 2
+            and all(part not in {"", ".", ".."} for part in rel.parts)
+            and rel.name[:2] in {"10", "20", "30", "40"}
+        ):
+            path = ep.intermediates_dir / "prepare" / rel.with_suffix(".npz")
+            fallback_label = rel.as_posix()
+
+    if path is not None:
+        metadata = _variant_metadata(variant, path, fallback_label)
+        if metadata is not None:
+            return metadata
+    raise HTTPException(404, f"no viewer variant {variant!r} for episode {ep.id}")
 
 
 def _episode(path_or_id: str) -> Episode:
@@ -207,105 +365,145 @@ async def job_list():
 # ── geometry for the 3-D viewer ──────────────────────────────────────
 
 
-@_ep.get("/episode/{ep_id}/geometry")
-async def geometry(ep_id: str, include_raw: int = 0, frame: int | None = None):
+@_ep.get("/episode/{ep_id}/geometry/variants")
+async def geometry_variants(ep_id: str):
     ep = _episode(ep_id)
-    out: dict = {"id": ep.id, "cameras": {}, "n_frames": 0}
+    return {
+        "variants": [
+            {key: value for key, value in variant.items() if key != "path"}
+            for variant in _viewer_variants(ep)
+        ]
+    }
 
-    meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
-    preset_name = meta.get("calibration_preset")
-    if preset_name:
-        try:
-            from viki.calibration import presets as _presets
 
-            board = _presets.read_detail(preset_name).get("board")
-            if board:
-                out["board"] = board
-        except Exception:  # noqa: BLE001
-            pass
-    out["workspace_bbox"] = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
+@_ep.get("/episode/{ep_id}/geometry")
+async def geometry(
+    ep_id: str,
+    include_raw: int = 0,
+    frame: int | None = None,
+    variant: str = "active",
+):
+    ep = _episode(ep_id)
+    selected = _resolve_viewer_variant(ep, variant)
+    cln_path = selected["path"]
+    # The summary endpoint owns episode-wide arrays.  Per-frame playback must
+    # stay small: returning wrist_traj/palm_rot/valid on every tick made each
+    # response ~224 KiB on a 30 s take and forced the browser to parse them 30×/s.
+    summary = frame is None
+    out: dict = {"id": ep.id, "variant": variant}
+    if summary:
+        out.update({"cameras": {}, "n_frames": 0})
 
-    extr_path = ep.raw_dir / "extrinsics.json"
-    if extr_path.exists():
-        from viki.render.robot_viz_shared import camera_gaze_dir, camera_world_pos
+        meta = json.loads(ep.meta_path.read_text()) if ep.meta_path.exists() else {}
+        preset_name = meta.get("calibration_preset")
+        if preset_name:
+            try:
+                from viki.calibration import presets as _presets
 
-        for dev, e in json.loads(extr_path.read_text()).items():
-            rvec, tvec = e.get("rvec"), e.get("tvec")
-            if rvec is None or tvec is None:
-                continue
-            out["cameras"][dev] = {
-                "pos": camera_world_pos(rvec, tvec).tolist(),
-                "forward": camera_gaze_dir(rvec).tolist(),
-            }
+                board = _presets.read_detail(preset_name).get("board")
+                if board:
+                    out["board"] = board
+            except Exception:  # noqa: BLE001
+                pass
+        out["workspace_bbox"] = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
+        out["t_world_display"] = _world_display(ep)
 
-    if ep.cln_npz.exists():
-        with np.load(ep.cln_npz) as d:
+        extr_path = ep.raw_dir / "extrinsics.json"
+        if extr_path.exists():
+            from viki.render.robot_viz_shared import camera_gaze_dir, camera_world_pos
+
+            for dev, e in json.loads(extr_path.read_text()).items():
+                rvec, tvec = e.get("rvec"), e.get("tvec")
+                if rvec is None or tvec is None:
+                    continue
+                out["cameras"][dev] = {
+                    "pos": camera_world_pos(rvec, tvec).tolist(),
+                    "forward": camera_gaze_dir(rvec).tolist(),
+                }
+
+    cln = _viewer_npz(cln_path) if cln_path.is_file() else None
+    if cln is not None:
+        d = cln
+        assert d is not None
+        if summary:
             p_key, r_key = cln_pose_keys(
-                d.files, getattr(config, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+                d.keys(), getattr(config, "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
             )
             out["n_frames"] = int(len(d["positions"]))
             out["fps"] = float(
                 1e6 / max(np.median(np.diff(d["timestamps"].astype(float))), 1.0)
             )
-            out["wrist_traj"] = np.asarray(d[p_key], np.float32).tolist()
-            out["palm_rot"] = (
-                np.asarray(d[r_key], np.float32).reshape(-1, 9).tolist()
+            # Gap-limited checkpoints intentionally contain NaNs.  Starlette
+            # rejects non-finite JSON numbers, and coercing them to zero would
+            # draw a fake jump to the world origin.  Preserve them as nulls.
+            out["wrist_traj"] = _finite_nested(d[p_key])
+            out["palm_rot"] = _finite_nested(
+                np.asarray(d[r_key], np.float32).reshape(-1, 9)
             )
             out["valid"] = np.asarray(d["valid"], bool).tolist()
-            if "hand_fit_capsule_radii" in d.files:
+            out["pose_source"] = "hand_fit" if p_key == "hand_fit_positions" else "landmarks"
+            if "perception_fuse_mode" in d:
+                out["fusion_mode"] = str(np.asarray(d["perception_fuse_mode"]).item())
+            else:
+                out["fusion_mode"] = selected["fusion_mode"]
+            out["checkpoint_stage"] = selected["stage"]
+            if "hand_fit_capsule_radii" in d:
                 out["hand_capsule_radii"] = np.asarray(d["hand_fit_capsule_radii"], np.float32).tolist()
+    rec = _viewer_npz(ep.rec_npz) if ep.rec_npz.exists() and (
+        include_raw or not summary
+    ) else None
+    if summary and include_raw and rec is not None:
+        d = rec
+        devs = [str(x) for x in d["device_ids"]]
+        pts = np.asarray(d["points"], np.float32)
+        raw: dict[str, list] = {}
+        for dev in sorted(set(devs)):
+            mask = np.array([x == dev for x in devs])
+            cloud = pts[mask].reshape(-1, 3)
+            cloud = cloud[np.isfinite(cloud).all(axis=1)]
+            raw[dev] = cloud[::3].tolist()  # decimate
+        out["raw_points"] = raw
 
-    if include_raw and ep.rec_npz.exists():
-        with np.load(ep.rec_npz) as d:
-            devs = [str(x) for x in d["device_ids"]]
-            pts = np.asarray(d["points"], np.float32)
-            raw: dict[str, list] = {}
-            for dev in sorted(set(devs)):
-                mask = np.array([x == dev for x in devs])
-                cloud = pts[mask].reshape(-1, 3)
-                cloud = cloud[np.isfinite(cloud).all(axis=1)]
-                raw[dev] = cloud[::3].tolist()  # decimate
-            out["raw_points"] = raw
-
-    if frame is not None:
+    if not summary:
+        assert frame is not None
         out["frame"] = int(frame)
         grid = None
-        if ep.cln_npz.exists():
-            with np.load(ep.cln_npz) as d:
-                grid = np.asarray(d["timestamps"], np.float64)
-                n = len(d["smoothed_points"])
-                if 0 <= frame < n:
-                    out["fused_skeleton"] = _nan_rows(d["smoothed_points"][frame])
-                    out["landmark_ids"] = np.asarray(d["landmark_ids"], int).tolist()
-                    out["gripper"] = bool(d["gripper"][frame])
-                    out["frame_valid"] = bool(d["valid"][frame])
-                    if "hand_fit_capsules" in d.files and frame < len(d["hand_fit_capsules"]):
-                        hc = np.asarray(d["hand_fit_capsules"][frame], np.float32)  # (C, 2, 3)
-                        out["hand_capsules"] = (
-                            None if not np.isfinite(hc).any() else hc.tolist()
-                        )
-        if ep.rec_npz.exists():
-            with np.load(ep.rec_npz) as d:
-                devs = np.array([str(x) for x in d["device_ids"]])
-                ts = np.asarray(d["timestamps"], np.float64)
-                pts = np.asarray(d["points"], np.float32)
-                conf = np.asarray(d["confidence"], np.float32)
-                lm_ids = np.asarray(d["landmark_ids"], int).tolist()
-                t_us = float(grid[frame]) if grid is not None and frame < len(grid) else None
-                per_cam: dict[str, dict] = {}
-                for dev in sorted(set(devs.tolist())):
-                    idx = np.where(devs == dev)[0]
-                    if idx.size == 0:
-                        continue
-                    row = (idx[int(np.argmin(np.abs(ts[idx] - t_us)))] if t_us is not None
-                           else idx[min(frame, idx.size - 1)])
-                    per_cam[dev] = {
-                        "points": _nan_rows(pts[row]),
-                        "confidence": [None if not np.isfinite(c) else float(c)
-                                       for c in conf[row]],
-                        "landmark_ids": lm_ids,
-                    }
-                out["per_camera"] = per_cam
+        if cln is not None:
+            d = cln
+            grid = np.asarray(d["timestamps"], np.float64)
+            n = len(d["smoothed_points"])
+            if 0 <= frame < n:
+                out["fused_skeleton"] = _nan_rows(d["smoothed_points"][frame])
+                out["landmark_ids"] = np.asarray(d["landmark_ids"], int).tolist()
+                out["gripper"] = bool(d["gripper"][frame])
+                out["frame_valid"] = bool(d["valid"][frame])
+                if "hand_fit_capsules" in d and frame < len(d["hand_fit_capsules"]):
+                    hc = np.asarray(d["hand_fit_capsules"][frame], np.float32)  # (C, 2, 3)
+                    out["hand_capsules"] = (
+                        None if not np.isfinite(hc).any() else hc.tolist()
+                    )
+        if rec is not None:
+            d = rec
+            devs = np.array([str(x) for x in d["device_ids"]])
+            ts = np.asarray(d["timestamps"], np.float64)
+            pts = np.asarray(d["points"], np.float32)
+            conf = np.asarray(d["confidence"], np.float32)
+            lm_ids = np.asarray(d["landmark_ids"], int).tolist()
+            t_us = float(grid[frame]) if grid is not None and frame < len(grid) else None
+            per_cam: dict[str, dict] = {}
+            for dev in sorted(set(devs.tolist())):
+                idx = np.where(devs == dev)[0]
+                if idx.size == 0:
+                    continue
+                row = (idx[int(np.argmin(np.abs(ts[idx] - t_us)))] if t_us is not None
+                       else idx[min(frame, idx.size - 1)])
+                per_cam[dev] = {
+                    "points": _nan_rows(pts[row]),
+                    "confidence": [None if not np.isfinite(c) else float(c)
+                                   for c in conf[row]],
+                    "landmark_ids": lm_ids,
+                }
+            out["per_camera"] = per_cam
 
     return out
 
@@ -314,6 +512,28 @@ def _nan_rows(arr) -> list:
     """(K,3) array → nested list with non-finite values as ``None`` (JSON-safe)."""
     a = np.asarray(arr, float)
     return [[None if not np.isfinite(v) else float(v) for v in row] for row in a]
+
+
+def _finite_nested(arr) -> list:
+    """Numeric array → JSON-safe nested lists, retaining gaps as ``None``."""
+    a = np.asarray(arr, float)
+    return np.where(np.isfinite(a), a, None).tolist()
+
+
+def _world_display(ep) -> list:
+    """The episode's ``T_world_display`` (4x4 nested list) from
+    ``raw/world_anchor.json``, or identity. Data in the geometry response and
+    the cloud are in the RIG (reference-camera) frame; the viewer applies this
+    for presentation only."""
+    p = ep.raw_dir / "world_anchor.json"
+    if p.exists():
+        try:
+            m = json.loads(p.read_text()).get("T_world_display")
+            if m and len(m) == 4:
+                return [[float(v) for v in row] for row in m]
+        except (ValueError, OSError, TypeError):
+            pass
+    return [[1.0 if i == j else 0.0 for j in range(4)] for i in range(4)]
 
 
 # ── coloured point cloud (Viewer tab) ────────────────────────────────
@@ -325,7 +545,9 @@ async def cloud_meta(ep_id: str):
     p = ep.cloud_dir / "meta.json"
     if not p.exists():
         raise HTTPException(404, "no cloud; run the 'cloud' stage first")
-    return json.loads(p.read_text())
+    meta = json.loads(p.read_text())
+    meta.setdefault("t_world_display", _world_display(ep))
+    return meta
 
 
 @_ep.get("/episode/{ep_id}/cloud/{frame}")
@@ -334,7 +556,11 @@ async def cloud_frame(ep_id: str, frame: int):
     p = ep.cloud_dir / f"{frame:06d}.bin"
     if not p.exists():
         raise HTTPException(404, f"no cloud frame {frame}")
-    return FileResponse(p, media_type="application/octet-stream")
+    return FileResponse(
+        p,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 router.include_router(_ep)

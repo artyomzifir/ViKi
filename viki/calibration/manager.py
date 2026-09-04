@@ -10,6 +10,7 @@ computing intrinsics/extrinsics, and persisting results to JSON files.
 import cv2
 import json
 import logging
+import os
 from typing import Dict, List
 from viki.cameras.manager import CameraManager
 from viki.contracts import (
@@ -37,6 +38,31 @@ from viki.calibration.file import (
 from viki.calibration.worker import _CalibrationWorker
 from viki.calibration.chessboard_worker import ChessboardWorker
 from viki.calibration.aruco_worker import ArucoWorker
+
+
+def _to_list(x) -> list:
+    try:
+        return [float(v) for v in x]
+    except TypeError:
+        return []
+
+
+def _np_arr(x):
+    import numpy as np
+
+    return np.asarray(x, dtype=float)
+
+
+def _to_list_int(x) -> list:
+    import numpy as np
+
+    return np.asarray(x, int).reshape(-1).tolist()
+
+
+def _now_iso_z() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 class CalibrationManager:
@@ -396,6 +422,13 @@ class CalibrationManager:
             return {"captured": False, "missing": missing}
 
         idx = self._workers[devs[0]].samples_count - 1
+
+        reject = self._reject_if_pose_too_close(devs)
+        if reject is not None:
+            for d in devs:  # roll the whole set back
+                self._workers[d].pop_sample(self._workers[d].samples_count - 1)
+            return {"captured": False, "missing": [], "rejected": True, **reject}
+
         images = {}
         for d in devs:
             w = self._workers[d]
@@ -406,6 +439,324 @@ class CalibrationManager:
                 images[d] = frame.color
         captures.save_set(captures.LIVE, idx, images)
         return {"captured": True, "missing": [], "index": idx}
+
+    # ── multi-pose diversity (spec §4.1–4.2) ─────────────────────────────
+
+    def _reference_device(self) -> str | None:
+        return sorted(self._workers)[0] if self._workers else None
+
+    def _reject_if_pose_too_close(self, devs: list[str]) -> dict | None:
+        """After a set is appended to every worker, refuse it if its board pose
+        (in the reference camera) is within both thresholds of an earlier set —
+        ten shots of one pose is what makes the joint solve degenerate.
+        Returns a ``{conflict, reason}`` dict to reject, or ``None`` to keep."""
+        from viki import config
+        from viki.calibration import coverage
+
+        board = self.board_cfg()
+        ref = self._reference_device()
+        if not board or board.get("type") != "aruco" or ref is None:
+            return None
+        intr = self.get_intrinsics(ref)
+        if intr is None:
+            return None
+        obj_all = coverage.board_obj_points(board)
+        K, dist = intr.camera_matrix, intr.dist_coeffs
+        samples = self._workers[ref].samples
+        if len(samples) < 2:
+            return None
+        cand = coverage.board_pose(samples[-1].c_ids, samples[-1].corners, K, dist, obj_all)
+        if cand is None:
+            return None
+        existing = [
+            p for s in samples[:-1]
+            if (p := coverage.board_pose(s.c_ids, s.corners, K, dist, obj_all)) is not None
+        ]
+        j = coverage.nearest_pose(
+            cand, existing,
+            min_angle_deg=config.CALIB_POSE_MIN_ANGLE_DEG,
+            min_translation_m=config.CALIB_POSE_MIN_TRANSLATION_M,
+        )
+        if j is None:
+            return None
+        return {
+            "conflict": j,
+            "reason": (f"board pose too close to set #{j} "
+                       f"(< {config.CALIB_POSE_MIN_ANGLE_DEG:.0f}° / "
+                       f"{config.CALIB_POSE_MIN_TRANSLATION_M * 100:.0f} cm) — "
+                       f"move or tilt the board"),
+        }
+
+    def _observation_sets(self) -> list[dict]:
+        """Every capture set as ``{observations: {dev: {charuco_ids,
+        charuco_corners}}}`` — the shape the bundle solver and the readiness
+        check consume."""
+        by_cam = self.sets_payload()
+        devs = list(by_cam)
+        n = max((len(v) for v in by_cam.values()), default=0)
+        out = []
+        for k in range(n):
+            obs = {}
+            for d in devs:
+                if k < len(by_cam[d]):
+                    row = by_cam[d][k]
+                    obs[d] = {
+                        "charuco_ids": row.get("c_ids", []),
+                        "charuco_corners": row.get("corners", []),
+                    }
+            out.append({"set_id": f"live-{k:03d}", "observations": obs})
+        return out
+
+    def intrinsics_payload(self) -> dict[str, dict]:
+        """SDK colour intrinsics incl. distortion + frame size for every active
+        worker — the form the bundle solver / readiness check want."""
+        out: dict[str, dict] = {}
+        for dev in self._workers:
+            ci = self.get_intrinsics(dev)
+            if ci is None:
+                continue
+            frame = self._mgr.latest_frame(dev)
+            entry = {"fx": ci.fx, "fy": ci.fy, "cx": ci.cx, "cy": ci.cy,
+                     "dist_coeffs": _to_list(ci.dist_coeffs)}
+            shape = getattr(getattr(frame, "color", None), "shape", None)
+            if shape and len(shape) >= 2:
+                entry["width"], entry["height"] = int(shape[1]), int(shape[0])
+            out[dev] = entry
+        return out
+
+    def readiness(self) -> dict:
+        """Solve-ready criteria over the collected sets (spec §4.2)."""
+        from viki import config
+        from viki.calibration import coverage
+
+        board = self.board_cfg() or {}
+        return coverage.readiness(
+            self._observation_sets(),
+            self.intrinsics_payload(),
+            board,
+            reference_device=self._reference_device(),
+            min_sets=config.CALIB_MIN_SETS,
+            min_covisible_sets=config.CALIB_MIN_COVISIBLE_SETS,
+            min_tilted_sets=config.CALIB_MIN_TILTED_SETS,
+            tilt_min_deg=config.CALIB_TILT_MIN_DEG,
+            min_frame_coverage=config.CALIB_MIN_FRAME_COVERAGE,
+        )
+
+    def solve_bundle_live(self, path: str = EXTRINSICS_FILENAME) -> dict:
+        """Joint multi-pose bundle over the collected sets (spec §4.3). Writes
+        each camera's pose in the **rig (reference-camera) frame** to ``path``
+        as the legacy ``[{device_id, rvec, tvec}]`` list — downstream reads that
+        shape — and caches it. The board-relative world orientation is a
+        separate artifact (the world anchor, S4)."""
+        from viki.calibration import artifacts
+        from viki.calibration.bundle import solve_bundle
+
+        board = self.board_cfg() or {}
+        out = solve_bundle(
+            self._observation_sets(), self.intrinsics_payload(), board,
+            reference_device=self._reference_device(),
+        )
+        try:  # drop any stale entries from a previous solve
+            os.remove(path)
+        except OSError:
+            pass
+        for dev, T in out["devices"].items():
+            pair = artifacts.as_camera_extrinsics(T)
+            extr = CalibrationExtrinsics(
+                rvec=_np_arr(pair["rvec"]), tvec=_np_arr(pair["tvec"])
+            )
+            self.set_extrinsics(dev, extr, path)
+        self._logger.info(
+            "bundle solve: ref=%s rms=%s%s",
+            out["reference_device"], out["solve"].get("rms_reproj_px"),
+            " DEGENERATE" if out["solve"].get("degenerate") else "",
+        )
+        return out
+
+    # ── world anchor (spec §5) ──────────────────────────────────────────
+
+    def _rig_device_transforms(self, extr_path: str = EXTRINSICS_FILENAME) -> dict:
+        """``{device_id: 4x4 T_ref_cam}`` from the current (rig-frame) extrinsics
+        file — camera → reference-camera frame."""
+        try:
+            data = json.loads(open(extr_path).read())
+        except (OSError, ValueError):
+            return {}
+        out = {}
+        for e in data if isinstance(data, list) else []:
+            dev = e.get("device_id")
+            if dev and e.get("rvec") is not None and e.get("tvec") is not None:
+                out[dev] = CalibrationExtrinsics(
+                    rvec=_np_arr(e["rvec"]), tvec=_np_arr(e["tvec"])
+                ).transform_matrix
+        return out
+
+    def capture_anchor(
+        self,
+        extr_path: str = EXTRINSICS_FILENAME,
+        anchor_path: str | None = None,
+    ) -> dict:
+        """One-frame 'board at the home spot' capture → ``T_world_display`` (spec
+        §5). Detects the board in every active camera, lifts it into the rig
+        frame with the current extrinsics, re-centres on the board with +Z up.
+        Persists to ``anchor_path`` (``WORLD_ANCHOR_FILENAME``) as a standalone
+        file that a recording snapshots and ``save-as`` folds into the preset.
+        Purely a presentation transform — never re-enters the solve."""
+        import json as _json
+
+        from viki import config as _cfg
+        from viki.calibration import artifacts
+
+        anchor_path = anchor_path or getattr(_cfg, "WORLD_ANCHOR_FILENAME", "data/world_anchor.json")
+        devs = list(self._workers)
+        if not devs:
+            raise RuntimeError("no calibration session")
+
+        observations: dict[str, dict] = {}
+        for d in devs:
+            self._workers[d].capture()
+            s = self._workers[d].samples
+            if not s or s[-1].corners is None or s[-1].c_ids is None:
+                continue
+            observations[d] = {
+                "charuco_ids": _to_list_int(s[-1].c_ids),
+                "charuco_corners": _np_arr(s[-1].corners).reshape(-1, 2).tolist(),
+            }
+            self._workers[d].pop_sample(self._workers[d].samples_count - 1)  # not a solve set
+        if not observations:
+            raise RuntimeError("no camera saw the board in the anchor frame")
+
+        T = artifacts.compute_world_display(
+            observations, self.intrinsics_payload(), self.board_cfg() or {},
+            self._rig_device_transforms(extr_path),
+        )
+        payload = {
+            "schema": artifacts.WORLD_ANCHOR_SCHEMA,
+            "created_at": artifacts._now_iso(),
+            "T_world_display": [[float(v) for v in row] for row in T],
+            "observations": observations,
+        }
+        with open(anchor_path, "w") as f:
+            _json.dump(payload, f, indent=2)
+        self._logger.info("world anchor captured: seen by %s", sorted(observations))
+        return payload
+
+    def world_anchor(self, anchor_path: str | None = None) -> dict | None:
+        from viki import config as _cfg
+        import json as _json
+
+        anchor_path = anchor_path or getattr(_cfg, "WORLD_ANCHOR_FILENAME", "data/world_anchor.json")
+        try:
+            return _json.loads(open(anchor_path).read())
+        except (OSError, ValueError):
+            return None
+
+    # ── pre-record validation gate (spec §6) ────────────────────────────
+
+    def _live_camera_cloud(self, dev: str, T_ref_cam: "object", stride: int = 4):
+        """One camera's current depth frame as an (N,3) rig-frame point cloud,
+        or ``None``. Mirrors the offline ``cloud._camera_cloud`` path."""
+        import numpy as np
+
+        from viki.perception import cloud as _cloudmod
+        from viki.perception.k4a_offline import K4ACalibration
+
+        frame = self._mgr.latest_frame(dev)
+        if frame is None or not getattr(frame, "has_depth", lambda: False)():
+            return None
+        be = self._mgr.get_backend(dev)
+        ci = getattr(frame, "color_intrinsics", None)
+        if ci is None or not (ci.fx > 0):
+            return None
+        K_color = np.array([[ci.fx, 0, ci.cx], [0, ci.fy, ci.cy], [0, 0, 1.0]])
+
+        cal = None
+        blob = getattr(be, "get_raw_calibration", lambda: None)() if be else None
+        if blob:
+            from viki.cameras.kinect import _COLOR_RES_MAP, _DEPTH_MODE_MAP
+
+            cfg = (be.config or {})
+            cal = K4ACalibration.from_blob(
+                blob,
+                _DEPTH_MODE_MAP.get(cfg.get("depth_mode")),
+                _COLOR_RES_MAP.get((int(cfg.get("color_width", 0)), int(cfg.get("color_height", 0)))),
+                tag=f"validate/{dev}",
+            )
+        if cal is None:
+            rs = getattr(be, "get_rs_calibration", lambda: None)() if be else None
+            if rs:
+                from viki.perception.rs_offline import RealSenseCalibration
+
+                R = np.asarray(rs["depth_to_color"]["rotation"], float).reshape(3, 3).T
+                t = np.asarray(rs["depth_to_color"]["translation"], float).reshape(3)
+                cal = RealSenseCalibration(rs["color"], rs["depth"], R, t)
+
+        xyz, _ = _cloudmod._camera_cloud(
+            np.ascontiguousarray(frame.color), np.asarray(frame.depth), stride,
+            K_color, cal, np.asarray(T_ref_cam, float),
+        )
+        return xyz if len(xyz) else None
+
+    def validate_live(self, out_path: str | None = None) -> dict:
+        """Build a per-camera empty-scene cloud in the rig frame and score how
+        well the cameras agree (spec §6). Writes ``VALIDATION_FILENAME`` with the
+        current extrinsics hash so a later re-solve marks it stale."""
+        import hashlib
+        import json as _json
+
+        from viki import config as _cfg
+        from viki.calibration import validate as _validate
+        from viki.perception.cloud import _bbox_to_frame
+
+        out_path = out_path or getattr(_cfg, "VALIDATION_FILENAME", "data/validation_report.json")
+        transforms = self._rig_device_transforms()
+        if len(transforms) < 2:
+            raise RuntimeError("need ≥2 solved cameras to validate")
+
+        clouds: dict = {}
+        for dev, T in transforms.items():
+            try:
+                c = self._live_camera_cloud(dev, T)
+            except Exception as exc:  # noqa: BLE001
+                self._logger.warning("validate: %s cloud failed (%s)", dev, exc)
+                c = None
+            if c is not None:
+                clouds[dev] = c
+        if len(clouds) < 2:
+            raise RuntimeError("could not build a depth cloud for ≥2 cameras")
+
+        anchor = self.world_anchor()
+        aabb = _bbox_to_frame(
+            list(getattr(_cfg, "CLOUD_WORKSPACE_BBOX", []) or []),
+            (anchor or {}).get("T_world_display"),
+        )
+        report = _validate.pairwise_agreement(
+            clouds, aabb=aabb,
+            green={
+                "nn_median_mm": _cfg.CALIB_VALIDATE_GREEN_NN_MM,
+                "icp_translation_mm": _cfg.CALIB_VALIDATE_GREEN_ICP_TRANS_MM,
+                "icp_rotation_deg": _cfg.CALIB_VALIDATE_GREEN_ICP_ROT_DEG,
+            },
+            amber={
+                "nn_median_mm": _cfg.CALIB_VALIDATE_AMBER_NN_MM,
+                "icp_translation_mm": _cfg.CALIB_VALIDATE_AMBER_ICP_TRANS_MM,
+                "icp_rotation_deg": _cfg.CALIB_VALIDATE_AMBER_ICP_ROT_DEG,
+            },
+        )
+        try:
+            h = hashlib.sha256(open(EXTRINSICS_FILENAME, "rb").read()).hexdigest()
+        except OSError:
+            h = None
+        payload = {
+            "schema": 1,
+            "created_at": _now_iso_z(),
+            "extrinsics_hash": h,
+            **report,
+        }
+        with open(out_path, "w") as f:
+            _json.dump(payload, f, indent=2)
+        self._logger.info("validation: %s (%d pairs)", report["verdict"], len(report["pairs"]))
+        return payload
 
     def clear_all(self) -> None:
         """Drop every sample on every worker and wipe the live capture photos."""

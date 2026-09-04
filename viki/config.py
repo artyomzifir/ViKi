@@ -19,6 +19,8 @@ USER_CONFIG_PATH = "data/user_configuration.json"
 
 # Duck variables which LSP can catch and use
 EXTRINSICS_FILENAME: str
+WORLD_ANCHOR_FILENAME: str  # live world-anchor (T_world_display); folded into a preset on save-as
+VALIDATION_FILENAME: str    # live pre-record cloud-agreement report
 ACTIVE_CALIBRATION: str  # name of the active preset under data/calibrations/, or ""
 DEFAULT_FPS: int
 DEFAULT_COLOR_WIDTH: int
@@ -40,6 +42,17 @@ PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
 PERCEPTION_HAND_FIT: bool  # run trajectory-level capsule hand fit at the end of prepare
+PERCEPTION_SAVE_OBSERVATIONS: bool  # extract also writes raw/observations.npz (2-D obs for multi-view triangulation)
+PERCEPTION_FUSE_MODE: str          # prepare fusion: 'xyz_mean' (legacy per-camera average) | 'triangulate' (raw/joints3d.npz)
+TRI_MIN_SCORE: float            # multi-view triangulation: min per-landmark detector score to use a view
+TRI_MIN_RAY_DEG: float          # drop a camera pair whose rays subtend less than this (ill-conditioned)
+TRI_REPROJ_INLIER_PX: float     # reprojection error below this = inlier view; also least_squares f_scale
+TRI_DEPTH_LAMBDA: float         # weight of the soft depth residual vs reprojection (0 = geometry only)
+TRI_DEPTH_DELTA_M: float        # skin->joint-centre offset for fingertips (scaled up for knuckles/wrist)
+TRI_DEPTH_SPREAD_SCALE_M: float # depth weight decays exp(-local_std / this)
+TRI_RAY_REF_DEG: float          # ray angle at which the quality score's angle term saturates
+TRI_LOSS: str                   # scipy least_squares loss for the joint refine (soft_l1 | huber)
+TRI_GEOMETRY_CAMERAS: list[str] # which cameras feed geometry; [] = all in observations_meta
 PERCEPTION_HAND_POSE_SOURCE: str  # landmarks | hand_fit; consumers select without overwriting cln pose
 PERCEPTION_HAND_FIT_ROI_MARGIN_M: float  # adaptive capsule-union ROI padding (m)
 PERCEPTION_HAND_FIT_FOREARM_CUT_M: float  # proximal offset of wrist cut plane (m)
@@ -84,6 +97,19 @@ CALIB_ARUCO_BOARD_SIZE: list[int]
 CALIB_ARUCO_SQUARE_SIZE: float
 CALIB_ARUCO_MARKER_SIZE: float
 CALIB_ARUCO_DICT: int
+CALIB_POSE_MIN_ANGLE_DEG: float       # reject a capture set whose board pose is within this angle …
+CALIB_POSE_MIN_TRANSLATION_M: float   # … AND this translation of an already-collected set
+CALIB_TILT_MIN_DEG: float             # a set counts as "tilted" when board-normal vs ref optical axis exceeds this
+CALIB_MIN_SETS: int                   # Solve gate: minimum capture sets
+CALIB_MIN_COVISIBLE_SETS: int         # Solve gate: sets seen by every active camera at once
+CALIB_MIN_TILTED_SETS: int            # Solve gate: sets above CALIB_TILT_MIN_DEG
+CALIB_MIN_FRAME_COVERAGE: float       # Solve gate: min fraction of a 4×4 image grid touched by corners, per camera
+CALIB_VALIDATE_GREEN_NN_MM: float     # §6 verdict thresholds — green: pairwise NN median …
+CALIB_VALIDATE_GREEN_ICP_TRANS_MM: float  # … ICP correction translation …
+CALIB_VALIDATE_GREEN_ICP_ROT_DEG: float   # … ICP correction rotation
+CALIB_VALIDATE_AMBER_NN_MM: float     # amber band (above ⇒ red): NN median …
+CALIB_VALIDATE_AMBER_ICP_TRANS_MM: float
+CALIB_VALIDATE_AMBER_ICP_ROT_DEG: float
 RECORDING_DURATION: int
 RECORDING_FPS: int
 RETARGET_DEFAULT_ROBOT: str
@@ -196,6 +222,17 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_INTERP_MAX_GAP": 0,
     "PERCEPTION_CONF_ALPHA": 1.0,
     "PERCEPTION_HAND_FIT": True,
+    "PERCEPTION_SAVE_OBSERVATIONS": True,
+    "PERCEPTION_FUSE_MODE": "xyz_mean",
+    "TRI_MIN_SCORE": 0.3,
+    "TRI_MIN_RAY_DEG": 5.0,
+    "TRI_REPROJ_INLIER_PX": 4.0,
+    "TRI_DEPTH_LAMBDA": 0.1,
+    "TRI_DEPTH_DELTA_M": 0.01,
+    "TRI_DEPTH_SPREAD_SCALE_M": 0.02,
+    "TRI_RAY_REF_DEG": 20.0,
+    "TRI_LOSS": "soft_l1",
+    "TRI_GEOMETRY_CAMERAS": [],
     "PERCEPTION_HAND_POSE_SOURCE": "hand_fit",
     "PERCEPTION_HAND_FIT_ROI_MARGIN_M": 0.030,
     "PERCEPTION_HAND_FIT_FOREARM_CUT_M": 0.010,
@@ -224,6 +261,21 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
     "RETARGET_IK_CONF_FLOOR": 0.05,
+    "WORLD_ANCHOR_FILENAME": "data/world_anchor.json",
+    "CALIB_POSE_MIN_ANGLE_DEG": 8.0,
+    "CALIB_POSE_MIN_TRANSLATION_M": 0.05,
+    "CALIB_TILT_MIN_DEG": 25.0,
+    "CALIB_MIN_SETS": 8,
+    "CALIB_MIN_COVISIBLE_SETS": 6,
+    "CALIB_MIN_TILTED_SETS": 3,
+    "CALIB_MIN_FRAME_COVERAGE": 0.45,
+    "VALIDATION_FILENAME": "data/validation_report.json",
+    "CALIB_VALIDATE_GREEN_NN_MM": 15.0,
+    "CALIB_VALIDATE_GREEN_ICP_TRANS_MM": 20.0,
+    "CALIB_VALIDATE_GREEN_ICP_ROT_DEG": 2.0,
+    "CALIB_VALIDATE_AMBER_NN_MM": 30.0,
+    "CALIB_VALIDATE_AMBER_ICP_TRANS_MM": 50.0,
+    "CALIB_VALIDATE_AMBER_ICP_ROT_DEG": 5.0,
 }
 
 

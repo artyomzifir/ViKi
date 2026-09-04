@@ -19,11 +19,13 @@ const HAND_EDGES = [
 const CAM_PALETTE = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0];
 
 const DEFAULT_LAYERS = {
-  cloud: true, perCamera: true, fused: true, trajectory: true,
-  palm: true, frusta: true, board: true, bbox: false, handFit: true,
+  cloud: true, perCamera: false, fused: true, trajectory: true,
+  palm: true, frusta: true, board: true, bbox: false, handFit: false,
 };
 
-export function create(canvasEl, { api, log, layers: initLayers, colorMode: initColor, stride: initStride }) {
+export function create(canvasEl, {
+  api, log, layers: initLayers, colorMode: initColor, stride: initStride,
+}) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b0d10);
 
@@ -64,8 +66,15 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   scene.add(boardGroup);
   const bboxGroup = new THREE.Group();
   scene.add(bboxGroup);
+
+  // Everything data-driven lives in the RIG (reference-camera) frame; the
+  // world anchor's T_world_display is applied here, for presentation only.
+  const worldGroup = new THREE.Group();
+  worldGroup.matrixAutoUpdate = false;
+  scene.add(worldGroup);
+
   const frustaGroup = new THREE.Group();
-  scene.add(frustaGroup);
+  worldGroup.add(frustaGroup);
 
   // ── dynamic ───────────────────────────────────────────────────────────
   const cloud = new THREE.Points(
@@ -73,22 +82,27 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     new THREE.PointsMaterial({ size: 0.006, vertexColors: true, sizeAttenuation: true })
   );
   cloud.frustumCulled = false;
-  scene.add(cloud);
+  worldGroup.add(cloud);
 
-  const trajLine = new THREE.Line(
+  const trajLine = new THREE.LineSegments(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0x9aa4b2 })
   );
-  scene.add(trajLine);
+  worldGroup.add(trajLine);
 
   const fusedSkel = new THREE.LineSegments(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0xffd166, linewidth: 2 })
   );
-  scene.add(fusedSkel);
+  const fusedPositions = new Float32Array(HAND_EDGES.length * 6);
+  const fusedPositionAttr = new THREE.BufferAttribute(fusedPositions, 3);
+  fusedSkel.geometry.setAttribute('position', fusedPositionAttr);
+  fusedSkel.geometry.setDrawRange(0, 0);
+  fusedSkel.frustumCulled = false;
+  worldGroup.add(fusedSkel);
 
   const camSkelGroup = new THREE.Group();
-  scene.add(camSkelGroup);
+  worldGroup.add(camSkelGroup);
 
   // Fitted hand: translucent cylinders are used because WebGL ignores line
   // widths. Reconstructing the MediaPipe joints from capsule endpoints lets us
@@ -107,27 +121,29 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   );
   handBones.count = handJoints.count = 0;
   handBones.frustumCulled = handJoints.frustumCulled = false;
-  scene.add(handBones, handJoints);
+  worldGroup.add(handBones, handJoints);
 
   const palmTriad = new THREE.AxesHelper(0.05);
   palmTriad.visible = false;
-  scene.add(palmTriad);
+  worldGroup.add(palmTriad);
   const gripDot = new THREE.Mesh(
     new THREE.SphereGeometry(0.012, 12, 12),
     new THREE.MeshBasicMaterial({ color: 0x4ade80 })
   );
   gripDot.visible = false;
-  scene.add(gripDot);
+  worldGroup.add(gripDot);
 
   // ── state ─────────────────────────────────────────────────────────────
-  let geo = null, cmeta = null, epId = null, episodes = [], epIndex = -1;
-  let frame = 0, playing = false, playTimer = 0;
+  let geo = null, cmeta = null, epId = null, variantId = 'active', episodes = [], epIndex = -1;
+  let frame = 0, playing = false, playTimer = 0, playSerial = 0, playPending = false;
   let colorMode = initColor || 'rgb', stride = initStride || 1;
   let layers = { ...DEFAULT_LAYERS, ...(initLayers || {}) };
   let frameCb = null;
   const cloudCache = new Map();     // frame -> Promise<{xyz, rgb}>
   const fgCache = new Map();        // frame -> Promise<geometry?frame= payload>
   const CACHE_CAP = 80;
+  let loadSerial = 0, loadingEpisode = false;
+  let cloudPos = new Float32Array(0), cloudCol = new Uint8Array(0);
   let raf = 0, disposed = false;
 
   // ── render loop ───────────────────────────────────────────────────────
@@ -174,6 +190,21 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     gripDot.visible = layers.palm && gripDot.userData.have;
     handBones.visible = layers.handFit;
     handJoints.visible = layers.handFit;
+  }
+
+  function applyWorldDisplay(m) {
+    // m is a row-major 4x4 (rig -> display). three.js Matrix4.set() takes
+    // row-major args, so this is a direct load.
+    if (Array.isArray(m) && m.length === 4) {
+      worldGroup.matrix.set(
+        m[0][0], m[0][1], m[0][2], m[0][3],
+        m[1][0], m[1][1], m[1][2], m[1][3],
+        m[2][0], m[2][1], m[2][2], m[2][3],
+        m[3][0], m[3][1], m[3][2], m[3][3]);
+    } else {
+      worldGroup.matrix.identity();
+    }
+    worldGroup.matrixWorldNeedsUpdate = true;
   }
 
   function buildBoard() {
@@ -233,11 +264,16 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
 
   function buildTrajectory() {
     const T = geo?.wrist_traj || [];
-    const arr = new Float32Array(T.length * 3);
-    T.forEach((p, i) => { arr[i * 3] = p[0]; arr[i * 3 + 1] = p[1]; arr[i * 3 + 2] = p[2]; });
+    const segments = [];
+    const finite = p => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
+    for (let i = 1; i < T.length; i++) {
+      if (!finite(T[i - 1]) || !finite(T[i])) continue;
+      segments.push(...T[i - 1], ...T[i]);
+    }
+    const arr = new Float32Array(segments);
     trajLine.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
-    trajLine.geometry.setDrawRange(0, T.length);
-    trajLine.geometry.computeBoundingSphere();
+    trajLine.geometry.setDrawRange(0, arr.length / 3);
+    if (arr.length) trajLine.geometry.computeBoundingSphere();
   }
 
   function frameCamera() {
@@ -273,46 +309,61 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
       .then(r => { if (!r.ok) throw new Error('cloud ' + i + ': ' + r.status); return r.arrayBuffer(); })
       .then(buf => {
         const n = new DataView(buf).getInt32(0, true);
-        const xyz = new Float32Array(buf.slice(4, 4 + n * 12));
+        const xyz = new Float32Array(buf, 4, n * 3);
         const rgbU8 = new Uint8Array(buf, 4 + n * 12, n * 3);
         return { n, xyz, rgbU8 };
-      });
+      }).catch(e => { cloudCache.delete(i); throw e; });
     cloudCache.set(i, p);
-    if (cloudCache.size > CACHE_CAP) cloudCache.delete(cloudCache.keys().next().value);
+    if (cloudCache.size > CACHE_CAP) {
+      cloudCache.delete(cloudCache.keys().next().value);
+    }
     return p;
   }
 
   function paintCloud({ n, xyz, rgbU8 }) {
     const step = Math.max(1, stride | 0);
     const m = Math.ceil(n / step);
-    const pos = new Float32Array(m * 3);
-    const col = new Float32Array(m * 3);
+    const need = m * 3;
+    let replaced = false;
+    if (cloudPos.length < need) {
+      cloudPos = new Float32Array(need);
+      cloudCol = new Uint8Array(need);
+      replaced = true;
+    }
     let zmin = Infinity, zmax = -Infinity;
     if (colorMode === 'height') {
       for (let k = 0; k < n; k += step) { const z = xyz[k * 3 + 2]; if (z < zmin) zmin = z; if (z > zmax) zmax = z; }
     }
     let j = 0;
     for (let k = 0; k < n; k += step, j++) {
-      pos[j * 3] = xyz[k * 3]; pos[j * 3 + 1] = xyz[k * 3 + 1]; pos[j * 3 + 2] = xyz[k * 3 + 2];
+      cloudPos[j * 3] = xyz[k * 3]; cloudPos[j * 3 + 1] = xyz[k * 3 + 1]; cloudPos[j * 3 + 2] = xyz[k * 3 + 2];
       if (colorMode === 'height') {
         const t = zmax > zmin ? (xyz[k * 3 + 2] - zmin) / (zmax - zmin) : 0.5;
-        col[j * 3] = t; col[j * 3 + 1] = 0.4 + 0.4 * (1 - Math.abs(t - 0.5) * 2); col[j * 3 + 2] = 1 - t;
+        cloudCol[j * 3] = Math.round(255 * t);
+        cloudCol[j * 3 + 1] = Math.round(255 * (0.4 + 0.4 * (1 - Math.abs(t - 0.5) * 2)));
+        cloudCol[j * 3 + 2] = Math.round(255 * (1 - t));
       } else {
-        col[j * 3] = rgbU8[k * 3] / 255;
-        col[j * 3 + 1] = rgbU8[k * 3 + 1] / 255;
-        col[j * 3 + 2] = rgbU8[k * 3 + 2] / 255;
+        cloudCol[j * 3] = rgbU8[k * 3];
+        cloudCol[j * 3 + 1] = rgbU8[k * 3 + 1];
+        cloudCol[j * 3 + 2] = rgbU8[k * 3 + 2];
       }
     }
     const g = cloud.geometry;
-    g.setAttribute('position', new THREE.BufferAttribute(pos.subarray(0, j * 3), 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col.subarray(0, j * 3), 3));
+    if (replaced || g.getAttribute('position')?.array !== cloudPos) {
+      g.setAttribute('position', new THREE.BufferAttribute(cloudPos, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(cloudCol, 3, true));
+    } else {
+      g.getAttribute('position').needsUpdate = true;
+      g.getAttribute('color').needsUpdate = true;
+    }
     g.setDrawRange(0, j);
-    g.computeBoundingSphere();
   }
 
   function fetchFrameGeo(i) {
     if (fgCache.has(i)) return fgCache.get(i);
-    const p = api('GET', `/api/pipeline/episode/${epId}/geometry?frame=${i}`);
+    const variant = encodeURIComponent(variantId);
+    const p = api('GET', `/api/pipeline/episode/${epId}/geometry?frame=${i}&variant=${variant}`)
+      .catch(e => { fgCache.delete(i); throw e; });
     fgCache.set(i, p);
     if (fgCache.size > CACHE_CAP) fgCache.delete(fgCache.keys().next().value);
     return p;
@@ -380,33 +431,46 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   }
 
   function updateFrameGeometry(fg) {
-    // per-camera skeletons
-    clearGroup(camSkelGroup);
-    const per = fg?.per_camera || {};
-    Object.keys(per).forEach((dev, i) => {
-      const arr = skelPositions(per[dev].points);
-      if (!arr.length) return;
-      const ls = new THREE.LineSegments(
-        new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(arr, 3)),
-        new THREE.LineBasicMaterial({ color: CAM_PALETTE[i % CAM_PALETTE.length] }));
-      camSkelGroup.add(ls);
-    });
+    // Hidden diagnostic layers must be computationally hidden too. Previously
+    // these Three.js objects were destroyed and rebuilt on every frame even
+    // though per-camera skeletons are off by default.
+    if (layers.perCamera) {
+      clearGroup(camSkelGroup);
+      const per = fg?.per_camera || {};
+      Object.keys(per).forEach((dev, i) => {
+        const arr = skelPositions(per[dev].points);
+        if (!arr.length) return;
+        const ls = new THREE.LineSegments(
+          new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(arr, 3)),
+          new THREE.LineBasicMaterial({ color: CAM_PALETTE[i % CAM_PALETTE.length] }));
+        camSkelGroup.add(ls);
+      });
+    }
 
-    // fused skeleton
+    // Keep one small GPU buffer for the fused skeleton instead of replacing
+    // its BufferAttribute (and WebGL buffer) on every frame.
     const fArr = fg?.fused_skeleton ? skelPositions(fg.fused_skeleton) : new Float32Array(0);
-    fusedSkel.geometry.setAttribute('position', new THREE.BufferAttribute(fArr, 3));
+    fusedPositions.fill(0);
+    fusedPositions.set(fArr.subarray(0, fusedPositions.length));
+    fusedPositionAttr.needsUpdate = true;
     fusedSkel.geometry.setDrawRange(0, fArr.length / 3);
-    fusedSkel.geometry.computeBoundingSphere();
 
     // fitted capsule hand: fg.hand_capsules = C×[[ax,ay,az],[bx,by,bz]] world
-    updateHandFit(fg?.hand_capsules);
+    if (layers.handFit) updateHandFit(fg?.hand_capsules);
+    else handBones.count = handJoints.count = 0;
 
     // palm triad + gripper marker from the summary geometry
     const T = geo?.wrist_traj, R = geo?.palm_rot;
-    const have = !!(T && R && T[frame] && R[frame]);
+    const fi = Number.isInteger(fg?.frame) ? fg.frame : frame;
+    const origin = T?.[fi], rotation = R?.[fi];
+    const have = !!(
+      Array.isArray(origin) && origin.length === 3 && origin.every(Number.isFinite)
+      && Array.isArray(rotation) && rotation.length === 9 && rotation.every(Number.isFinite)
+      && fg?.frame_valid !== false
+    );
     palmTriad.userData.have = gripDot.userData.have = have;
     if (have) {
-      const o = T[frame], m = R[frame];
+      const o = origin, m = rotation;
       palmTriad.position.set(o[0], o[1], o[2]);
       palmTriad.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
         m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, 0, 0, 0, 1));
@@ -417,53 +481,108 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
   }
 
   // ── public API ────────────────────────────────────────────────────────
-  async function loadEpisode(id, list) {
+  async function loadEpisode(id, list, variant = 'active') {
+    pause();
+    const serial = ++loadSerial;
+    const episodeChanged = id !== epId;
+    loadingEpisode = true;
+    if (episodeChanged) {
+      cloudCache.clear();
+      cmeta = null;
+      clearCloud();
+    }
     epId = id;
+    variantId = variant || 'active';
     if (Array.isArray(list)) { episodes = list; epIndex = list.findIndex(e => (e.id || e) === id); }
-    cloudCache.clear(); fgCache.clear();
-    cmeta = null;
-    if (!id) { clearCloud(); geo = null; return { hasCloud: false }; }
+    fgCache.clear();
+    if (!id) {
+      clearCloud(); geo = null; loadingEpisode = false;
+      return { hasCloud: false };
+    }
     try {
-      geo = await api('GET', `/api/pipeline/episode/${id}/geometry`);
+      geo = await api('GET', `/api/pipeline/episode/${id}/geometry?variant=${encodeURIComponent(variantId)}`);
+      applyWorldDisplay(geo && geo.t_world_display);
     } catch (e) { geo = null; log && log('scene: ' + e, 'error'); }
+    if (serial !== loadSerial) return { hasCloud: false };
     buildBoard(); buildBbox(); buildFrusta(); buildTrajectory(); frameCamera();
-    try { cmeta = await api('GET', `/api/pipeline/episode/${id}/cloud`); }
-    catch { cmeta = null; clearCloud(); }
+    if (episodeChanged || !cmeta) {
+      try { cmeta = await api('GET', `/api/pipeline/episode/${id}/cloud`); }
+      catch { cmeta = null; clearCloud(); }
+    }
+    if (serial !== loadSerial) return { hasCloud: false };
     frame = 0;
     await setFrame(0);
+    if (serial === loadSerial) loadingEpisode = false;
     return { hasCloud: !!cmeta, geo, cmeta };
   }
 
   async function setFrame(i) {
     const n = nFrames();
     frame = n ? Math.max(0, Math.min(i, n - 1)) : 0;
-    // cloud
-    if (cmeta && epId) {
-      for (let d = 0; d <= 3; d++) if (frame + d < cmeta.n_frames) fetchCloud(frame + d);
-      const want = frame;
-      fetchCloud(frame).then(c => { if (want === frame && !disposed) paintCloud(c); })
-        .catch(e => log && log('' + e, 'error'));
-    }
-    // per-frame geometry (skeletons + gripper), cached
-    if (epId) {
-      const want = frame;
-      try {
-        const fg = await fetchFrameGeo(frame);
-        if (want === frame && !disposed) updateFrameGeometry(fg);
-      } catch { updateFrameGeometry(null); }
-    }
+    const want = frame, episode = epId, sourceVariant = variantId;
+    const cloudPromise = cmeta && epId
+      ? fetchCloud(want).catch(e => { log && log('' + e, 'error'); return null; })
+      : Promise.resolve(null);
+    const geometryPromise = epId
+      ? fetchFrameGeo(want).catch(e => { log && log('' + e, 'error'); return null; })
+      : Promise.resolve(null);
+    const [cloudFrame, frameGeometry] = await Promise.all([cloudPromise, geometryPromise]);
+    if (want !== frame || episode !== epId || sourceVariant !== variantId || disposed) return false;
+    if (cloudFrame) paintCloud(cloudFrame);
+    applyLayerVisibility();
+    updateFrameGeometry(frameGeometry);
     frameCb && frameCb(frame, n);
+
+    // Geometry is tiny enough for a short runway.  Point clouds are not: four
+    // concurrent cloud reads produced a visible wait/burst cycle (several
+    // cached frames painted back-to-back, then another stall).  Keep exactly
+    // one cloud in flight so playback degrades to a slower steady cadence when
+    // storage/decoding cannot sustain the recorded FPS.
+    for (let d = 1; d <= 3; d++) {
+      const ahead = want + d;
+      if (ahead >= n) break;
+      fetchFrameGeo(ahead).catch(() => {});
+    }
+    const nextCloud = want + 1;
+    if (cmeta && nextCloud < cmeta.n_frames) fetchCloud(nextCloud).catch(() => {});
+    return true;
   }
 
   function play() {
-    if (playing) return;
+    if (playing || loadingEpisode) return;
     const n = nFrames();
     if (n < 2) return;
     playing = true;
-    playTimer = setInterval(() => setFrame((frame + 1) % nFrames()),
-      Math.max(20, 1000 / fps()));
+    const serial = ++playSerial;
+    let nextDue = performance.now() + 1000 / fps();
+    const advance = async now => {
+      if (!playing || serial !== playSerial || disposed) return;
+      // The small tolerance makes 29.9 fps land on every second 60 Hz vsync
+      // instead of accidentally falling through to every third one.
+      if (playPending || now + 1 < nextDue) {
+        playTimer = requestAnimationFrame(advance);
+        return;
+      }
+      playPending = true;
+      await setFrame((frame + 1) % nFrames());
+      playPending = false;
+      if (!playing || serial !== playSerial || disposed) return;
+      // Never catch up by applying multiple states between two browser paints.
+      // A slow frame lowers playback speed instead of looking like a 3-frame jump.
+      const interval = 1000 / fps();
+      nextDue += interval;
+      if (nextDue < performance.now() + 1) nextDue = performance.now() + interval;
+      playTimer = requestAnimationFrame(advance);
+    };
+    playTimer = requestAnimationFrame(advance);
   }
-  function pause() { playing = false; clearInterval(playTimer); playTimer = 0; }
+  function pause() {
+    playing = false;
+    playSerial++;
+    if (playTimer) cancelAnimationFrame(playTimer);
+    playTimer = 0;
+    playPending = false;
+  }
   function stop() { pause(); setFrame(0); }
   function togglePlay() { playing ? pause() : play(); return playing; }
   function skipSeconds(dir) {
@@ -475,14 +594,25 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     epIndex = (epIndex + d + episodes.length) % episodes.length;
     const e = episodes[epIndex];
     const id = e.id || e;
-    loadEpisode(id, episodes);
+    loadEpisode(id, episodes, 'active');
     return id;
   }
 
-  function setLayer(name, on) { layers[name] = !!on; applyLayerVisibility(); }
-  function setLayers(obj) { layers = { ...layers, ...obj }; applyLayerVisibility(); }
-  function setColorMode(m) { colorMode = m; if (cmeta) fetchCloud(frame).then(paintCloud); }
-  function setStride(n) { stride = Math.max(1, n | 0); if (cmeta) fetchCloud(frame).then(paintCloud); }
+  function setLayer(name, on) {
+    const needsRefresh = !!on && !layers[name] && (name === 'perCamera' || name === 'handFit');
+    layers[name] = !!on;
+    applyLayerVisibility();
+    if (needsRefresh) setFrame(frame);
+  }
+  function setLayers(obj) {
+    const needsRefresh = (!layers.perCamera && obj?.perCamera)
+      || (!layers.handFit && obj?.handFit);
+    layers = { ...layers, ...obj };
+    applyLayerVisibility();
+    if (needsRefresh) setFrame(frame);
+  }
+  function setColorMode(m) { colorMode = m; applyLayerVisibility(); if (cmeta) setFrame(frame); }
+  function setStride(n) { stride = Math.max(1, n | 0); applyLayerVisibility(); if (cmeta) setFrame(frame); }
   function onFrame(cb) { frameCb = cb; }
 
   function dispose() {
@@ -511,7 +641,7 @@ export function create(canvasEl, { api, log, layers: initLayers, colorMode: init
     get fps() { return fps(); },
     get playing() { return playing; },
     get hasCloud() { return !!cmeta; },
-    get meta() { return { geo, cmeta }; },
+    get meta() { return { geo, cmeta, variantId }; },
     get layerState() { return { ...layers }; },
   };
 }
