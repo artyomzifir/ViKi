@@ -225,5 +225,5 @@
   "EXPORT_FPS": 15,
   "EPISODES_DIR": "data/episodes",
   "DATASETS_DIR": "data/datasets",
-  "ACTIVE_CALIBRATION": "arteom_dont_kill_me_pls"
+  "ACTIVE_CALIBRATION": "calib-v1-checkpoint"
 }
