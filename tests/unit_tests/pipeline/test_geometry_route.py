@@ -52,8 +52,98 @@ def test_geometry_shape(tmp_path, monkeypatch):
     assert g["n_frames"] == 8
     assert len(g["wrist_traj"]) == 8 and len(g["wrist_traj"][0]) == 3
     assert len(g["palm_rot"][0]) == 9
+    assert g["pose_source"] == "landmarks"
     assert g["cameras"]["cam0"]["pos"] == pytest.approx([0.0, 0.0, -1.5], abs=1e-4)
     assert "raw_points" in g and "cam0" in g["raw_points"]
+
+
+def test_frame_geometry_is_small_and_excludes_episode_arrays(tmp_path, monkeypatch):
+    episodes = tmp_path / "episodes"
+    monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
+    ep = new_episode(episodes)
+    _synthetic(ep, T=300)
+
+    from viki.server.routes.pipeline import geometry
+
+    g = asyncio.run(geometry(ep.id, frame=17))
+    assert g["frame"] == 17
+    assert len(g["fused_skeleton"]) == 21
+    assert "cam0" in g["per_camera"]
+    assert {"wrist_traj", "palm_rot", "valid", "cameras"}.isdisjoint(g)
+    assert len(json.dumps(g)) < 20_000
+
+
+def test_geometry_artifacts_are_decompressed_once(tmp_path, monkeypatch):
+    episodes = tmp_path / "episodes"
+    monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
+    ep = new_episode(episodes)
+    _synthetic(ep)
+    with np.load(ep.cln_npz) as source:
+        arrays = {key: source[key] for key in source.files}
+    # More picker variants than the full-array cache can hold reproduces the
+    # real episode that exposed the regression (27 preparation checkpoints).
+    for index in range(12):
+        np.savez_compressed(ep.root / f"cln_variant_{index}.npz", **arrays)
+
+    from viki.server.routes import pipeline
+
+    pipeline._load_npz_for_viewer.cache_clear()
+    pipeline._inspect_viewer_variant_file.cache_clear()
+    real_load = np.load
+    calls = []
+
+    def counting_load(*args, **kwargs):
+        calls.append(str(args[0]))
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline.np, "load", counting_load)
+    asyncio.run(pipeline.geometry_variants(ep.id))
+    calls_after_listing = len(calls)
+    asyncio.run(pipeline.geometry(ep.id))
+    asyncio.run(pipeline.geometry(ep.id, frame=0))
+    asyncio.run(pipeline.geometry(ep.id, frame=1))
+
+    # Listing may inspect all variants, but playback decompresses only the
+    # selected cln.npz and rec.npz once.  It must not revisit every variant on
+    # every frame and evict these two arrays again.
+    assert len(calls) - calls_after_listing == 2
+
+
+def test_geometry_lists_and_loads_checkpoint_variant(tmp_path, monkeypatch):
+    episodes = tmp_path / "episodes"
+    monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
+    ep = new_episode(episodes)
+    _synthetic(ep)
+    run = ep.intermediates_dir / "prepare" / "triangulate__gap-all__sg-7-2"
+    run.mkdir(parents=True)
+    variant_path = run / "10_fused_observed.npz"
+    with np.load(ep.cln_npz) as source:
+        arrays = {key: source[key] for key in source.files}
+    arrays["perception_fuse_mode"] = np.asarray("triangulate")
+    arrays["checkpoint_stage"] = np.asarray("observed")
+    arrays["positions"] = arrays["positions"].copy()
+    arrays["rotations"] = arrays["rotations"].copy()
+    arrays["positions"][3] = np.nan
+    arrays["rotations"][3] = np.nan
+    np.savez_compressed(variant_path, **arrays)
+
+    from viki.server.routes.pipeline import geometry, geometry_variants
+
+    listing = asyncio.run(geometry_variants(ep.id))["variants"]
+    variant = next(v for v in listing if v["stage"] == "observed")
+    assert variant["fusion_mode"] == "triangulate"
+    assert "path" not in variant
+
+    payload = asyncio.run(geometry(ep.id, variant=variant["id"]))
+    assert payload["variant"] == variant["id"]
+    assert payload["checkpoint_stage"] == "observed"
+    assert payload["fusion_mode"] == "triangulate"
+    assert payload["wrist_traj"][3] == [None, None, None]
+    assert payload["palm_rot"][3] == [None] * 9
+    json.dumps(payload, allow_nan=False)
 
 
 def test_geometry_404_for_missing_episode(tmp_path, monkeypatch):

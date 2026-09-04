@@ -4,7 +4,7 @@
 import { api, log, sessionGet, sessionSet, sessionPatch } from './core.js';
 import * as scene3d from './scene3d.js';
 
-let root = null, ctl = null, episodes = [];
+let root = null, ctl = null, episodes = [], variants = [];
 
 const LAYER_LABELS = {
   cloud: 'point cloud', perCamera: 'per-camera skeletons', fused: 'fused skeleton',
@@ -21,6 +21,9 @@ export function mount(view) {
     <aside class="viewer-side">
       <label class="viewer-field">Episode
         <select data-role="picker"></select>
+      </label>
+      <label class="viewer-field">Stage variant
+        <select data-role="variant"><option value="active">active</option></select>
       </label>
       <div class="viewer-status" data-role="status">pick an episode</div>
       <button class="viewer-build" data-role="build" hidden>Run perception</button>
@@ -99,12 +102,30 @@ async function openEpisode(id) {
   const build = root.querySelector('[data-role="build"]');
   if (!id) { status.textContent = 'pick an episode'; build.hidden = true; return; }
   status.textContent = 'loading…';
-  const r = await ctl.loadEpisode(id, episodes);
+  try {
+    const response = await api('GET', `/api/pipeline/episode/${id}/geometry/variants`);
+    variants = response.variants || [];
+  } catch { variants = [{ id: 'active', label: 'active' }]; }
+  const variantPicker = root.querySelector('[data-role="variant"]');
+  variantPicker.innerHTML = variants.map(v =>
+    `<option value="${v.id}">${v.label}</option>`).join('');
+  variantPicker.value = variants.some(v => v.id === 'active') ? 'active' : (variants[0]?.id || 'active');
+  await openVariant(id, variantPicker.value);
+}
+
+async function openVariant(id, variant) {
+  const status = root.querySelector('[data-role="status"]');
+  const build = root.querySelector('[data-role="build"]');
+  status.textContent = 'loading variant…';
+  const r = await ctl.loadEpisode(id, episodes, variant);
+  setPlayIcon(false);
   build.hidden = r.hasCloud;
   const g = r.geo || {};
+  const source = [g.fusion_mode, g.checkpoint_stage, g.pose_source].filter(Boolean).join(' · ');
+  const sourceLabel = source ? ` · ${source}` : '';
   status.textContent = r.hasCloud
-    ? `${r.cmeta.n_frames} cloud frames · ${g.n_frames || 0} traj frames · fps ${(ctl.fps).toFixed(1)}`
-    : (g.n_frames ? `${g.n_frames} traj frames · no point cloud` : 'not processed yet — run perception');
+    ? `${r.cmeta.n_frames} cloud frames · ${g.n_frames || 0} traj frames · fps ${(ctl.fps).toFixed(1)}${sourceLabel}`
+    : (g.n_frames ? `${g.n_frames} traj frames · no point cloud${sourceLabel}` : 'not processed yet — run perception');
 }
 
 async function runPerception(id) {
@@ -147,6 +168,10 @@ function syncPicker(id) {
 function onChange(e) {
   const el = e.target;
   if (el.dataset.role === 'picker') openEpisode(el.value);
+  else if (el.dataset.role === 'variant') {
+    const id = root.querySelector('[data-role="picker"]').value;
+    if (id) openVariant(id, el.value);
+  }
   else if (el.dataset.role === 'color') {
     ctl.setColorMode(el.value); sessionPatch('viewer', { color: el.value });
   } else if (el.dataset.layer) {
