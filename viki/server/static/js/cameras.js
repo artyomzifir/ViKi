@@ -34,6 +34,9 @@ export async function scanDevices() {
       }
     }
     for (const id of Object.keys(state)) if (!seen.has(id)) delete state[id];
+    if (data.hardware_sync?.required && !data.hardware_sync.ready) {
+      log(`Kinect HW_SYNC not ready: ${data.hardware_sync.error}`, 'error');
+    }
   } catch (e) {
     log('Scan failed: ' + e, 'error');
   }
@@ -53,8 +56,16 @@ export async function startCamera(id, cfg = {}) {
     const msg = { restarted: `${id} restarted with new settings`,
                   unchanged: `${id} already running with these settings` }[res.status]
                 || `${id} started`;
-    log(msg, 'ok');
-    if (state[id]) { state[id].running = true; state[id].fresh = false; state[id].cfg = null; }
+    const syncMsg = res.hardware_sync?.required ? ' · HW_SYNC rig ready' : '';
+    log(msg + syncMsg, 'ok');
+    const active = new Set(res.active || [id]);
+    for (const cameraId of active) {
+      if (state[cameraId]) {
+        state[cameraId].running = true;
+        state[cameraId].fresh = false;
+        state[cameraId].cfg = null;
+      }
+    }
   } catch (e) {
     log(`Failed to start ${id}: ${e}`, 'error');
   }
@@ -64,9 +75,16 @@ export async function startCamera(id, cfg = {}) {
 
 export async function stopCamera(id) {
   log(`Stopping ${id}...`);
-  try { await api('POST', `/api/cameras/${id}/stop`); log(`${id} stopped`); }
+  let stopped = [id];
+  try {
+    const res = await api('POST', `/api/cameras/${id}/stop`);
+    stopped = res.stopped || stopped;
+    log(stopped.length > 1 ? `HW_SYNC rig stopped (${stopped.join(', ')})` : `${id} stopped`);
+  }
   catch (e) { log(`Failed to stop ${id}: ${e}`, 'error'); }
-  if (state[id]) { state[id].running = false; state[id].fresh = false; }
+  for (const cameraId of stopped) {
+    if (state[cameraId]) { state[cameraId].running = false; state[cameraId].fresh = false; }
+  }
   renderPills();
   emit();
 }

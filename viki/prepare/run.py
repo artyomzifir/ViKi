@@ -92,6 +92,7 @@ def stable_palm_orientation_mask(
 
 def _pose_and_gripper(
     points: np.ndarray, landmark_ids: np.ndarray, grid: np.ndarray,
+    gripper_name: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Derive the complete consumer pose contract from one landmark stage."""
     T, L = points.shape[:2]
@@ -113,7 +114,7 @@ def _pose_and_gripper(
 
     from viki.gripper import load_gripper
 
-    gripper_model = load_gripper(getattr(config, "GRIPPER", "binary"))
+    gripper_model = load_gripper(gripper_name)
     gripper = np.zeros(T, dtype=bool)
     previous = None
     for t, mapping in enumerate(mappings):
@@ -123,7 +124,10 @@ def _pose_and_gripper(
 
 
 def _confidence_arrays(
-    grid_conf: np.ndarray, landmark_ids: np.ndarray, valid: np.ndarray,
+    grid_conf: np.ndarray,
+    landmark_ids: np.ndarray,
+    valid: np.ndarray,
+    alpha: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Normalise per-joint evidence and derive the per-frame palm confidence."""
     wrist_frame = [int(LM.WRIST), int(LM.INDEX_MCP), int(LM.MIDDLE_MCP), int(LM.PINKY_MCP)]
@@ -136,7 +140,8 @@ def _confidence_arrays(
         if columns else np.ones(len(grid_conf), dtype=np.float64)
     )
     maximum = float(np.nanmax(omega)) if np.isfinite(omega).any() else 1.0
-    alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
+    if not np.isfinite(maximum) or maximum <= 0.0:
+        maximum = 1.0
     omega = np.clip(omega / maximum, 0.0, 1.0) ** alpha
     omega = np.where(valid, omega, 0.0).astype(np.float32)
 
@@ -160,22 +165,34 @@ def _cln_payload(
     interp_max_gap: int,
     window_length: int,
     polyorder: int,
+    profile_name: str = "",
+    pose_source: str = "landmarks",
+    confidence_alpha: float = 1.0,
+    gripper_name: str = "binary",
+    coordinate_frame: str = "viki_world_or_camera",
 ) -> dict[str, object]:
     """Build a viewer/retarget-compatible artifact for any prepare boundary."""
     positions, rotations, rpy, valid, gripper = _pose_and_gripper(
-        points, landmark_ids, grid
+        points, landmark_ids, grid, gripper_name
     )
-    omega, landmark_confidence = _confidence_arrays(grid_conf, landmark_ids, valid)
+    omega, landmark_confidence = _confidence_arrays(
+        grid_conf, landmark_ids, valid, confidence_alpha,
+    )
     params = {
         "fusion_mode": fusion_mode,
         "interp_max_gap": int(interp_max_gap),
         "smoothing": "savgol" if checkpoint_stage in {"smoothed", "hand_fit"} else "none",
         "window_length": int(window_length),
         "polyorder": int(polyorder),
+        "profile": profile_name or None,
+        "pose_source": pose_source,
+        "confidence_alpha": confidence_alpha,
+        "gripper": gripper_name,
+        "coordinate_frame": coordinate_frame,
     }
     observed_mask = np.isfinite(observed_points).all(axis=2)
     filled_mask = np.isfinite(filled_points).all(axis=2)
-    return {
+    payload: dict[str, object] = {
         "positions": positions,
         "rotations": rotations,
         "rpy": rpy,
@@ -191,13 +208,16 @@ def _cln_payload(
         "observed_mask": observed_mask,
         "interpolated_mask": (~observed_mask & filled_mask),
         "landmark_ids": np.asarray(landmark_ids),
-        "coordinate_frame": np.asarray(getattr(
-            config, "SKELETON_COORDINATE_FRAME", "viki_world_or_camera"
-        )),
+        "coordinate_frame": np.asarray(coordinate_frame),
         "perception_fuse_mode": np.asarray(fusion_mode),
         "checkpoint_stage": np.asarray(checkpoint_stage),
         "checkpoint_params_json": np.asarray(json.dumps(params, sort_keys=True)),
+        "pose_source": np.asarray(pose_source),
     }
+    if profile_name:
+        payload["perception_profile"] = np.asarray(profile_name)
+        payload["active_variant"] = np.asarray(profile_name)
+    return payload
 
 class PreparationPipeline:
     """
@@ -215,6 +235,14 @@ class PreparationPipeline:
         self.recs_dir = Path(config.SKELETON_RECS_DIR)
         self.smoothed_dir = Path(config.SKELETON_SMOOTHED_DIR)
         self.fusion_mode = str(getattr(config, "PERCEPTION_FUSE_MODE", "xyz_mean"))
+        self.profile_name = ""
+        self.pose_source = "landmarks"
+        self.confidence_alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
+        self.gripper_name = str(getattr(config, "GRIPPER", "binary"))
+        self.coordinate_frame = str(getattr(
+            config, "SKELETON_COORDINATE_FRAME", "viki_world_or_camera",
+        ))
+        self.require_triangulation = False
         # Optional episode-owned directory.  When present, every material
         # prepare boundary is persisted instead of disappearing in temporaries.
         self.checkpoints_dir: Path | None = None
@@ -349,6 +377,7 @@ class PreparationPipeline:
             "interp_max_gap": int(self.interp_max_gap),
             "window_length": int(window_length),
             "polyorder": int(polyorder),
+            "profile": self.profile_name or None,
         }
         if self.checkpoints_dir is not None:
             from viki.prepare.checkpoints import save_camera_stage
@@ -383,6 +412,11 @@ class PreparationPipeline:
                 tri_timestamps = np.asarray(tri["timestamps"], np.int64)
                 tri_quality = np.asarray(tri["quality"], np.float32)
         elif _mode_requested == "triangulate":
+            if self.require_triangulation:
+                raise FileNotFoundError(
+                    "named baseline requires raw/joints3d.npz; refusing "
+                    "the legacy xyz_mean fallback"
+                )
             logger.warning("prepare: PERCEPTION_FUSE_MODE=triangulate but no "
                            "joints3d.npz — falling back to xyz_mean")
 
@@ -451,6 +485,11 @@ class PreparationPipeline:
             interp_max_gap=self.interp_max_gap,
             window_length=window_length,
             polyorder=polyorder,
+            profile_name=self.profile_name,
+            pose_source=self.pose_source,
+            confidence_alpha=self.confidence_alpha,
+            gripper_name=self.gripper_name,
+            coordinate_frame=self.coordinate_frame,
         )
         positions = np.asarray(payload["positions"])
         rotations = np.asarray(payload["rotations"])
@@ -488,6 +527,10 @@ class PreparationPipeline:
                 grid=grid, grid_conf=grid_conf, fusion_mode=_mode,
                 checkpoint_stage="observed", interp_max_gap=self.interp_max_gap,
                 window_length=window_length, polyorder=polyorder,
+                profile_name=self.profile_name, pose_source=self.pose_source,
+                confidence_alpha=self.confidence_alpha,
+                gripper_name=self.gripper_name,
+                coordinate_frame=self.coordinate_frame,
             )
             filled_payload = _cln_payload(
                 points=filled_fused, observed_points=observed_fused,
@@ -495,6 +538,10 @@ class PreparationPipeline:
                 grid=grid, grid_conf=grid_conf, fusion_mode=_mode,
                 checkpoint_stage="filled", interp_max_gap=self.interp_max_gap,
                 window_length=window_length, polyorder=polyorder,
+                profile_name=self.profile_name, pose_source=self.pose_source,
+                confidence_alpha=self.confidence_alpha,
+                gripper_name=self.gripper_name,
+                coordinate_frame=self.coordinate_frame,
             )
             checkpoint_files = [
                 self.checkpoints_dir / "10_fused_observed.npz",
@@ -514,6 +561,7 @@ class PreparationPipeline:
                 "interp_max_gap": int(self.interp_max_gap),
                 "window_length": int(window_length),
                 "polyorder": int(polyorder),
+                "profile": self.profile_name or None,
                 "files": [p.name for p in (
                     self.checkpoints_dir / "00_per_camera_observed.npz",
                     self.checkpoints_dir / "05_per_camera_filled.npz",
@@ -556,8 +604,16 @@ def estimate_fps(timestamps_us: np.ndarray) -> float:
     return float(1.0 / np.median(dt))
 
 
-def _configure_episode_inputs(pp: PreparationPipeline, ep) -> None:
+def _configure_episode_inputs(
+    pp: PreparationPipeline,
+    ep,
+    *,
+    triangulation: dict[str, object] | None = None,
+    force_triangulation: bool = False,
+    require_triangulation: bool = False,
+) -> None:
     """Attach the recorded frame grid and requested triangulation artifact."""
+    pp.require_triangulation = bool(require_triangulation)
     ts_path = ep.raw_dir / "timestamps.json"
     if ts_path.exists():
         try:
@@ -574,14 +630,22 @@ def _configure_episode_inputs(pp: PreparationPipeline, ep) -> None:
     observations = ep.raw_dir / "observations.npz"
     try:
         if observations.exists() and (
-            not joints.exists() or joints.stat().st_mtime < observations.stat().st_mtime
+            force_triangulation
+            or not joints.exists()
+            or joints.stat().st_mtime < observations.stat().st_mtime
         ):
-            from viki.perception.triangulate import triangulate_episode
+            from viki.perception.triangulate import TriConfig, triangulate_episode
 
-            triangulate_episode(ep.raw_dir)
+            triangulate_episode(ep.raw_dir, cfg=TriConfig(triangulation))
         if joints.exists():
             pp.joints3d_path = joints
-    except Exception:  # noqa: BLE001 — the pipeline records the xyz_mean fallback
+        elif require_triangulation:
+            raise FileNotFoundError(
+                f"profile requires {observations}; run profile extraction first"
+            )
+    except Exception:
+        if require_triangulation:
+            raise
         logger.warning("prepare %s: triangulation step failed", ep.id, exc_info=True)
 
 
@@ -639,7 +703,7 @@ def generate_stage_checkpoints(
 
 def prepare_episode(
     ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None,
-    report=None,
+    report=None, profile: str | None = None,
 ) -> str:
     """
     Episode-aware wrapper around :meth:`PreparationPipeline.smooth_recording`:
@@ -649,6 +713,13 @@ def prepare_episode(
     import tempfile
 
     from viki.episode import mark_stage
+    from viki.perception.profiles import get_profile
+
+    profile_spec = get_profile(profile)
+    if profile_spec is not None:
+        window_length = profile_spec.sg_window
+        polyorder = profile_spec.sg_polyorder
+        interp_max_gap = profile_spec.interp_max_gap
 
     if not ep.rec_npz.exists():
         raise FileNotFoundError(f"no rec.npz for episode {ep.id}; run extract first")
@@ -659,6 +730,13 @@ def prepare_episode(
         pp = PreparationPipeline()
         pp.recs_dir = stage_p
         pp.smoothed_dir = stage_p
+        if profile_spec is not None:
+            pp.fusion_mode = profile_spec.fusion_mode
+            pp.profile_name = profile_spec.name
+            pp.pose_source = profile_spec.pose_source
+            pp.confidence_alpha = profile_spec.confidence_alpha
+            pp.gripper_name = profile_spec.gripper
+            pp.coordinate_frame = profile_spec.coordinate_frame
         if interp_max_gap is not None:
             pp.interp_max_gap = int(interp_max_gap)
         from viki.prepare.checkpoints import run_name
@@ -666,7 +744,13 @@ def prepare_episode(
         pp.checkpoints_dir = ep.intermediates_dir / "prepare" / run_name(
             pp.fusion_mode, pp.interp_max_gap, window_length, polyorder
         )
-        _configure_episode_inputs(pp, ep)
+        _configure_episode_inputs(
+            pp,
+            ep,
+            triangulation=(profile_spec.triangulation if profile_spec else None),
+            force_triangulation=profile_spec is not None,
+            require_triangulation=profile_spec is not None,
+        )
 
         _, _ = pp.smooth_recording("rec-ep.npz", window_length, polyorder)
         shutil.copy(stage_p / "cln-ep.npz", ep.cln_npz)
@@ -674,7 +758,11 @@ def prepare_episode(
     # Optional trajectory-level capsule fit. It appends hand_fit_* arrays and
     # deliberately leaves landmark-derived positions/rotations untouched.
     # Also runnable standalone via `viki hand-fit`.
-    hand_fit = bool(getattr(config, "PERCEPTION_HAND_FIT", False))
+    hand_fit = (
+        profile_spec.hand_fit
+        if profile_spec is not None
+        else bool(getattr(config, "PERCEPTION_HAND_FIT", False))
+    )
     if hand_fit:
         try:
             from viki.perception.hand_fit import refine_cln
@@ -700,11 +788,68 @@ def prepare_episode(
             logger.warning("prepare %s: hand-fit refinement failed", ep.id, exc_info=True)
             hand_fit = False
 
+    baseline = None
+    if profile_spec is not None:
+        from viki.prepare.baseline import protect_baseline
+
+        baseline = protect_baseline(ep, profile_spec, ep.cln_npz)
+
+    # A versioned stable profile may own a post-prepare articulated pass.  It
+    # runs only after the landmark CLN has been protected, then installs only
+    # additive ``hand_fit_*`` arrays.  Consequently ``smoothed_points`` remains
+    # the honest fused observation while the anatomical model has its own
+    # independently addressable route.  Unlike the legacy optional fitter
+    # above, failure is fatal for such a profile: a named stable run must never
+    # silently claim success with one of its declared outputs missing.
+    articulated = None
+    articulated_recipe = (
+        profile_spec.articulated_hand_fit if profile_spec is not None else None
+    )
+    if articulated_recipe:
+        from viki.perception.articulated import (
+            ARTICULATED_LANDMARKS_V1,
+            ArticulatedConfig,
+            generate_articulated_variants,
+            install_articulated_overlay,
+        )
+
+        if articulated_recipe != ARTICULATED_LANDMARKS_V1:
+            raise ValueError(
+                f"unsupported articulated recipe {articulated_recipe!r}"
+            )
+        articulated_cfg = ArticulatedConfig(
+            name=articulated_recipe,
+            source_profile=profile_spec.name,
+        )
+        generated = generate_articulated_variants(
+            ep, cfg=articulated_cfg, report=report,
+        )
+        installed = install_articulated_overlay(
+            ep, cfg=articulated_cfg, variant="optimized",
+        )
+        # Refresh the recorded comparison after additive overlay installation:
+        # core still matches, while byte equality is now correctly false.
+        baseline = protect_baseline(ep, profile_spec, ep.cln_npz)
+        articulated = {
+            "recipe": articulated_recipe,
+            "variant": "optimized",
+            "report": generated["report"],
+            "quality_gate": generated["metrics"]["optimized"]["quality_gate"],
+            "clean_core_unchanged": installed["clean_core_unchanged"],
+        }
+
     with np.load(ep.cln_npz) as d:
         n = len(d["positions"])
         obj_rel = "T_obj_hand" in d
         hand_fit = hand_fit and "hand_fit_joint_angles" in d
+        if articulated is not None:
+            hand_fit = "hand_fit_joint_angles" in d
     mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel),
-               hand_fit=bool(hand_fit))
+               hand_fit=bool(hand_fit), profile=profile or "config",
+               baseline=baseline, articulated=articulated,
+               routing={
+                   "fused": "smoothed_points",
+                   "hand_fit": "hand_fit_capsules" if hand_fit else None,
+               })
     logger.info("prepare %s: %d frames -> %s", ep.id, n, ep.cln_npz)
     return str(ep.cln_npz)

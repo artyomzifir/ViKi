@@ -83,9 +83,18 @@ def _inspect_viewer_variant_file(
             str(np.asarray(archive["checkpoint_stage"]).item())
             if "checkpoint_stage" in keys else "cln"
         )
-        source = "hand_fit" if {
-            "hand_fit_positions", "hand_fit_rotations"
-        }.issubset(keys) else "landmarks"
+        has_hand_fit = {
+            "hand_fit_positions", "hand_fit_rotations", "hand_fit_capsules",
+        }.issubset(keys)
+        declared_source = (
+            str(np.asarray(archive["pose_source"]).item())
+            if "pose_source" in keys else "landmarks"
+        )
+        source = (
+            "landmarks+hand_fit_overlay"
+            if has_hand_fit and declared_source == "landmarks"
+            else declared_source
+        )
     return {"fusion_mode": mode, "stage": stage, "pose_source": source}
 
 
@@ -129,6 +138,11 @@ def _viewer_variants(ep: Episode) -> list[dict]:
     candidates: list[tuple[str, Path, str]] = [("active", ep.cln_npz, "active")]
     for path in sorted(ep.root.glob("cln_*.npz")):
         candidates.append((f"root:{path.stem}", path, path.stem))
+    baseline_root = ep.intermediates_dir / "baselines"
+    if baseline_root.is_dir():
+        for path in sorted(baseline_root.glob("*/cln.npz")):
+            profile = path.parent.name
+            candidates.append((f"baseline:{profile}", path, f"baseline/{profile}"))
     prepare_root = ep.intermediates_dir / "prepare"
     if prepare_root.is_dir():
         for path in sorted(prepare_root.glob("*/*_*.npz")):
@@ -136,6 +150,11 @@ def _viewer_variants(ep: Episode) -> list[dict]:
                 continue
             rel = path.relative_to(prepare_root).with_suffix("")
             candidates.append((f"prepare:{rel.as_posix()}", path, rel.as_posix()))
+    geometry_root = ep.intermediates_dir / "geometry"
+    if geometry_root.is_dir():
+        for path in sorted(geometry_root.glob("*/*.npz")):
+            rel = path.relative_to(geometry_root).with_suffix("")
+            candidates.append((f"geometry:{rel.as_posix()}", path, rel.as_posix()))
 
     variants = []
     seen: set[Path] = set()
@@ -168,6 +187,11 @@ def _resolve_viewer_variant(ep: Episode, variant: str) -> dict:
         if Path(stem).name == stem and stem.startswith("cln_"):
             path = ep.root / f"{stem}.npz"
             fallback_label = stem
+    elif variant.startswith("baseline:"):
+        profile = variant.removeprefix("baseline:")
+        if Path(profile).name == profile and profile not in {"", ".", ".."}:
+            path = ep.intermediates_dir / "baselines" / profile / "cln.npz"
+            fallback_label = f"baseline/{profile}"
     elif variant.startswith("prepare:"):
         rel = Path(variant.removeprefix("prepare:"))
         if (
@@ -177,6 +201,15 @@ def _resolve_viewer_variant(ep: Episode, variant: str) -> dict:
             and rel.name[:2] in {"10", "20", "30", "40"}
         ):
             path = ep.intermediates_dir / "prepare" / rel.with_suffix(".npz")
+            fallback_label = rel.as_posix()
+    elif variant.startswith("geometry:"):
+        rel = Path(variant.removeprefix("geometry:"))
+        if (
+            not rel.is_absolute()
+            and len(rel.parts) == 2
+            and all(part not in {"", ".", ".."} for part in rel.parts)
+        ):
+            path = ep.intermediates_dir / "geometry" / rel.with_suffix(".npz")
             fallback_label = rel.as_posix()
 
     if path is not None:
@@ -219,6 +252,7 @@ class _EpReq(BaseModel):
     episode: str
     model: str | None = None
     robot: str | None = None
+    profile: str | None = None
     window: int = 7
     polyorder: int = 2
 
@@ -278,6 +312,13 @@ async def list_models():
     return _lm()
 
 
+@_ep.get("/profiles")
+async def perception_profiles():
+    from viki.perception.profiles import list_profiles
+
+    return {"profiles": list_profiles()}
+
+
 @_ep.post("/models/download")
 async def download_model(req: _ModelReq):
     logger.info("model download requested: %s", req.model)
@@ -326,12 +367,17 @@ async def cloud(req: _EpReq):
 @_ep.post("/prepare")
 async def prepare(req: _EpReq):
     ep = _episode(req.episode)
-    logger.info("prepare: episode=%s sg=%s/%s", ep.id, req.window, req.polyorder)
+    logger.info(
+        "prepare: episode=%s profile=%s sg=%s/%s",
+        ep.id, req.profile or "config", req.window, req.polyorder,
+    )
 
     def _job():
         from viki.prepare.run import prepare_episode
 
-        return prepare_episode(ep, req.window, req.polyorder)
+        return prepare_episode(
+            ep, req.window, req.polyorder, profile=req.profile,
+        )
 
     return {"job_id": jobs.submit("prepare", _job, episode=ep.id)}
 
@@ -441,7 +487,23 @@ async def geometry(
                 np.asarray(d[r_key], np.float32).reshape(-1, 9)
             )
             out["valid"] = np.asarray(d["valid"], bool).tolist()
-            out["pose_source"] = "hand_fit" if p_key == "hand_fit_positions" else "landmarks"
+            out["layer_sources"] = {
+                # These routes are intentionally fixed rather than inferred
+                # from the consumer pose preference.  The yellow fused layer
+                # must always remain the observed/smoothed clean skeleton;
+                # the articulated result belongs only to the blue hand-fit
+                # layer.
+                "fused": "smoothed_points",
+                "hand_fit": (
+                    "hand_fit_capsules" if "hand_fit_capsules" in d else None
+                ),
+            }
+            out["pose_source"] = (
+                "hand_fit" if p_key == "hand_fit_positions" else (
+                    str(np.asarray(d["pose_source"]).item())
+                    if "pose_source" in d else "landmarks"
+                )
+            )
             if "perception_fuse_mode" in d:
                 out["fusion_mode"] = str(np.asarray(d["perception_fuse_mode"]).item())
             else:

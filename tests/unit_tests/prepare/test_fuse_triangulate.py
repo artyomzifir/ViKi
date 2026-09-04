@@ -126,3 +126,15 @@ def test_prepare_fuses_from_triangulation(tmp_path, monkeypatch):
         (ep.intermediates_dir / "prepare" / "comparison.json").read_text()
     )
     assert any(Path(row["file"]) == ep.cln_npz for row in comparison["variants"])
+
+
+def test_clean_profile_refuses_xyz_mean_fallback(tmp_path):
+    from viki.perception.profiles import CLEAN_LANDMARKS_V1
+    from viki.prepare.run import prepare_episode
+
+    ep = new_episode(tmp_path)
+    grid = (np.arange(12) * 33_000).astype(np.int64)
+    _synthetic_rec(ep, len(grid), grid)
+
+    with pytest.raises(FileNotFoundError, match="profile requires"):
+        prepare_episode(ep, profile=CLEAN_LANDMARKS_V1)

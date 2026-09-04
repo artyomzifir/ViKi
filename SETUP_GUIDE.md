@@ -180,14 +180,18 @@ Kinect A  SYNC OUT ──── cable ──── SYNC IN  Kinect B
 
 > The SYNC IN / SYNC OUT ports are on the back of the Kinect under a small removable plastic cover.
 
-**Startup order in ViKi UI:**
+**Startup in ViKi UI:**
 
-Always start the **subordinate first**, then the **master**. The subordinate waits for a trigger signal — if you start the master first, it sends a trigger before the subordinate is ready and sync fails.
+Set the physical roles in `KINECT_SYNC` (`data/user_configuration.json`) to
+match the cable direction. Clicking **Start** on either Kinect starts the entire
+rig automatically: every subordinate first, then the master.
 
-1. Click **Start** on `kinect_1` (subordinate) — wait for the LIVE indicator
-2. Click **Start** on `kinect_0` (master)
-
-> Note: ViKi currently runs both Kinects in standalone mode (`wired_sync_mode=0`). Hardware sync mode (master/subordinate) requires setting `wired_sync_mode=1` and `wired_sync_mode=2` respectively in `kinect.py` — this is planned for a future update. Even in standalone mode, the sync cable reduces IR interference between devices.
+With two or more connected Kinects, standalone mode is forbidden. ViKi checks
+the SDK-reported SYNC IN/SYNC OUT jack state and refuses to start a partial or
+miswired rig. It also verifies actual K4A timestamps against the configured
+subordinate delay (500 µs tolerance). Recording has a second gate and cannot
+bypass this check with the debug `force` option. Clicking **Stop** on either
+Kinect stops the whole rig.
 
 ---
 

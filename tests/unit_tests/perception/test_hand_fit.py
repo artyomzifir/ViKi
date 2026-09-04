@@ -252,6 +252,34 @@ def _linear_q_trajectory(hand, T=5, step=0.012):
     return q
 
 
+def test_window_solves_do_not_share_mutable_pinocchio_data(monkeypatch):
+    hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
+    q_init = _linear_q_trajectory(hand, T=10)
+    clouds = [np.empty((0, 3)) for _ in range(len(q_init))]
+    seen = []
+
+    def fake_fit(local_hand, _clouds, _weights, local_q, _cfg, **_kwargs):
+        seen.append(local_hand)
+        return np.asarray(local_q).copy(), {
+            "outer_iterations": 1,
+            "nfev": 1,
+            "elapsed_s": 0.001,
+        }
+
+    monkeypatch.setattr(hf, "fit_trajectory", fake_fit)
+    hf.fit_trajectory_windowed(
+        hand,
+        clouds,
+        [np.empty(0) for _ in clouds],
+        q_init,
+        hf.FitConfig(window=4, window_overlap=1, workers=2),
+    )
+
+    assert len(seen) > 1
+    assert all(local_hand is not hand for local_hand in seen)
+    assert len({id(local_hand.data) for local_hand in seen}) == len(seen)
+
+
 def test_batch_interpolates_completely_missing_frame():
     hand = hm.build(hm.calibrate_from_frames([_open_hand_frame()]))
     true_q = _linear_q_trajectory(hand)

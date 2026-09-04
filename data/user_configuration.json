@@ -52,7 +52,7 @@
   ],
   "PERCEPTION_INTERP_MAX_GAP": 0,
   "PERCEPTION_CONF_ALPHA": 1.0,
-  "PERCEPTION_HAND_FIT": true,
+  "PERCEPTION_HAND_FIT": false,
   "PERCEPTION_SAVE_OBSERVATIONS": true,
   "PERCEPTION_FUSE_MODE": "xyz_mean",
   "TRI_MIN_SCORE": 0.3,
@@ -225,5 +225,5 @@
   "EXPORT_FPS": 15,
   "EPISODES_DIR": "data/episodes",
   "DATASETS_DIR": "data/datasets",
-  "ACTIVE_CALIBRATION": "arteom_dont_kill_me_pls"
+  "ACTIVE_CALIBRATION": "calib-v1-checkpoint"
 }

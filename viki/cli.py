@@ -5,9 +5,11 @@ Thin command-line surface over the pipeline stages. Same package API the web
 server calls — the CLI just parses args and prints results.
 
     viki record  --task "pick cube" --seconds 10
+    viki perceive <episode>             # stable fused + hand_fit by default
     viki extract  <episode>
     viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
     viki prepare  <episode>
+    viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
     viki replay   <episode> [--driver dryrun|ur3]
     viki label    <episode> --task "..." --outcome good
@@ -37,16 +39,29 @@ def _cmd_record(a) -> None:
     from viki.cameras.record import SceneRecorder
 
     mgr = CameraManager()
-    for dev in a.cameras or mgr.list_devices().get("realsense", []):
-        mgr.start(dev)
-    rec = SceneRecorder(
-        mgr,
-        dataset=a.dataset,
-        episodes_dir=None if a.dataset else a.episodes_dir,
-        meta={"task": a.task, "demonstrator": a.demonstrator, "hand": a.hand},
-    )
-    ep = rec.record(a.seconds, fps=a.fps)
-    mgr.stop_all()
+    discovered = mgr.list_devices()
+    devices = a.cameras or [
+        *discovered.get("realsense", []), *discovered.get("kinect", []),
+    ]
+    try:
+        kinect_ids = [device_id for device_id in devices if device_id.startswith("kinect_")]
+        if len(discovered.get("kinect", [])) >= 2 and kinect_ids:
+            mgr.start_configured_kinect_rig(fps=a.fps)
+        else:
+            for device_id in kinect_ids:
+                mgr.start(device_id, fps=a.fps)
+        for device_id in devices:
+            if not device_id.startswith("kinect_"):
+                mgr.start(device_id, fps=a.fps)
+        rec = SceneRecorder(
+            mgr,
+            dataset=a.dataset,
+            episodes_dir=None if a.dataset else a.episodes_dir,
+            meta={"task": a.task, "demonstrator": a.demonstrator, "hand": a.hand},
+        )
+        ep = rec.record(a.seconds, fps=a.fps)
+    finally:
+        mgr.stop_all()
     print(ep.root)
 
 
@@ -54,6 +69,20 @@ def _cmd_extract(a) -> None:
     from viki.perception.extract import extract_episode
 
     print(extract_episode(_episode(a.episode), backend=a.backend, hand=a.hand))
+
+
+def _cmd_perceive(a) -> None:
+    from viki.perception.run import PerceiveOpts, perceive_episode
+
+    print(perceive_episode(
+        _episode(a.episode),
+        PerceiveOpts(
+            profile=a.profile,
+            hand=a.hand,
+            build_cloud=a.build_cloud,
+            cloud_stride=a.cloud_stride,
+        ),
+    ))
 
 
 def _cmd_cloud(a) -> None:
@@ -65,7 +94,9 @@ def _cmd_cloud(a) -> None:
 def _cmd_prepare(a) -> None:
     from viki.prepare.run import prepare_episode
 
-    print(prepare_episode(_episode(a.episode), a.window, a.polyorder))
+    print(prepare_episode(
+        _episode(a.episode), a.window, a.polyorder, profile=a.profile,
+    ))
 
 
 def _cmd_checkpoints(a) -> None:
@@ -84,6 +115,30 @@ def _cmd_hand_fit(a) -> None:
     from viki.perception.hand_fit import refine_cln
 
     print(refine_cln(_episode(a.episode)))
+
+
+def _cmd_geometry_fit(a) -> None:
+    from viki.perception.articulated import (
+        ArticulatedConfig,
+        generate_articulated_variants,
+        install_articulated_overlay,
+    )
+
+    ep = _episode(a.episode)
+    result = generate_articulated_variants(
+        ep,
+        cfg=ArticulatedConfig(source_profile=a.source_profile),
+    )
+    print(f"projected: {result['projected']}")
+    print(f"optimized: {result['optimized']}")
+    print(f"report: {result['report']}")
+    if a.install_overlay:
+        overlay = install_articulated_overlay(
+            ep,
+            cfg=ArticulatedConfig(source_profile=a.source_profile),
+            variant=a.install_overlay,
+        )
+        print(f"active hand-fit overlay: {overlay['overlay']} -> {overlay['path']}")
 
 
 def _cmd_retarget(a) -> None:
@@ -133,6 +188,7 @@ def _cmd_viz(a) -> None:
 def _cmd_run(a) -> None:
     from viki.episode import stage_done
     from viki.perception.extract import extract_episode
+    from viki.perception.profiles import STABLE_FUSED_HAND_V1
     from viki.prepare.run import prepare_episode
     from viki.replay import replay_episode
     from viki.retarget.run import retarget_episode
@@ -140,7 +196,7 @@ def _cmd_run(a) -> None:
     ep = _episode(a.episode)
     steps = [
         ("extract", lambda: extract_episode(ep, backend=a.backend)),
-        ("prepare", lambda: prepare_episode(ep)),
+        ("prepare", lambda: prepare_episode(ep, profile=STABLE_FUSED_HAND_V1)),
         ("retarget", lambda: retarget_episode(ep, robot=a.robot)),
         ("replay", lambda: replay_episode(ep, driver=a.driver)),
     ]
@@ -157,6 +213,8 @@ def _cmd_run(a) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    from viki.perception.profiles import CLEAN_LANDMARKS_V1, STABLE_FUSED_HAND_V1
+
     p = argparse.ArgumentParser(prog="viki", description=__doc__.splitlines()[3])
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -177,6 +235,21 @@ def _build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--hand", default="right", choices=["left", "right"])
     pe.set_defaults(func=_cmd_extract)
 
+    pper = sub.add_parser(
+        "perceive",
+        help="raw/ -> reproducible baseline rec.npz + joints3d.npz + cln.npz",
+    )
+    pper.add_argument("episode")
+    pper.add_argument(
+        "--profile",
+        choices=[STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
+        default=STABLE_FUSED_HAND_V1,
+    )
+    pper.add_argument("--hand", default="right", choices=["left", "right"])
+    pper.add_argument("--build-cloud", action="store_true")
+    pper.add_argument("--cloud-stride", type=int, default=1)
+    pper.set_defaults(func=_cmd_perceive)
+
     pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
     pc.add_argument("episode")
     pc.set_defaults(func=_cmd_cloud)
@@ -185,10 +258,36 @@ def _build_parser() -> argparse.ArgumentParser:
     phf.add_argument("episode")
     phf.set_defaults(func=_cmd_hand_fit)
 
+    pgf = sub.add_parser(
+        "geometry-fit",
+        help="build non-destructive landmark-only articulated hand variants",
+    )
+    pgf.add_argument("episode")
+    pgf.add_argument(
+        "--source-profile",
+        default=CLEAN_LANDMARKS_V1,
+        choices=[CLEAN_LANDMARKS_V1, STABLE_FUSED_HAND_V1],
+        help="protected baseline used as immutable input",
+    )
+    pgf.add_argument(
+        "--install-overlay",
+        nargs="?",
+        const="optimized",
+        choices=["projected", "optimized"],
+        help="also attach the candidate to active cln.npz for fused/hand-fit overlay",
+    )
+    pgf.set_defaults(func=_cmd_geometry_fit)
+
     pp = sub.add_parser("prepare", help="rec.npz -> cln.npz")
     pp.add_argument("episode")
     pp.add_argument("--window", type=int, default=7)
     pp.add_argument("--polyorder", type=int, default=2)
+    pp.add_argument(
+        "--profile",
+        choices=[STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
+        default=STABLE_FUSED_HAND_V1,
+        help="locked reproducible recipe (overrides fusion/gap/SG/hand-fit config)",
+    )
     pp.set_defaults(func=_cmd_prepare)
 
     pcp = sub.add_parser(

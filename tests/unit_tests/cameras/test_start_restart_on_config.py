@@ -32,11 +32,13 @@ class _FakeBackend:
 @pytest.fixture
 def mgr(monkeypatch):
     m = CameraManager()
+    # Keep this lifecycle test independent of the multi-device HW_SYNC policy.
+    monkeypatch.setattr(m, "_detected_kinect_ids", lambda: ["kinect_0"])
     made = []
 
     def _fake_make(device_id, fps, cw, ch, depth_mode, **kw):
         b = _FakeBackend({"color_width": cw, "color_height": ch, "fps": fps,
-                          "depth_mode": depth_mode})
+                          "depth_mode": depth_mode, **kw})
         made.append(b)
         return b
 

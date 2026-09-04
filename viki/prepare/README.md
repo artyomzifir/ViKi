@@ -53,8 +53,33 @@ viki checkpoints <episode> --fusion triangulate xyz_mean --interp-max-gap 6
 Running the command again with another gap/window adds a parameter-named run;
 the episode-level `intermediates/prepare/comparison.json` remains cumulative.
 
+## Frozen clean baseline
+
+The named profile `clean-triangulated-landmarks-v1` reproduces the validated
+`pick_up_u` output independently of experimental config. It requires real
+two-view triangulation, locks fill-all + SG 7/2 + landmark pose, disables
+`hand_fit`, and protects the first result under `intermediates/baselines/`.
+Run it with:
+
+```bash
+viki perceive <episode> --profile clean-triangulated-landmarks-v1
+```
+
+Full parameters, provenance and the reference hash are documented in
+[`docs/clean_baseline_v1.md`](../../docs/clean_baseline_v1.md).
+
 ## Stubbed
 
 - fusion weights: the caller passes detector visibility only — the range and
   incidence factors of eq. 2 are not computed.
 - object-relative representation and geometry-preserving SE(3) interpolation.
+## Stable fused + articulated profile
+
+`stable-fused-hand-v1` is the default complete perception route.  It protects
+the clean triangulated CLN, then creates non-destructive `40_projected.npz` and
+`50_optimized.npz` variants under
+`intermediates/geometry/articulated-landmarks-v1/` and installs the optimized
+candidate under additive `hand_fit_*` keys.  The dense depth cloud is excluded.
+Viewer routing is explicit: `smoothed_points` → **fused** and
+`hand_fit_capsules` → **hand fit**.  See `docs/articulated_geometry_v1.md` for
+the contract, metrics, and manual reproduction commands.

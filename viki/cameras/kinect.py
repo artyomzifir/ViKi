@@ -15,6 +15,14 @@ import cv2
 import numpy as np
 
 from .base import CameraBackend, CameraIntrinsics, Frame
+from .hw_sync import (
+    HardwareSyncError,
+    SyncRole,
+    WIRED_MASTER,
+    WIRED_STANDALONE,
+    WIRED_SUBORDINATE,
+    require_role_jack,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +72,9 @@ K4A_FRAMES_PER_SECOND_30 = 2
 # STANDALONE  : no sync cable; each device captures independently
 # MASTER      : sends sync pulses on SYNC OUT; start this AFTER the subordinate
 # SUBORDINATE : receives pulses on SYNC IN; start this FIRST
-K4A_WIRED_SYNC_MODE_STANDALONE = 0
-K4A_WIRED_SYNC_MODE_MASTER = 1
-K4A_WIRED_SYNC_MODE_SUBORDINATE = 2
+K4A_WIRED_SYNC_MODE_STANDALONE = WIRED_STANDALONE
+K4A_WIRED_SYNC_MODE_MASTER = WIRED_MASTER
+K4A_WIRED_SYNC_MODE_SUBORDINATE = WIRED_SUBORDINATE
 
 K4A_IMAGE_FORMAT_COLOR_BGRA32 = 0
 K4A_IMAGE_FORMAT_DEPTH16 = 3
@@ -160,6 +168,13 @@ _lib.k4a_device_get_serialnum.argtypes = [
     K4ADevice,
     ctypes.c_char_p,
     ctypes.POINTER(ctypes.c_size_t),
+]
+
+_lib.k4a_device_get_sync_jack.restype = ctypes.c_int
+_lib.k4a_device_get_sync_jack.argtypes = [
+    K4ADevice,
+    ctypes.POINTER(ctypes.c_bool),
+    ctypes.POINTER(ctypes.c_bool),
 ]
 
 # Calibration functions
@@ -326,6 +341,12 @@ class KinectBackend(CameraBackend):
             )
         if fps not in _FPS_MAP:
             raise ValueError(f"Supported fps: 5, 15, 30. Got: {fps}")
+        if wired_sync_mode not in {
+            K4A_WIRED_SYNC_MODE_STANDALONE,
+            K4A_WIRED_SYNC_MODE_MASTER,
+            K4A_WIRED_SYNC_MODE_SUBORDINATE,
+        }:
+            raise ValueError(f"invalid wired_sync_mode: {wired_sync_mode}")
 
         # WFOV_UNBINNED only supports up to 15 fps
         if depth_mode == "WFOV_UNBINNED" and fps > 15:
@@ -344,6 +365,8 @@ class KinectBackend(CameraBackend):
         self._wired_sync_mode = wired_sync_mode
         self._subordinate_delay_us = subordinate_delay_us
         self._synchronized_images_only = synchronized_images_only
+        self._sync_in_connected = False
+        self._sync_out_connected = False
         self._handle: K4ADevice = K4ADevice(None)
         self._transform: K4ATransformation = K4ATransformation(None)
         self._calibration: K4ACalibration = K4ACalibration(None)
@@ -360,6 +383,13 @@ class KinectBackend(CameraBackend):
         if self._running:
             return
 
+        installed = self.device_count()
+        if installed >= 2 and self._wired_sync_mode == K4A_WIRED_SYNC_MODE_STANDALONE:
+            raise HardwareSyncError(
+                f"{installed} Azure Kinects are connected; standalone mode is forbidden. "
+                "Configure KINECT_SYNC and start the hardware-synchronised rig."
+            )
+
         # Open device
         res = _lib.k4a_device_open(self._device_index, ctypes.byref(self._handle))
         if res != K4A_RESULT_SUCCEEDED:
@@ -373,6 +403,19 @@ class KinectBackend(CameraBackend):
         buf = ctypes.create_string_buffer(64)
         _lib.k4a_device_get_serialnum(self._handle, buf, ctypes.byref(size))
         self._serial_str = buf.value.decode(errors="replace")
+
+        try:
+            jack = self.get_sync_jack_status()
+            require_role_jack(
+                f"kinect_{self._device_index} ({self._serial_str})",
+                SyncRole(self._wired_sync_mode, self._subordinate_delay_us),
+                sync_in_connected=jack["sync_in_connected"],
+                sync_out_connected=jack["sync_out_connected"],
+            )
+        except HardwareSyncError:
+            _lib.k4a_device_close(self._handle)
+            self._handle = K4ADevice(None)
+            raise
 
         # Build config
         config = K4ADeviceConfig(
@@ -682,6 +725,32 @@ class KinectBackend(CameraBackend):
             "color_height": int(self._color_resolution[1]),
             "fps": int(self._fps),
             "depth_mode": self._depth_mode,
+            "wired_sync_mode": int(self._wired_sync_mode),
+            "wired_sync_role": SyncRole(self._wired_sync_mode).name,
+            "subordinate_delay_us": int(self._subordinate_delay_us),
+            "synchronized_images_only": bool(self._synchronized_images_only),
+            "sync_in_connected": bool(self._sync_in_connected),
+            "sync_out_connected": bool(self._sync_out_connected),
+        }
+
+    def get_sync_jack_status(self) -> dict[str, bool]:
+        """Read the physical SYNC IN/OUT connection state from libk4a."""
+        if not self._handle:
+            raise HardwareSyncError(f"[{self._serial_str}] Kinect device is not open")
+        sync_in = ctypes.c_bool(False)
+        sync_out = ctypes.c_bool(False)
+        result = _lib.k4a_device_get_sync_jack(
+            self._handle, ctypes.byref(sync_in), ctypes.byref(sync_out)
+        )
+        if result != K4A_RESULT_SUCCEEDED:
+            raise HardwareSyncError(
+                f"[{self._serial_str}] failed to read Kinect sync-jack status"
+            )
+        self._sync_in_connected = bool(sync_in.value)
+        self._sync_out_connected = bool(sync_out.value)
+        return {
+            "sync_in_connected": self._sync_in_connected,
+            "sync_out_connected": self._sync_out_connected,
         }
 
     # ── Helpers ───────────────────────────────────────────────────────────────

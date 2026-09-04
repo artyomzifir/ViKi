@@ -19,6 +19,7 @@ def test_raw_calibration_bindings_present(kinect):
     lib = kinect._lib
     assert hasattr(lib, "k4a_device_get_raw_calibration")
     assert hasattr(lib, "k4a_calibration_get_from_raw")
+    assert hasattr(lib, "k4a_device_get_sync_jack")
 
 
 def test_get_raw_calibration_signature(kinect):
@@ -34,6 +35,11 @@ def test_get_from_raw_signature(kinect):
     assert len(fn.argtypes) == 5
 
 
+def test_get_sync_jack_signature(kinect):
+    fn = kinect._lib.k4a_device_get_sync_jack
+    assert len(fn.argtypes) == 3
+
+
 def test_buffer_result_constants(kinect):
     assert (kinect.K4A_BUFFER_RESULT_SUCCEEDED,
             kinect.K4A_BUFFER_RESULT_TOO_SMALL) == (0, 2)
@@ -44,3 +50,12 @@ def test_backend_exposes_get_raw_calibration(kinect):
     b = object.__new__(kinect.KinectBackend)
     b._raw_calibration = None
     assert b.get_raw_calibration() is None
+
+
+def test_backend_itself_refuses_standalone_with_multiple_devices(kinect, monkeypatch):
+    from viki.cameras.hw_sync import HardwareSyncError
+
+    monkeypatch.setattr(kinect.KinectBackend, "device_count", staticmethod(lambda: 2))
+    backend = kinect.KinectBackend(wired_sync_mode=kinect.K4A_WIRED_SYNC_MODE_STANDALONE)
+    with pytest.raises(HardwareSyncError, match="standalone mode is forbidden"):
+        backend.start()
