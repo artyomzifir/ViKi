@@ -220,11 +220,15 @@ header h1 {
 }
 .calib-cards, .record-cards { min-width: 0; overflow-y: auto; align-content: start;
   display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 14px; }
-/* Record tab: depth is behind the RGB/D toggle now, so the preview does not
-   need to dominate the card — keep cards compact and packed. */
-.record-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 360px));
-  justify-content: start; }
-.record-cards .stream-panel { max-height: 24vh; }
+/* Record tab: depth now lives behind the RGB/D toggle, so a card only ever
+   shows one stream. Size the card to its 4:3 camera frame instead of
+   stretching it full-width; the header + controls fit one row at this width
+   (the camera name ellipsises first if space gets tight). */
+.record-cards { display: flex; flex-wrap: wrap; justify-content: flex-start; }
+.record-cards .cam-card { flex: 0 1 31rem; max-width: 100%; }
+.record-cards .card-header .name { min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.record-cards .stream-panel { max-height: none; }
 
 .calib-sets { flex: 1; min-height: 0; display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
