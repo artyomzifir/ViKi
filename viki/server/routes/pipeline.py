@@ -465,6 +465,8 @@ async def retarget_preview(
     kinematics.set_frame(0)
     base = np.asarray([x, y, z], dtype=np.float64)
     points = robot_to_calibration(kinematics.joint_points(kinematics.q_reference), base)
+    placements = kinematics.joint_placements(kinematics.q_reference)
+    placements[:, :3, 3] += base
     return {
         "ready": True,
         "preview": True,
@@ -483,6 +485,8 @@ async def retarget_preview(
         "link_groups": list(kinematics.link_groups),
         "point_groups": list(kinematics.point_groups),
         "link_positions": [points.tolist()],
+        "robot_visuals": kinematics.visual_geometries(),
+        "robot_joint_placements": [placements.tolist()],
         "target_trajectory": [],
         "target_rotation": [],
         "achieved_trajectory": [],
@@ -492,6 +496,25 @@ async def retarget_preview(
         "gripper_closed": [False],
         "metrics": {},
     }
+
+
+@_ep.get("/retarget/mesh/{mesh_path:path}")
+async def retarget_mesh(mesh_path: str):
+    """Serve one URDF mesh file (STL / OBJ / DAE …) from under
+    ``<MODELS_DIR>/robot_descriptions/`` for the 3-D robot overlay. Paths are
+    the ``mesh_path`` fields of ``robot_visuals``; traversal outside the root
+    is rejected."""
+    import os
+
+    root = Path(os.path.realpath(
+        os.path.join(str(getattr(config, "MODELS_DIR", "models/")), "robot_descriptions")
+    ))
+    target = Path(os.path.realpath(root / mesh_path))
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(404, "mesh not found")
+    if target.suffix.lower() not in {".stl", ".obj", ".dae", ".ply", ".glb", ".gltf"}:
+        raise HTTPException(415, f"unsupported mesh type {target.suffix}")
+    return FileResponse(target, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @_ep.get("/episode/{ep_id}/retarget")
@@ -574,6 +597,16 @@ async def retarget_scene(ep_id: str):
                 "gripper_opening_m": (
                     np.asarray(plan["gripper_opening_m"], dtype=np.float32).tolist()
                     if "gripper_opening_m" in plan else []
+                ),
+                "robot_visuals": (
+                    json.loads(str(plan["robot_visuals_json"]))
+                    if "robot_visuals_json" in plan else []
+                ),
+                "robot_joint_placements": (
+                    np.asarray(
+                        plan["robot_joint_placements_calibration"], dtype=np.float32
+                    ).tolist()
+                    if "robot_joint_placements_calibration" in plan else []
                 ),
                 "metrics": metrics,
             }

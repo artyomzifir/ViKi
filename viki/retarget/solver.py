@@ -346,6 +346,25 @@ def solve_trajectory(
     )
 
 
+def _primitive_descriptor(shape: object) -> dict | None:
+    """hpp-fcl primitive → a small dict the viewer can rebuild, or None."""
+    if shape is None:
+        return None
+    name = type(shape).__name__.lower()
+    try:
+        if "box" in name:
+            hs = np.asarray(shape.halfSide, dtype=float).reshape(-1)
+            return {"type": "box", "size": [float(2 * v) for v in hs[:3]]}
+        if "sphere" in name:
+            return {"type": "sphere", "radius": float(shape.radius)}
+        if "cylinder" in name:
+            return {"type": "cylinder", "radius": float(shape.radius),
+                    "length": float(2 * shape.halfLength)}
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 class PinocchioKinematics:
     """Fixed-base adapter exposing only commanded arm joints to the solver.
 
@@ -613,6 +632,69 @@ class PinocchioKinematics:
         for index, frame_id in enumerate(self._scene_frame_ids[1:], start=1):
             points[index] = np.asarray(self.data.oMf[frame_id].translation)
         return points
+
+    def joint_placements(self, q: np.ndarray) -> np.ndarray:
+        """``(model.njoints, 4, 4)`` world←joint homogeneous transforms for the
+        current passive-joint frame. A visual mesh's world pose is
+        ``joint_placements[g.parent_joint] @ g.placement`` (see
+        :meth:`visual_geometries`)."""
+        self.pin.forwardKinematics(self.model, self.data, self._configuration(q))
+        out = np.zeros((self.model.njoints, 4, 4), dtype=np.float64)
+        for joint_id in range(self.model.njoints):
+            out[joint_id] = np.asarray(self.data.oMi[joint_id].homogeneous)
+        return out
+
+    def visual_geometries(self) -> list[dict]:
+        """Static descriptors for the URDF *visual* meshes (arm + attached
+        gripper), for the 3-D viewer. Each entry:
+
+        ``mesh_path``      path relative to ``<MODELS_DIR>/robot_descriptions/``
+                           (or absent for a primitive shape)
+        ``primitive``      ``{"type": "box|sphere|cylinder", ...}`` when there is
+                           no mesh file
+        ``parent_joint``   index into :meth:`joint_placements`
+        ``placement``      4×4 joint←geometry offset
+        ``scale``          mesh scale (3,)
+        ``color``          RGBA (4,), 0..1
+        """
+        import os
+
+        model = getattr(self.robot, "visual_model", None)
+        if model is None:
+            return []
+        try:
+            from viki import config as _cfg
+
+            root = os.path.join(
+                str(getattr(_cfg, "MODELS_DIR", "models/")), "robot_descriptions"
+            )
+            root = os.path.realpath(root)
+        except Exception:  # noqa: BLE001
+            root = None
+
+        out: list[dict] = []
+        for g in model.geometryObjects:
+            item: dict = {
+                "name": str(g.name),
+                "parent_joint": int(g.parentJoint),
+                "placement": np.asarray(g.placement.homogeneous, dtype=float).tolist(),
+                "scale": [float(x) for x in np.asarray(g.meshScale).reshape(-1)[:3]],
+                "color": [float(x) for x in np.asarray(g.meshColor).reshape(-1)[:4]],
+            }
+            mesh_path = str(getattr(g, "meshPath", "") or "")
+            if mesh_path and os.path.isfile(mesh_path):
+                real = os.path.realpath(mesh_path)
+                if root and real.startswith(root + os.sep):
+                    item["mesh_path"] = os.path.relpath(real, root)
+                else:
+                    item["mesh_path_abs"] = real  # served only if under a safe root
+            else:
+                prim = _primitive_descriptor(getattr(g, "geometry", None))
+                if prim is None:
+                    continue  # nothing drawable
+                item["primitive"] = prim
+            out.append(item)
+        return out
 
     @property
     def link_edges(self) -> np.ndarray:

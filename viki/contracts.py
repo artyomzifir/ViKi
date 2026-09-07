@@ -561,6 +561,8 @@ PLAN_KEYS: tuple[str, ...] = (
     "position_error_m",
     "orientation_error_rad",
     "link_positions_calibration",
+    "robot_joint_placements_calibration",
+    "robot_visuals_json",
     "solver_status",
     "config_json",
     "metrics_json",

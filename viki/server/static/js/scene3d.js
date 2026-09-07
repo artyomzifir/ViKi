@@ -7,6 +7,33 @@
 // create(canvasEl, {api, log}) -> a controller the tab drives.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
+
+// URDF visual meshes for the retarget robot overlay. Files come from
+// GET /api/pipeline/retarget/mesh/<path> (served out of models/robot_descriptions);
+// the browser HTTP-caches them, so a fresh load per rebuild is cheap and keeps
+// geometry ownership per-scene (no shared-buffer disposal hazards).
+const _stlLoader = new STLLoader();
+const _objLoader = new OBJLoader();
+const _daeLoader = new ColladaLoader();
+function loadRobotMesh(url) {
+  const ext = url.split('?')[0].split('.').pop().toLowerCase();
+  return new Promise((resolve, reject) => {
+    if (ext === 'stl') _stlLoader.load(url, g => resolve(new THREE.Mesh(g)), undefined, reject);
+    else if (ext === 'obj') _objLoader.load(url, resolve, undefined, reject);
+    else if (ext === 'dae') _daeLoader.load(url, c => resolve(c.scene), undefined, reject);
+    else reject(new Error('unsupported robot mesh: ' + url));
+  });
+}
+function rowMajorMatrix4(m) {
+  return new THREE.Matrix4().set(
+    m[0][0], m[0][1], m[0][2], m[0][3],
+    m[1][0], m[1][1], m[1][2], m[1][3],
+    m[2][0], m[2][1], m[2][2], m[2][3],
+    m[3] ? m[3][0] : 0, m[3] ? m[3][1] : 0, m[3] ? m[3][2] : 0, m[3] ? m[3][3] : 1);
+}
 
 // MediaPipe / RTMPose 21-point hand topology.
 const HAND_EDGES = [
@@ -80,7 +107,7 @@ function drawCapsuleHand(bones, joints, pts, boneR, jointR) {
 const DEFAULT_LAYERS = {
   cloud: true, perCamera: false, fused: true, trajectory: true,
   palm: true, frusta: true, board: true, bbox: false, handFit: false,
-  robot: true, targetTrajectory: true, achievedTrajectory: true,
+  robot: true, robotMesh: true, targetTrajectory: true, achievedTrajectory: true,
 };
 
 export function create(canvasEl, {
@@ -163,6 +190,11 @@ export function create(canvasEl, {
   // exact same kinematics that produced the plan is what gets displayed.
   const robotGroup = new THREE.Group();
   calibrationGroup.add(robotGroup);
+  // URDF visual meshes, sibling of the schematic links so one can replace the
+  // other. Populated async in rebuildRobot(); placed per frame in updateRobotFrame().
+  const robotMeshGroup = new THREE.Group();
+  robotGroup.add(robotMeshGroup);
+  let robotMeshReady = false, robotMeshToken = 0;
   const targetTrajLine = new THREE.LineSegments(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0xf472b6 })
@@ -298,6 +330,8 @@ export function create(canvasEl, {
       show: () => !!geo?.workspace_bbox },
     { key: 'robot',     label: 'robot  arm / gripper',  show: havePlan, swatch:
         'linear-gradient(90deg,#8aa4ba 0 55%,#f59e0b 55% 100%)' },
+    { key: 'robotMesh', label: 'robot: solid mesh',     swatch: '#b9c4d0',
+      show: () => havePlan() && !!retarget?.robot_visuals?.length },
     { key: 'targetTrajectory',   label: 'target EE',    swatch: '#f472b6', show: havePlan },
     { key: 'achievedTrajectory', label: 'achieved EE',  swatch: '#22d3ee', show: havePlan },
   ];
@@ -383,7 +417,18 @@ export function create(canvasEl, {
     gripDot.visible = layers.palm && gripDot.userData.have;
     handBones.visible = layers.handFit;
     handJoints.visible = layers.handFit;
-    robotGroup.visible = layers.robot && !!retarget?.ready;
+    const robotOn = layers.robot && !!retarget?.ready;
+    robotGroup.visible = robotOn;
+    // Solid URDF meshes replace the stick-figure links/joints when they are
+    // loaded and the "robot: solid mesh" row is on; the base triad + light stay.
+    const meshMode = robotOn && layers.robotMesh && robotMeshReady
+      && !!retarget?.robot_visuals?.length;
+    robotMeshGroup.visible = meshMode;
+    for (const c of robotGroup.children) {
+      if (c.userData.kind === 'robot-link' || c.userData.kind === 'robot-joint') {
+        c.visible = !meshMode;
+      }
+    }
     targetTrajLine.visible = layers.targetTrajectory && !!retarget?.ready;
     targetDot.visible = layers.targetTrajectory && !!retarget?.target_trajectory?.length;
     targetPoseFrame.visible = layers.targetTrajectory && !!retarget?.ready
@@ -518,8 +563,93 @@ export function create(canvasEl, {
       0, 0, 0, 1));
   }
 
+  function disposeSubtree(obj) {
+    obj.traverse(o => {
+      o.geometry?.dispose?.();
+      const m = o.material;
+      if (Array.isArray(m)) m.forEach(x => x?.dispose?.());
+      else m?.dispose?.();
+    });
+  }
+
+  function clearRobotMeshes() {
+    robotMeshToken++;
+    robotMeshReady = false;
+    while (robotMeshGroup.children.length) {
+      const c = robotMeshGroup.children.pop();
+      disposeSubtree(c);
+    }
+  }
+
+  // Load the URDF visual meshes and stamp each with its parent joint + the
+  // fixed joint←geometry offset, so updateRobotFrame() only has to compose
+  // world←joint (per frame) with that offset.
+  function loadRobotVisuals() {
+    clearRobotMeshes();
+    const visuals = retarget?.robot_visuals || [];
+    if (!visuals.length) { applyLayerVisibility(); return; }
+    const token = robotMeshToken;
+    let pending = visuals.length;
+    const done = () => {
+      if (token !== robotMeshToken) return;
+      if (--pending <= 0) { robotMeshReady = true; updateRobotFrame(frame); applyLayerVisibility(); }
+    };
+    for (const v of visuals) {
+      const local = rowMajorMatrix4(v.placement || [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]);
+      const s = (v.scale || [1, 1, 1]).map(x => x || 1);
+      local.multiply(new THREE.Matrix4().makeScale(s[0], s[1], s[2]));
+      // DAE carries its own materials — keep them. STL/OBJ/primitives don't, so
+      // paint those with the URDF's meshColor (falling back to a neutral grey).
+      const daeMesh = /\.dae($|\?)/i.test(v.mesh_path || '');
+      const attach = node => {
+        if (token !== robotMeshToken) { disposeSubtree(node); return; }
+        if (daeMesh) {
+          // ColladaLoader rotates Z-up assets into three's Y-up and scales by
+          // the asset's <unit>. Our scene is Z-up (URDF-native, matching
+          // Pinocchio), so drop the rotation but fold the unit into `local`.
+          const unit = node.scale.x || 1;
+          node.rotation.set(0, 0, 0);
+          node.scale.setScalar(1);
+          if (unit !== 1) local.multiply(new THREE.Matrix4().makeScale(unit, unit, unit));
+        }
+        node.matrixAutoUpdate = false;
+        node.userData.kind = 'robot-visual';
+        node.userData.parentJoint = v.parent_joint | 0;
+        node.userData.local = local;
+        if (!daeMesh) {
+          const c = Array.isArray(v.color) && v.color[3] !== 0 ? v.color : [0.73, 0.77, 0.82, 1];
+          const mat = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(c[0], c[1], c[2]), roughness: 0.6, metalness: 0.05,
+            transparent: (c[3] ?? 1) < 1, opacity: c[3] ?? 1 });
+          node.traverse(o => { if (o.isMesh) o.material = mat; });
+        }
+        robotMeshGroup.add(node);
+      };
+      if (v.mesh_path) {
+        const url = '/api/pipeline/retarget/mesh/'
+          + v.mesh_path.split('/').map(encodeURIComponent).join('/');
+        loadRobotMesh(url).then(attach)
+          .catch(e => log && log('robot mesh ' + v.name + ': ' + e, 'warn'))
+          .finally(done);
+      } else if (v.primitive) {
+        const p = v.primitive;
+        let geo = null;
+        if (p.type === 'box') geo = new THREE.BoxGeometry(...(p.size || [0.05, 0.05, 0.05]));
+        else if (p.type === 'sphere') geo = new THREE.SphereGeometry(p.radius || 0.02, 16, 12);
+        else if (p.type === 'cylinder') geo = new THREE.CylinderGeometry(
+          p.radius || 0.02, p.radius || 0.02, p.length || 0.05, 16);
+        if (geo) attach(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x9aa4b2, roughness: 0.7 })));
+        done();
+      } else {
+        done();
+      }
+    }
+  }
+
   function rebuildRobot() {
+    clearRobotMeshes();
     clearGroup(robotGroup);
+    robotGroup.add(robotMeshGroup);
     if (!retarget?.ready) return;
     const linkMaterial = new THREE.MeshStandardMaterial({ color: 0x8aa4ba, roughness: 0.65 });
     const gripperMaterial = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.55 });
@@ -552,6 +682,7 @@ export function create(canvasEl, {
     baseAxes.position.set(...retarget.base_position);
     robotGroup.add(baseAxes);
     robotGroup.add(new THREE.HemisphereLight(0xffffff, 0x111827, 1.7));
+    loadRobotVisuals();
   }
 
   function updateRobotFrame(i) {
@@ -569,6 +700,17 @@ export function create(canvasEl, {
       joint.visible = !!points[k];
       if (points[k]) joint.position.set(...points[k]);
     });
+    if (robotMeshReady && retarget.robot_joint_placements?.length) {
+      const jp = retarget.robot_joint_placements[
+        Math.min(index, retarget.robot_joint_placements.length - 1)];
+      for (const node of robotMeshGroup.children) {
+        const m = jp?.[node.userData.parentJoint];
+        node.visible = !!m;
+        if (!m) continue;
+        node.matrix.copy(rowMajorMatrix4(m)).multiply(node.userData.local);
+        node.matrixWorldNeedsUpdate = true;
+      }
+    }
     const target = retarget.target_trajectory?.[index];
     const achieved = retarget.achieved_trajectory?.[index];
     if (target) targetDot.position.set(...target);
@@ -896,6 +1038,7 @@ export function create(canvasEl, {
 
   function dispose() {
     disposed = true;
+    robotMeshToken++;   // strand any in-flight mesh loads
     pause();
     if (raf) cancelAnimationFrame(raf);
     ro.disconnect();

@@ -408,12 +408,19 @@ def retarget_episode(
     )
     achieved_calib = robot_to_calibration(result.achieved_position, cfg.base_position)
     link_positions = []
+    joint_placements = []
     for frame, q in enumerate(result.q):
         kinematics.set_frame(frame)
         link_positions.append(
             robot_to_calibration(kinematics.joint_points(q), cfg.base_position)
         )
+        joint_placements.append(kinematics.joint_placements(q))
     link_positions = np.stack(link_positions)
+    # Robot-frame joint transforms -> calibration frame. Registration is
+    # translation-only (frames.py), so only the position column shifts.
+    joint_placements = np.stack(joint_placements)              # (T, nJ, 4, 4)
+    joint_placements[:, :, :3, 3] += np.asarray(cfg.base_position, dtype=np.float64)
+    robot_visuals = kinematics.visual_geometries()
     gripper_command, command_names = _gripper_commands(
         targets.gripper_closed, targets.confidence
     )
@@ -485,6 +492,8 @@ def retarget_episode(
         "position_error_m": result.position_error_m.astype(np.float32),
         "orientation_error_rad": result.orientation_error_rad.astype(np.float32),
         "link_positions_calibration": link_positions.astype(np.float32),
+        "robot_joint_placements_calibration": joint_placements.astype(np.float32),
+        "robot_visuals_json": json.dumps(robot_visuals),
         "solver_status": "converged" if result.converged else "max_iterations",
         "config_json": _config_json(cfg),
         "metrics_json": json.dumps(metrics, sort_keys=True),
