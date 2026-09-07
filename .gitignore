@@ -8,7 +8,8 @@ depth/
 data/
 debug/
 .slim/
-tools/
+tools/*
+!tools/hocap_download.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -255,3 +256,7 @@ data/skeleton_smoothed/
 skeleton_recs/
 data/skeleton_recs/
 NOTES.md
+
+# HO-Cap benchmark ingestion (viki/benchmark/hocap.py) — never commit dataset files
+data/datasets/hocap/
+data/raw_datasets/
