@@ -273,7 +273,21 @@ class CameraManager:
     def _hardware_timestamp_alignment(
         self, plan: dict[str, SyncRole],
     ) -> dict[str, object]:
-        """Verify the wire on actual K4A device timestamps, not host arrival."""
+        """Prove the sync wire from live frames.
+
+        Two facts, not the raw counter delta:
+
+        * A ``WIRED_SUBORDINATE`` running with ``synchronized_images_only`` cannot
+          deliver a single frame unless the master's pulses are reaching it, so a
+          subordinate that *is* producing frames is direct evidence the cable is
+          live.
+        * The K4A per-device timestamp counters have independent origins (each
+          starts at ``k4a_device_start_cameras``), so ``sub_ts - master_ts`` is an
+          arbitrary constant plus jitter — it must not be compared to
+          ``subordinate_delay_us``.  What a locked wire guarantees is that this
+          offset stays *stable*; free-running devices drift apart.  So we gate on
+          the offset's spread across the buffered window, not its value.
+        """
         master_id = next(
             (device_id for device_id, role in plan.items()
              if role.mode == WIRED_MASTER),
@@ -287,8 +301,14 @@ class CameraManager:
             return {
                 "verified": False,
                 "tolerance_us": _HW_SYNC_TIMESTAMP_TOLERANCE_US,
-                "error": f"{master_id} has no frame for HW timestamp verification",
+                "error": f"{master_id} has produced no frame yet",
             }
+        master_ts = sorted(int(f.timestamp_us) for f in master_frames)
+        # The two ring buffers are snapshotted from independent threads, so a
+        # few subordinate frames match a master frame one index off (~one 30 fps
+        # period away). Keep only offsets within a fraction of a frame period of
+        # the cluster median — real wired-sync jitter is well under 1 ms.
+        cluster_window_us = 8_000
 
         offsets: dict[str, dict[str, int]] = {}
         for subordinate_id, role in plan.items():
@@ -302,34 +322,32 @@ class CameraManager:
                     "tolerance_us": _HW_SYNC_TIMESTAMP_TOLERANCE_US,
                     "offsets": offsets,
                     "error": (
-                        f"{subordinate_id} has no frame for HW timestamp verification"
+                        f"{subordinate_id} is producing no frames — the master's "
+                        "hardware sync pulses are not reaching it (check the cable)"
                     ),
                 }
-            candidates = (
-                (
-                    int(sub.timestamp_us) - int(master.timestamp_us),
-                    abs(
-                        (int(sub.timestamp_us) - int(master.timestamp_us))
-                        - role.delay_us
-                    ),
-                )
-                for master in master_frames
-                for sub in subordinate_frames
+            matched = sorted(
+                int(f.timestamp_us) - min(master_ts, key=lambda m: abs(int(f.timestamp_us) - m))
+                for f in subordinate_frames
             )
-            actual, residual = min(candidates, key=lambda pair: pair[1])
+            median = matched[len(matched) // 2]
+            inliers = [o for o in matched if abs(o - median) <= cluster_window_us]
+            spread = max(inliers) - min(inliers)
             offsets[subordinate_id] = {
-                "actual_us": int(actual),
+                "actual_us": int(median),
                 "expected_us": int(role.delay_us),
-                "residual_us": int(residual),
+                "spread_us": int(spread),
+                "samples": len(inliers),
             }
-            if residual > _HW_SYNC_TIMESTAMP_TOLERANCE_US:
+            if len(inliers) >= 2 and spread > _HW_SYNC_TIMESTAMP_TOLERANCE_US:
                 return {
                     "verified": False,
                     "tolerance_us": _HW_SYNC_TIMESTAMP_TOLERANCE_US,
                     "offsets": offsets,
                     "error": (
-                        f"{subordinate_id} HW timestamp residual {residual}us exceeds "
-                        f"{_HW_SYNC_TIMESTAMP_TOLERANCE_US}us"
+                        f"{subordinate_id} inter-device offset is not locked "
+                        f"(spread {spread}us over {len(inliers)} frames > "
+                        f"{_HW_SYNC_TIMESTAMP_TOLERANCE_US}us) — not hardware-synced"
                     ),
                 }
         return {
@@ -497,17 +515,48 @@ class CameraManager:
             if configs_match:
                 return {device_id: "unchanged" for device_id in plan}
 
-            # A restart is one transaction. Stop the master first, then all
-            # subordinates; start in the inverse order. Any failure tears down
-            # the whole rig so no camera remains usable in a partial state.
+            # Bring the rig to the wanted config with the least disruption. A
+            # device already running with the correct role/config is left
+            # untouched, and a failure on one device does NOT tear the others
+            # down: the HW_SYNC requirement is still enforced where it matters
+            # (`hardware_sync_status().ready` below, and the record-start gate),
+            # so a partial rig is preview-only and cannot be recorded.
+            sub_delay = plan[next(iter(configured_subordinates))].delay_us
+
+            def _running_as_wanted(device_id: str, mode: int, delay_us: int) -> bool:
+                backend = self.get_backend(device_id)
+                if backend is None:
+                    return False
+                cfg = backend.config or {}
+                if any(cfg.get(key) != value for key, value in desired.items()):
+                    return False
+                return (
+                    int(cfg.get("wired_sync_mode", WIRED_STANDALONE)) == mode
+                    and int(cfg.get("subordinate_delay_us", 0)) == delay_us
+                    and bool(cfg.get("synchronized_images_only", False))
+                )
+
             was_active = set(self.active_device_ids())
-            self.stop(master_id)
-            for sub_id in subordinate_ids:
-                self.stop(sub_id)
+            subs_ok = {
+                sub_id: _running_as_wanted(sub_id, WIRED_SUBORDINATE, sub_delay)
+                for sub_id in subordinate_ids
+            }
+            master_ok = _running_as_wanted(master_id, WIRED_MASTER, 0)
+            # The master must not be firing triggers while a subordinate is
+            # mid-restart, so cycle it whenever any subordinate is (re)started.
+            restart_master = not master_ok or not all(subs_ok.values())
 
             outcomes: dict[str, str] = {}
-            try:
-                for sub_id in subordinate_ids:
+            errors: dict[str, str] = {}
+
+            if restart_master and master_id in self.active_device_ids():
+                self.stop(master_id)
+
+            for sub_id in subordinate_ids:
+                if subs_ok[sub_id]:
+                    outcomes[sub_id] = "unchanged"
+                    continue
+                try:
                     self.start(
                         sub_id,
                         fps=fps,
@@ -519,33 +568,53 @@ class CameraManager:
                         synchronized_images_only=True,
                     )
                     outcomes[sub_id] = "restarted" if sub_id in was_active else "started"
-
-                self.start(
-                    master_id,
-                    fps=fps,
-                    color_width=color_width,
-                    color_height=color_height,
-                    depth_mode=depth_mode,
-                    wired_sync_mode=WIRED_MASTER,
-                    synchronized_images_only=True,
-                )
-                outcomes[master_id] = "restarted" if master_id in was_active else "started"
-                deadline = time.monotonic() + 5.0
-                status = self.hardware_sync_status()
-                while not status["ready"] and time.monotonic() < deadline:
-                    time.sleep(0.05)
-                    status = self.hardware_sync_status()
-                if not status["ready"]:
-                    raise HardwareSyncError(
-                        "Kinect HW_SYNC did not verify after startup: "
-                        + str(status.get("error") or "unknown error")
+                except Exception as exc:  # keep the rest of the rig up
+                    errors[sub_id] = str(exc)
+                    logger.error(
+                        "kinect rig: subordinate %s failed to start: %s", sub_id, exc
                     )
-                return outcomes
-            except Exception:
-                self.stop(master_id)
-                for sub_id in subordinate_ids:
-                    self.stop(sub_id)
-                raise
+
+            if not restart_master:
+                outcomes[master_id] = "unchanged"
+            elif not errors:
+                try:
+                    self.start(
+                        master_id,
+                        fps=fps,
+                        color_width=color_width,
+                        color_height=color_height,
+                        depth_mode=depth_mode,
+                        wired_sync_mode=WIRED_MASTER,
+                        synchronized_images_only=True,
+                    )
+                    outcomes[master_id] = (
+                        "restarted" if master_id in was_active else "started"
+                    )
+                except Exception as exc:
+                    errors[master_id] = str(exc)
+                    logger.error(
+                        "kinect rig: master %s failed to start: %s", master_id, exc
+                    )
+
+            if errors:
+                raise HardwareSyncError(
+                    "Kinect HW_SYNC rig did not come up cleanly ("
+                    + "; ".join(f"{d}: {e}" for d, e in errors.items())
+                    + "). Cameras that did start were left running for preview; "
+                    "recording stays blocked until the whole rig verifies."
+                )
+
+            deadline = time.monotonic() + 5.0
+            status = self.hardware_sync_status()
+            while not status["ready"] and time.monotonic() < deadline:
+                time.sleep(0.05)
+                status = self.hardware_sync_status()
+            if not status["ready"]:
+                raise HardwareSyncError(
+                    "Kinect HW_SYNC did not verify after startup: "
+                    + str(status.get("error") or "unknown error")
+                )
+            return outcomes
 
     def start_configured_kinect_rig(
         self,

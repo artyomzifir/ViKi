@@ -85,27 +85,63 @@ def test_required_physical_jack_is_fail_closed():
         )
 
 
-def test_hardware_timestamp_mismatch_is_refused():
-    from viki.cameras.manager import CameraManager
-
-    plan = build_sync_plan(
+def _sync_plan_k1_master():
+    return build_sync_plan(
         ["kinect_0", "kinect_1"],
         {"master": "kinect_1", "subordinates": ["kinect_0"],
          "subordinate_delay_us": 160},
     )
 
-    class Worker:
-        def __init__(self, timestamp_us):
-            self._frame = type("Frame", (), {"timestamp_us": timestamp_us})()
 
-        def snapshot(self):
-            return [self._frame]
+class _TsWorker:
+    def __init__(self, *timestamps_us):
+        self._frames = [
+            type("Frame", (), {"timestamp_us": t})() for t in timestamps_us
+        ]
+
+    def snapshot(self):
+        return list(self._frames)
+
+
+def test_hw_sync_verified_when_subordinate_offset_is_locked():
+    from viki.cameras.manager import CameraManager
 
     mgr = CameraManager()
-    mgr._workers = {"kinect_1": Worker(1_000_000), "kinect_0": Worker(1_002_000)}
-    alignment = mgr._hardware_timestamp_alignment(plan)
+    # Independent counter origins (offset ~1 ms) but the offset is CONSTANT
+    # frame to frame → a locked wire. Value != subordinate_delay_us and that
+    # is fine: the counters do not share an origin.
+    mgr._workers = {
+        "kinect_1": _TsWorker(1_000_000, 1_033_333, 1_066_666),
+        "kinect_0": _TsWorker(1_001_050, 1_034_383, 1_067_716),
+    }
+    alignment = mgr._hardware_timestamp_alignment(_sync_plan_k1_master())
+    assert alignment["verified"] is True
+    assert alignment["offsets"]["kinect_0"]["spread_us"] <= 500
+
+
+def test_hw_sync_refused_when_offset_drifts_across_frames():
+    from viki.cameras.manager import CameraManager
+
+    mgr = CameraManager()
+    # Free-running: the subordinate clock pulls away from the master's a little
+    # more each frame → the offset is not locked.
+    mgr._workers = {
+        "kinect_1": _TsWorker(1_000_000, 1_033_333, 1_066_666),
+        "kinect_0": _TsWorker(1_000_100, 1_034_100, 1_069_100),
+    }
+    alignment = mgr._hardware_timestamp_alignment(_sync_plan_k1_master())
     assert alignment["verified"] is False
-    assert alignment["offsets"]["kinect_0"]["residual_us"] == 1840
+    assert "not hardware-synced" in alignment["error"]
+
+
+def test_hw_sync_refused_when_subordinate_produces_no_frames():
+    from viki.cameras.manager import CameraManager
+
+    mgr = CameraManager()
+    mgr._workers = {"kinect_1": _TsWorker(1_000_000), "kinect_0": _TsWorker()}
+    alignment = mgr._hardware_timestamp_alignment(_sync_plan_k1_master())
+    assert alignment["verified"] is False
+    assert "no frames" in alignment["error"]
 
 
 def test_manager_starts_whole_rig_subordinate_first(monkeypatch):
@@ -183,6 +219,91 @@ def test_manager_starts_whole_rig_subordinate_first(monkeypatch):
     assert mgr.get_backend("kinect_0").config["wired_sync_mode"] == WIRED_SUBORDINATE
     assert mgr.get_backend("kinect_1").config["wired_sync_mode"] == WIRED_MASTER
     assert mgr.require_hardware_sync_ready()["ready"] is True
+
+    # A second call with the rig already synced restarts nothing.
+    events.clear()
+    assert mgr.start_configured_kinect_rig(fps=15) == {
+        "kinect_0": "unchanged", "kinect_1": "unchanged",
+    }
+    assert events == []
+
+
+def test_kinect_rig_partial_failure_keeps_the_healthy_camera(monkeypatch):
+    from viki import config
+    from viki.cameras.manager import CameraManager
+
+    monkeypatch.setattr(
+        config, "KINECT_SYNC",
+        {"master": "kinect_1", "subordinates": ["kinect_0"],
+         "subordinate_delay_us": 160},
+        raising=False,
+    )
+    mgr = CameraManager()
+    monkeypatch.setattr(
+        mgr, "_detected_kinect_ids", lambda: ["kinect_0", "kinect_1"],
+    )
+    events = []
+
+    class Backend:
+        def __init__(self, device_id, cfg):
+            self.device_id = device_id
+            self._cfg = cfg
+
+        @property
+        def config(self):
+            return self._cfg
+
+        def start(self):
+            events.append(("start", self.device_id))
+
+        def stop(self):
+            events.append(("stop", self.device_id))
+
+    class Worker:
+        def __init__(self, backend):
+            self.backend = backend
+            self._frames = []
+
+        def start(self):
+            self.backend.start()
+            if self.backend.device_id == "kinect_1":
+                raise RuntimeError("k4a_device_open failed (result=1)")
+            ts = 1_000_000 + int(self.backend.config.get("subordinate_delay_us", 0))
+            self._frames = [type("Frame", (), {"timestamp_us": ts})()]
+
+        def stop(self):
+            self.backend.stop()
+
+        def join(self, timeout=8.0):
+            pass
+
+        def latest(self):
+            return None
+
+        def snapshot(self):
+            return list(self._frames)
+
+    def make_backend(device_id, fps, color_width, color_height, depth_mode, **kwargs):
+        mode = int(kwargs["wired_sync_mode"])
+        return Backend(device_id, {
+            "fps": fps, "color_width": color_width,
+            "color_height": color_height, "depth_mode": depth_mode,
+            **kwargs,
+            "sync_in_connected": mode == WIRED_SUBORDINATE,
+            "sync_out_connected": mode == WIRED_MASTER,
+        })
+
+    monkeypatch.setattr(CameraManager, "_make_backend", staticmethod(make_backend))
+    monkeypatch.setattr("viki.cameras.manager._CameraWorker", Worker)
+
+    with pytest.raises(HardwareSyncError, match="did not come up cleanly"):
+        mgr.start_configured_kinect_rig(fps=15)
+
+    # The subordinate that came up is left running for preview; the failed
+    # master is not, and nothing that started was torn down.
+    assert "kinect_0" in mgr.active_device_ids()
+    assert "kinect_1" not in mgr.active_device_ids()
+    assert ("stop", "kinect_0") not in events
 
 
 def test_direct_manager_start_cannot_request_wrong_role(monkeypatch):
