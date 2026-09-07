@@ -10,8 +10,9 @@ with an independent lifecycle:
     Invalidated by moving any camera.
 
 ``world_anchor.json``
-    ``T_world_display`` — applied **only** to visualisation, the working AABB and
-    the top-level export, never to the extrinsics solve, the cloud or hand-fit.
+    ``T_world_display`` — maps the rig to the installed calibration base. It is
+    applied at visualisation, working-AABB, retarget and export boundaries,
+    never to the extrinsics solve, stored cloud or stored hand-fit geometry.
     Carries ``extrinsics_hash`` (the extrinsics file it was computed against) so
     a stale anchor is detectable; recomputed automatically from its stored
     observations when the extrinsics change.
@@ -237,8 +238,9 @@ def compute_world_display(
     The board is solved in whichever observing camera has a known rig pose,
     lifted into the rig (reference-camera) frame, then re-centred on the board
     centre with +Z out of the table (:func:`canonical_board_extrinsics`). The
-    result is *only* a presentation transform — it never re-enters the solve,
-    the cloud or hand-fit.
+    result defines the installed calibration frame. It never re-enters the
+    camera solve, stored cloud or stored hand-fit geometry; consumers such as
+    the viewer and retarget stage apply it once at their frame boundary.
     """
     import cv2
 

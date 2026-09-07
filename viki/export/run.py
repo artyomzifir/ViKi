@@ -54,13 +54,15 @@ def _episode_frames(ep: Episode, fps: int) -> tuple[list[dict], str, int, list[s
     replay_path = ep.replay_h5 if ep.replay_h5.exists() else ep.plan_h5
     with load_archive(replay_path) as arc:
         q = np.asarray(
-            arc["q_attained"] if "q_attained" in arc else arc["q_scene_smooth"],
-            dtype=np.float32,
+            arc["q_attained"] if "q_attained" in arc else arc["q"], dtype=np.float32,
         )
-        grip = np.asarray(
-            arc["gripper_attained"] if "gripper_attained" in arc else np.zeros(len(q)),
-            dtype=np.float32,
-        )
+        if "gripper_attained" in arc:
+            grip = np.asarray(arc["gripper_attained"], dtype=np.float32)
+        else:
+            command = np.asarray(arc["gripper_command"], dtype=np.float32)
+            if command.ndim != 2 or command.shape[1] != 1:
+                raise ValueError("export currently supports binary gripper plans only")
+            grip = command[:, 0]
         resid = np.asarray(
             arc["controller_residual"] if "controller_residual" in arc else np.full(len(q), np.nan),
             dtype=np.float32,

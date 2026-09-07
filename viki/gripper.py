@@ -26,9 +26,10 @@ _MIN_LEN = 1e-6
 
 
 class Gripper(ABC):
-    """Maps a per-frame hand skeleton to a :class:`GripperState`."""
+    """Maps hand observations to state and state to robot command vectors."""
 
     name: str
+    command_names: tuple[str, ...]
 
     @abstractmethod
     def estimate(
@@ -49,6 +50,22 @@ class Gripper(ABC):
     def reset(self) -> None:
         """Drop any internal state. Default: nothing to do."""
 
+    @abstractmethod
+    def command(self, state: GripperState) -> np.ndarray:
+        """Encode one semantic state into this gripper's actuator space."""
+
+    def encode(self, states: list[GripperState]) -> np.ndarray:
+        """Encode a trajectory without exposing gripper-specific dimensions."""
+        if not states:
+            return np.empty((0, len(self.command_names)), dtype=np.float32)
+        values = np.stack([self.command(state) for state in states])
+        expected = (len(states), len(self.command_names))
+        if values.shape != expected:
+            raise ValueError(
+                f"{self.name} encoded {values.shape}, expected command shape {expected}"
+            )
+        return values.astype(np.float32, copy=False)
+
 
 class BinaryGripper(Gripper):
     """
@@ -62,6 +79,7 @@ class BinaryGripper(Gripper):
     """
 
     name = "binary"
+    command_names = ("closed",)
 
     def __init__(self, close_ratio: float = 0.55, open_ratio: float = 0.90) -> None:
         if not 0.0 < close_ratio < open_ratio:
@@ -101,6 +119,9 @@ class BinaryGripper(Gripper):
         # width: 0 at/below close_ratio, 1 at/above open_ratio.
         width = float(np.clip((d - self._close) / (self._open - self._close), 0.0, 1.0))
         return GripperState(closed=closed, width=width, confidence=1.0)
+
+    def command(self, state: GripperState) -> np.ndarray:
+        return np.asarray([1.0 if state.closed else 0.0], dtype=np.float32)
 
 
 _GRIPPERS: dict[str, type[Gripper]] = {"binary": BinaryGripper}

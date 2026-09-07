@@ -262,6 +262,11 @@ class _PerceiveReq(BaseModel):
     opts: dict = {}
 
 
+class _RetargetReq(BaseModel):
+    episodes: list[str]
+    opts: dict = {}
+
+
 class _ModelReq(BaseModel):
     model: str
 
@@ -383,16 +388,144 @@ async def prepare(req: _EpReq):
 
 
 @_ep.post("/retarget")
-async def retarget(req: _EpReq):
-    ep = _episode(req.episode)
-    logger.info("retarget: episode=%s robot=%s", ep.id, req.robot)
+async def retarget(req: _RetargetReq):
+    """Queue whole-trajectory IK for one or more prepared episodes."""
+    if not req.episodes:
+        raise HTTPException(400, "select at least one episode")
+    logger.info("retarget: %d episode(s), opts=%s", len(req.episodes), req.opts)
+    ids: list[str] = []
+    for episode_ref in req.episodes:
+        ep = _episode(episode_ref)
+        opts = dict(req.opts)
 
-    def _job():
-        from viki.retarget.run import retarget_episode
+        def _job(report, log, ep=ep, opts=opts):
+            from viki.retarget.run import retarget_episode
 
-        return retarget_episode(ep, robot=req.robot)
+            return retarget_episode(ep, options=opts, report=report, log=log)
 
-    return {"job_id": jobs.submit("retarget", _job, episode=ep.id)}
+        ids.append(jobs.submit("retarget", _job, episode=ep.id))
+    return {"job_ids": ids}
+
+
+@_ep.get("/retarget/robots")
+async def retarget_robots():
+    from viki.retarget.robots import ROBOT_CONFIGS
+
+    return {
+        "robots": [
+            {
+                "key": key,
+                "description": value.description,
+                "ee_frame": value.ee_frame,
+                "joints": list(value.joint_names),
+            }
+            for key, value in ROBOT_CONFIGS.items()
+        ]
+    }
+
+
+@_ep.get("/retarget/preview")
+async def retarget_preview(
+    robot: str = "ur10", x: float = 0.0, y: float = 0.0, z: float = 0.0,
+):
+    """Neutral URDF kinematics at a proposed calibration-frame base position."""
+    from viki.retarget.frames import robot_to_calibration
+    from viki.retarget.run import _load_robot_description
+    from viki.retarget.robots import normalize_robot
+    from viki.retarget.solver import PinocchioKinematics
+
+    cfg = normalize_robot(robot)
+    model = _load_robot_description(cfg.description)
+    kinematics = PinocchioKinematics(
+        model, cfg.ee_frame, collision_pairs=0, collision_min_distance_m=0.0,
+    )
+    base = np.asarray([x, y, z], dtype=np.float64)
+    points = robot_to_calibration(kinematics.joint_points(kinematics.q_reference), base)
+    return {
+        "ready": True,
+        "preview": True,
+        "robot": cfg.description,
+        "robot_key": robot,
+        "ee_frame": cfg.ee_frame,
+        "solver_status": "preview",
+        "n_frames": 1,
+        "fps": 15.0,
+        "base_position": base.tolist(),
+        "link_edges": kinematics.link_edges.tolist(),
+        "link_positions": [points.tolist()],
+        "target_trajectory": [],
+        "target_rotation": [],
+        "achieved_trajectory": [],
+        "achieved_rotation": [],
+        "position_error_m": [],
+        "orientation_error_rad": [],
+        "gripper_closed": [False],
+        "metrics": {},
+    }
+
+
+@_ep.get("/episode/{ep_id}/retarget")
+async def retarget_scene(ep_id: str):
+    """Return browser-ready robot and comparison trajectories from plan.h5."""
+    from viki.retarget.archive import load_archive
+
+    ep = _episode(ep_id)
+    if not ep.plan_h5.exists():
+        return {"ready": False, "id": ep.id}
+    try:
+        with load_archive(ep.plan_h5) as plan:
+            required = {
+                "q", "link_edges", "link_positions_calibration",
+                "target_position_calibration", "achieved_position_calibration",
+                "target_rotation_calibration", "achieved_rotation_calibration",
+                "position_error_m", "orientation_error_rad",
+                "base_position_calibration", "metrics_json", "solver_status",
+            }
+            missing = sorted(required.difference(plan.files))
+            if missing:
+                raise ValueError(f"plan uses a retired schema; missing {', '.join(missing)}")
+            metrics = json.loads(str(plan["metrics_json"]))
+            if "config_json" in plan:
+                plan_config = json.loads(str(plan["config_json"]))
+                metrics.setdefault(
+                    "orientation_weight",
+                    float((plan_config.get("weights") or {}).get("orientation", 0.0)),
+                )
+            return {
+                "ready": True,
+                "id": ep.id,
+                "robot": str(plan["robot"]),
+                "robot_key": str(plan["robot_key"]),
+                "ee_frame": str(plan["ee_frame"]),
+                "solver_status": str(plan["solver_status"]),
+                "n_frames": int(len(plan["q"])),
+                "fps": float(plan["fps"]),
+                "base_position": np.asarray(plan["base_position_calibration"]).tolist(),
+                "link_edges": np.asarray(plan["link_edges"], dtype=np.int32).tolist(),
+                "link_positions": np.asarray(
+                    plan["link_positions_calibration"], dtype=np.float32
+                ).tolist(),
+                "target_trajectory": np.asarray(
+                    plan["target_position_calibration"], dtype=np.float32
+                ).tolist(),
+                "target_rotation": np.asarray(
+                    plan["target_rotation_calibration"], dtype=np.float32
+                ).tolist(),
+                "achieved_trajectory": np.asarray(
+                    plan["achieved_position_calibration"], dtype=np.float32
+                ).tolist(),
+                "achieved_rotation": np.asarray(
+                    plan["achieved_rotation_calibration"], dtype=np.float32
+                ).tolist(),
+                "position_error_m": np.asarray(plan["position_error_m"], dtype=np.float32).tolist(),
+                "orientation_error_rad": np.asarray(
+                    plan["orientation_error_rad"], dtype=np.float32
+                ).tolist(),
+                "gripper_closed": np.asarray(plan["gripper_closed"], dtype=bool).tolist(),
+                "metrics": metrics,
+            }
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @_ep.get("/jobs/{job_id}")

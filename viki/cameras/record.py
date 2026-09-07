@@ -248,7 +248,8 @@ class SceneRecorder:
         (self._raw() / "intrinsics.json").write_text(json.dumps(intr, indent=2))
         (self._raw() / "extrinsics.json").write_text(json.dumps(extr, indent=2))
 
-        # World anchor — T_world_display for the viewer / AABB / export only.
+        # World anchor — rig -> installed calibration base for the viewer,
+        # working AABB, retarget and export boundaries.
         # extrinsics.json above is the RIG (reference-camera) frame; this is the
         # separate presentation transform. Absent ⇒ downstream treats it as
         # identity (rig frame == display frame).

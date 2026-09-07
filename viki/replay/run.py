@@ -38,11 +38,16 @@ def replay_episode(
         raise FileNotFoundError(f"no plan.h5 for episode {ep.id}; run retarget first")
 
     with load_archive(ep.plan_h5) as plan:
-        q_plan = np.asarray(plan["q_scene_smooth"], dtype=np.float64)
-        dt = float(plan["dt"]) if "dt" in plan else 1.0 / 30.0
-        robot = str(plan["robot"]) if "robot" in plan else ""
-
-    gripper = _load_gripper(ep, len(q_plan))
+        q_plan = np.asarray(plan["q"], dtype=np.float64)
+        dt = float(plan["dt"])
+        robot = str(plan["robot"])
+        command = np.asarray(plan["gripper_command"], dtype=np.float64)
+        gripper_model = str(plan["gripper_model"])
+    if gripper_model != "binary" or command.shape != (len(q_plan), 1):
+        raise ValueError(
+            "the current replay driver accepts only binary (T, 1) gripper commands"
+        )
+    gripper = command[:, 0] >= 0.5
 
     drv = load_driver(driver)
     try:
@@ -70,13 +75,3 @@ def replay_episode(
     mark_stage(ep, "replay", verdict=v.verdict, rejection_cause=v.cause, driver=driver)
     logger.info("replay %s: verdict=%s cause=%s", ep.id, v.verdict, v.cause or "-")
     return str(ep.replay_h5)
-
-
-def _load_gripper(ep: Episode, n: int) -> np.ndarray:
-    if ep.cln_npz.exists():
-        with np.load(ep.cln_npz) as d:
-            if "gripper" in d:
-                g = np.asarray(d["gripper"], dtype=bool)
-                if len(g) == n:
-                    return g
-    return np.zeros(n, dtype=bool)

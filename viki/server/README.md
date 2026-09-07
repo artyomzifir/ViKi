@@ -18,7 +18,7 @@ stream. Scenes are recorded, then extracted / prepared / retargeted offline.
 | `calibration.py` | intrinsics/extrinsics capture + solve + board preview | `CalibrationManager` |
 | `skeleton.py` | `POST /skeleton/capture_base/{id}` — static background depth for offline scene subtraction | — |
 | `recording.py` | `POST /record/start` → `SceneRecorder` in a background job | `cameras.record` |
-| `pipeline.py` | `GET /pipeline/episodes`, `GET /pipeline/episode/{id}/geometry`, `POST /pipeline/{extract,prepare,retarget}` jobs, `…/jobs/{id}` (+ legacy optimization/dataset routers) | `perception.extract`, `prepare`, `retarget`, `episode` |
+| `pipeline.py` | episode geometry/cloud, batch `POST /pipeline/{perceive,retarget}`, retarget robot/plan scene APIs, and jobs | `perception`, `prepare`, `retarget`, `episode` |
 | `replay.py` | `POST /replay` job | `viki.replay` |
 | `label.py` | `GET/POST /label` | `viki.labeling` |
 | `export.py` | `POST /export` job | `viki.export` |

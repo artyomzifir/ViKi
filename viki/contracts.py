@@ -522,6 +522,44 @@ CLN_OPTIONAL_KEYS: tuple[str, ...] = (
     "hand_fit_metrics_json",  # scalar JSON — episode-level diagnostics
 )
 
+# Canonical retarget output.  Scene geometry is intentionally part of the plan:
+# the browser never needs Pinocchio or a second interpretation of the URDF.
+PLAN_KEYS: tuple[str, ...] = (
+    "schema_version",
+    "coordinate_frame",
+    "timestamps",
+    "fps",
+    "dt",
+    "robot",
+    "robot_key",
+    "ee_frame",
+    "joint_names_json",
+    "link_edges",
+    "T_calibration_rig",
+    "base_position_calibration",
+    "q",
+    "q_approach",
+    "joint_velocity",
+    "joint_acceleration",
+    "gripper_model",
+    "gripper_command_names_json",
+    "gripper_command",
+    "gripper_closed",
+    "omega",
+    "target_position_calibration",
+    "target_rotation_calibration",
+    "target_position_robot",
+    "achieved_position_calibration",
+    "achieved_rotation_calibration",
+    "position_error_m",
+    "orientation_error_rad",
+    "link_positions_calibration",
+    "solver_status",
+    "config_json",
+    "metrics_json",
+    "source_pose",
+)
+
 
 def cln_pose_keys(files, source: str) -> tuple[str, str]:
     """Resolve the configured wrist-pose source without mutating the artifact.

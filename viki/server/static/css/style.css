@@ -437,6 +437,42 @@ button.armed { border-color: var(--yellow); color: var(--yellow); }
 .perc-bar i { display: block; height: 100%; background: var(--accent); }
 .perc-job button { padding: 1px 5px; font-size: 10px; }
 
+/* ── Retarget tab: same scene grammar, denser solver controls ────────── */
+.retarget-tab {
+  height: 100%; display: grid;
+  grid-template-columns: clamp(210px, 18vw, 270px) minmax(0, 1fr) clamp(300px, 25vw, 390px);
+  gap: 1px; background: var(--border);
+}
+.ret-runcol {
+  background: var(--surface); padding: 10px; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ret-runcol .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ret-runcol .cfg-row select { width: 130px; }
+.ret-eps { flex: 1; min-height: 80px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+.ret-viewer { position: relative; background: #0b0d10; min-width: 0; min-height: 0; }
+.ret-viewer .viewer-canvas { position: absolute; inset: 0; overflow: hidden; }
+.ret-side {
+  background: var(--surface); padding: 10px; overflow-y: auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ret-side .calib-sec { padding: 9px 10px; gap: 6px; }
+.ret-side .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ret-side .cfg-row select, .ret-side .cfg-row input[type="number"] { width: 145px; }
+.ret-vector {
+  display: grid; grid-template-columns: 1fr repeat(3, minmax(48px, 62px));
+  align-items: end; gap: 5px; font-size: 10px; color: var(--muted);
+}
+.ret-vector > span { align-self: center; text-transform: capitalize; }
+.ret-vector > span i { display: block; font-style: normal; color: color-mix(in srgb, var(--muted) 65%, transparent); }
+.ret-vector label { display: flex; flex-direction: column; gap: 2px; }
+.ret-vector input { width: 100%; min-width: 0; }
+.ret-metrics {
+  top: 12px; right: 12px; padding: 8px 10px; max-width: 240px;
+  display: flex; flex-direction: column; gap: 3px; font-size: 10px; color: var(--muted);
+}
+.ret-metrics b { color: var(--text); font-weight: 600; }
+
 /* ── calibration setup wizard (S7) ──────────────────────────────────── */
 .calib-wizard .wiz-step { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px;
   display: flex; flex-direction: column; gap: 6px; }

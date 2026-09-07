@@ -1,37 +1,51 @@
-# viki.retarget — IK to a robot trajectory
+# `viki.retarget` — calibrated poses to a robot plan
 
-**Stage 4** · `cln.npz` → `plan.h5`
+The PoC consumes the hand trajectory in `cln.npz` and writes one self-contained
+`plan.h5`. The frame boundary is explicit:
 
-Take the end-effector targets, move them into the robot base frame, and solve
-differential IK (PINK on Pinocchio) for a joint trajectory: an approach from
-neutral to the first target, then scene tracking, then a Savitzky-Golay pass.
+- `cln.npz` has `coordinate_frame == "rig"` (reference-camera rig);
+- protected V1 artifacts labelled `robot_base` are recognised as the historical
+  metadata bug they are; their arrays still take this same rig-frame path;
+- the episode's `raw/world_anchor.json:T_world_display` maps rig coordinates to
+  the installed calibration base;
+- robot axes are parallel to calibration axes;
+- `RETARGET_ROBOT_BASE_POSITION = [x,y,z]` is the robot origin in that frame;
+- object pose and object-relative motion are deliberately not used yet.
 
-## Files
+`T_calibration,EE = T_calibration,rig · T_rig,hand · T_hand,EE`, after which
+positions are translated into the robot base frame for IK. The anchor is applied
+exactly once. No scale, recenter, reflection, or implicit MediaPipe-to-robot
+transform exists in this stage.
 
-| file | what |
-|---|---|
-| `run.py` | `retarget` / `retarget_from_poses` / `retarget_episode(ep, robot)` — the IK loop and archive write |
-| `robots.py` | `RobotConfig` (description, EE frame, joint names), `ROBOT_CONFIGS` (`ur3` `ur5` `ur10` `ur5e` `ur10e` `iiwa14`), `ROBOT_ALIASES`, `normalize_robot` |
-| `frames.py` | `world_to_robot(cfg)` — `T^W_R` from `RETARGET_BASE_ROTATION` / `RETARGET_BASE_TRANSLATION`. Fixed config constant (a hand-eye procedure, paper §3.3, would produce it). |
-| `cost.py` | seam for the eq. 4 cost functional — see **Stubbed** |
-| `archive.py` | `.h5` / `.npz` trajectory archive read/write (`Hdf5Archive`, `write_hdf5_archive`) |
-| `evaluate.py` | FK-based tracking-error evaluation + debug plots (dev only) |
-| smoothing | `viki.dsp` |
+Orientation is part of the default objective. A provisional fixed UR10
+embodiment rotation `T_hand,EE` is stored explicitly in configuration rather
+than treating the palm and URDF `wrist_3_link` axes as identical. The offset is
+editable and must eventually be replaced by a physical hand-to-tool calibration.
 
-## Contract
+## Solver
 
-- **in:** `cln.npz` (`positions`, `rotations`, `valid`) + `RunConfig` built from the `RETARGET_*` config keys.
-- **out:** `plan.h5` — `q_approach`, `q_scene_raw`, `q_scene_smooth`,
-  `ee_target_pos` / `ee_target_rot`, `pos_err_smooth` / `ori_err_smooth`,
-  `fps`, `dt`, `robot`, `ee_frame`, config echo. This is the *synthesised*
-  trajectory and its *model* tracking error, not what a robot attained.
+`solver.solve_trajectory` optimises the full `q[0:T]` trajectory. Every
+Gauss–Newton iteration builds one sparse QP with:
 
-## Stubbed
+- confidence-weighted Huber SE(3) tracking;
+- velocity, acceleration and neutral-posture regularisation;
+- Levenberg–Marquardt damping;
+- hard joint and velocity limits;
+- linearised Pink self-collision barriers from URDF collision geometry.
 
-The cost functional in the code is the two working PINK tasks (frame + posture).
-`cost.build_tasks` / `huber_residual` / `acceleration_penalty` /
-`collision_barriers` raise `NotImplementedError` — the Huber robustifier, the
-explicit `λ_a‖q_t − 2q_{t−1} + q_{t−2}‖²` term, and the collision barriers of
-paper eq. 4 are not wired in; joint smoothing is a post-hoc Savitzky-Golay pass.
+UR continuous joints are optimised as physical joint angles (`nv`), not as
+Pinocchio's internal `[cos(q), sin(q)]` configuration embedding. OSQP solves
+the sparse trajectory problem.
 
-Full IK needs Pinocchio / PINK (`require_ik_dependencies()` gives the message).
+## Output and scene
+
+`plan.h5` schema v2 contains `q`, the generic `(T,D)` `gripper_command`, desired
+and achieved EE poses, errors, joint derivatives, solver/config metadata, and
+URDF-derived joint origins plus parent edges for every frame. The Retarget tab
+uses that geometry in the shared Three.js scene. Rig-space cloud/input layers
+receive the display anchor; calibration-space desired EE, achieved EE, and robot
+do not receive it a second time.
+
+`Gripper` owns the command-vector contract. `BinaryGripper` currently produces
+one `closed` dimension; an anthropomorphic implementation can add actuator
+dimensions without changing retarget orchestration or the plan container.

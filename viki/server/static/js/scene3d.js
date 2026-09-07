@@ -1,4 +1,4 @@
-// scene3d.js — the shared three.js scene for the Viewer and Extract tabs.
+// scene3d.js — the shared three.js scene for Viewer, Extract, and Retarget.
 // One episode at a time: the ChArUco world (board on the Z=0 plane at the
 // origin), the per-frame coloured point cloud, per-camera lifted hand skeletons,
 // the fused+smoothed skeleton that goes to IK, the wrist trajectory, a palm
@@ -21,6 +21,7 @@ const CAM_PALETTE = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0]
 const DEFAULT_LAYERS = {
   cloud: true, perCamera: false, fused: true, trajectory: true,
   palm: true, frusta: true, board: true, bbox: false, handFit: false,
+  robot: true, targetTrajectory: true, achievedTrajectory: true,
 };
 
 export function create(canvasEl, {
@@ -44,14 +45,16 @@ export function create(canvasEl, {
   // ── static world ──────────────────────────────────────────────────────
   // Origin triad as thin cylinders (WebGL ignores LineMaterial.linewidth), so
   // the axes actually read as ~2x an AxesHelper hairline.
-  function fatAxes(len = 0.15, radius = 0.003) {
+  function fatAxes(len = 0.15, radius = 0.003, opacity = 1) {
     const g = new THREE.Group();
     const arm = (color, ax) => {
       const geo = new THREE.CylinderGeometry(radius, radius, len, 12);
       geo.translate(0, len / 2, 0);            // base at origin, tip at +len
       if (ax === 'x') geo.rotateZ(-Math.PI / 2);
       if (ax === 'z') geo.rotateX(Math.PI / 2);
-      return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color }));
+      return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color, transparent: opacity < 1, opacity, depthWrite: opacity >= 1,
+      }));
     };
     g.add(arm(0xff0000, 'x'), arm(0x00ff00, 'y'), arm(0x0000ff, 'z'));
     return g;
@@ -67,11 +70,17 @@ export function create(canvasEl, {
   const bboxGroup = new THREE.Group();
   scene.add(bboxGroup);
 
-  // Everything data-driven lives in the RIG (reference-camera) frame; the
-  // world anchor's T_world_display is applied here, for presentation only.
+  // Sensor-derived data lives in the RIG (reference-camera) frame; the world
+  // anchor maps it into the installed calibration frame for presentation.
   const worldGroup = new THREE.Group();
   worldGroup.matrixAutoUpdate = false;
   scene.add(worldGroup);
+
+  // Retarget output is already written in that installed calibration frame.
+  // Keeping it outside worldGroup is essential: applying T_world_display again
+  // would rotate and translate the robot a second time.
+  const calibrationGroup = new THREE.Group();
+  scene.add(calibrationGroup);
 
   const frustaGroup = new THREE.Group();
   worldGroup.add(frustaGroup);
@@ -89,6 +98,40 @@ export function create(canvasEl, {
     new THREE.LineBasicMaterial({ color: 0x9aa4b2 })
   );
   worldGroup.add(trajLine);
+
+  // Retarget overlay. Link origins and parent edges are derived from the URDF
+  // by Pinocchio on the backend, so this scene remains dependency-free and the
+  // exact same kinematics that produced the plan is what gets displayed.
+  const robotGroup = new THREE.Group();
+  calibrationGroup.add(robotGroup);
+  const targetTrajLine = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0xf472b6 })
+  );
+  const achievedTrajLine = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0x22d3ee })
+  );
+  calibrationGroup.add(targetTrajLine, achievedTrajLine);
+  const targetDot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.014, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xf472b6, wireframe: true })
+  );
+  const achievedDot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.010, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+  );
+  calibrationGroup.add(targetDot, achievedDot);
+  targetDot.visible = achievedDot.visible = false;
+
+  // A position line cannot show whether SO(3) is being tracked.  Draw both
+  // end-effector frames at the current sample: target is longer/translucent,
+  // achieved is shorter/solid.  Their matching RGB axes coincide only when
+  // the robot has matched the target orientation.
+  const targetPoseFrame = fatAxes(0.10, 0.0022, 0.48);
+  const achievedPoseFrame = fatAxes(0.07, 0.0032);
+  targetPoseFrame.visible = achievedPoseFrame.visible = false;
+  calibrationGroup.add(targetPoseFrame, achievedPoseFrame);
 
   const fusedSkel = new THREE.LineSegments(
     new THREE.BufferGeometry(),
@@ -134,7 +177,7 @@ export function create(canvasEl, {
   worldGroup.add(gripDot);
 
   // ── state ─────────────────────────────────────────────────────────────
-  let geo = null, cmeta = null, epId = null, variantId = 'active', episodes = [], epIndex = -1;
+  let geo = null, cmeta = null, retarget = null, epId = null, variantId = 'active', episodes = [], epIndex = -1;
   let frame = 0, playing = false, playTimer = 0, playSerial = 0, playPending = false;
   let colorMode = initColor || 'rgb', stride = initStride || 1;
   let layers = { ...DEFAULT_LAYERS, ...(initLayers || {}) };
@@ -167,7 +210,7 @@ export function create(canvasEl, {
 
   // ── helpers ───────────────────────────────────────────────────────────
   function fps() { return cmeta?.fps || geo?.fps || 15; }
-  function nFrames() { return cmeta?.n_frames || geo?.n_frames || 0; }
+  function nFrames() { return retarget?.n_frames || cmeta?.n_frames || geo?.n_frames || 0; }
 
   function clearGroup(g) {
     while (g.children.length) {
@@ -190,6 +233,15 @@ export function create(canvasEl, {
     gripDot.visible = layers.palm && gripDot.userData.have;
     handBones.visible = layers.handFit;
     handJoints.visible = layers.handFit;
+    robotGroup.visible = layers.robot && !!retarget?.ready;
+    targetTrajLine.visible = layers.targetTrajectory && !!retarget?.ready;
+    targetDot.visible = layers.targetTrajectory && !!retarget?.target_trajectory?.length;
+    targetPoseFrame.visible = layers.targetTrajectory && !!retarget?.ready
+      && !!targetPoseFrame.userData.have;
+    achievedTrajLine.visible = layers.achievedTrajectory && !!retarget?.ready;
+    achievedDot.visible = layers.achievedTrajectory && !!retarget?.achieved_trajectory?.length;
+    achievedPoseFrame.visible = layers.achievedTrajectory && !!retarget?.ready
+      && !!achievedPoseFrame.userData.have;
   }
 
   function applyWorldDisplay(m) {
@@ -274,6 +326,98 @@ export function create(canvasEl, {
     trajLine.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
     trajLine.geometry.setDrawRange(0, arr.length / 3);
     if (arr.length) trajLine.geometry.computeBoundingSphere();
+  }
+
+  function setLineTrajectory(line, points) {
+    const segments = [];
+    const finite = p => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
+    for (let i = 1; i < (points?.length || 0); i++) {
+      if (finite(points[i - 1]) && finite(points[i])) segments.push(...points[i - 1], ...points[i]);
+    }
+    const arr = new Float32Array(segments);
+    line.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    line.geometry.setDrawRange(0, arr.length / 3);
+    if (arr.length) line.geometry.computeBoundingSphere();
+  }
+
+  function placeCylinder(mesh, a, b, radius = 0.012) {
+    const start = new THREE.Vector3().fromArray(a), end = new THREE.Vector3().fromArray(b);
+    const delta = new THREE.Vector3().subVectors(end, start);
+    const length = delta.length();
+    mesh.visible = Number.isFinite(length) && length > 1e-7;
+    if (!mesh.visible) return;
+    mesh.position.addVectors(start, end).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.multiplyScalar(1 / length));
+    mesh.scale.set(radius, length, radius);
+  }
+
+  function placePoseFrame(group, position, rotation) {
+    const havePosition = Array.isArray(position) && position.length === 3
+      && position.every(Number.isFinite);
+    const haveRotation = Array.isArray(rotation) && rotation.length === 3
+      && rotation.every(row => Array.isArray(row) && row.length === 3
+        && row.every(Number.isFinite));
+    group.userData.have = havePosition && haveRotation;
+    if (!group.userData.have) return;
+    group.position.set(...position);
+    group.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
+      rotation[0][0], rotation[0][1], rotation[0][2], 0,
+      rotation[1][0], rotation[1][1], rotation[1][2], 0,
+      rotation[2][0], rotation[2][1], rotation[2][2], 0,
+      0, 0, 0, 1));
+  }
+
+  function rebuildRobot() {
+    clearGroup(robotGroup);
+    if (!retarget?.ready) return;
+    const linkMaterial = new THREE.MeshStandardMaterial({ color: 0x8aa4ba, roughness: 0.65 });
+    const jointMaterial = new THREE.MeshStandardMaterial({ color: 0xdbeafe, roughness: 0.45 });
+    for (const _edge of retarget.link_edges || []) {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 12), linkMaterial);
+      mesh.userData.kind = 'robot-link';
+      robotGroup.add(mesh);
+    }
+    const count = retarget.link_positions?.[0]?.length || 0;
+    for (let i = 0; i < count; i++) {
+      const joint = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 10), jointMaterial);
+      joint.userData.kind = 'robot-joint';
+      robotGroup.add(joint);
+    }
+    const baseAxes = fatAxes(0.10, 0.004);
+    baseAxes.userData.kind = 'robot-base';
+    baseAxes.position.set(...retarget.base_position);
+    robotGroup.add(baseAxes);
+    robotGroup.add(new THREE.HemisphereLight(0xffffff, 0x111827, 1.7));
+  }
+
+  function updateRobotFrame(i) {
+    if (!retarget?.ready) return;
+    const index = Math.max(0, Math.min(i, retarget.n_frames - 1));
+    const points = retarget.link_positions?.[index] || [];
+    const links = robotGroup.children.filter(child => child.userData.kind === 'robot-link');
+    const joints = robotGroup.children.filter(child => child.userData.kind === 'robot-joint');
+    (retarget.link_edges || []).forEach(([a, b], k) => {
+      if (points[a] && points[b] && links[k]) placeCylinder(links[k], points[a], points[b]);
+    });
+    joints.forEach((joint, k) => {
+      joint.visible = !!points[k];
+      if (points[k]) joint.position.set(...points[k]);
+    });
+    const target = retarget.target_trajectory?.[index];
+    const achieved = retarget.achieved_trajectory?.[index];
+    if (target) targetDot.position.set(...target);
+    if (achieved) achievedDot.position.set(...achieved);
+    placePoseFrame(targetPoseFrame, target, retarget.target_rotation?.[index]);
+    placePoseFrame(achievedPoseFrame, achieved, retarget.achieved_rotation?.[index]);
+  }
+
+  function setRetargetData(data) {
+    retarget = data?.ready ? data : null;
+    rebuildRobot();
+    setLineTrajectory(targetTrajLine, retarget?.target_trajectory || []);
+    setLineTrajectory(achievedTrajLine, retarget?.achieved_trajectory || []);
+    updateRobotFrame(frame);
+    applyLayerVisibility();
   }
 
   function frameCamera() {
@@ -477,6 +621,7 @@ export function create(canvasEl, {
       gripDot.position.set(o[0], o[1], o[2] + 0.03);
       gripDot.material.color.set(fg?.gripper ? 0xf87171 : 0x4ade80);
     }
+    updateRobotFrame(fi);
     applyLayerVisibility();
   }
 
@@ -489,6 +634,7 @@ export function create(canvasEl, {
     if (episodeChanged) {
       cloudCache.clear();
       cmeta = null;
+      setRetargetData(null);
       clearCloud();
     }
     epId = id;
@@ -633,7 +779,7 @@ export function create(canvasEl, {
   }
 
   return {
-    loadEpisode, setFrame, step, play, pause, stop, togglePlay,
+    loadEpisode, setFrame, step, play, pause, stop, togglePlay, setRetargetData,
     skipSeconds, nextEpisode, setLayer, setLayers, setColorMode, setStride,
     onFrame, dispose,
     get frame() { return frame; },

@@ -10,6 +10,7 @@ dependencies = [
     "pin-pink>=4.0",
     "pyrealsense2>=2.58",
     "qpsolvers>=4.4",
+    "osqp>=0.6",
     "quadprog>=0.1",
     "robot_descriptions>=2.0",
     "fastapi>=0.111",

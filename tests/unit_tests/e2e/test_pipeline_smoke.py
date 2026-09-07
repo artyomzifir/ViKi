@@ -63,7 +63,11 @@ def test_pipeline_smoke(tmp_path):
 
     write_hdf5_archive(
         ep.plan_h5,
-        {"q_scene_smooth": np.zeros((n_frames, 6)), "dt": 1 / 30.0, "robot": ""},
+        {
+            "q": np.zeros((n_frames, 6)), "dt": 1 / 30.0, "robot": "",
+            "gripper_model": "binary",
+            "gripper_command": np.zeros((n_frames, 1), dtype=np.float32),
+        },
     )
     mark_stage(ep, "retarget", robot="")
 

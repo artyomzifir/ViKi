@@ -41,7 +41,11 @@ def test_replay_episode_writes_replay_h5(tmp_path):
     ep.raw_dir.mkdir(parents=True)
     write_hdf5_archive(
         ep.plan_h5,
-        {"q_scene_smooth": np.zeros((15, 6)), "dt": 1 / 30.0, "robot": "ur3_description"},
+        {
+            "q": np.zeros((15, 6)), "dt": 1 / 30.0,
+            "robot": "ur3_official_description", "gripper_model": "binary",
+            "gripper_command": np.zeros((15, 1), dtype=np.float32),
+        },
     )
     out = replay_episode(ep, driver="dryrun")
     assert out == str(ep.replay_h5) and ep.replay_h5.exists()

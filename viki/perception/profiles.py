@@ -69,6 +69,8 @@ _PROFILES = {
         sg_polyorder=2,
         confidence_alpha=1.0,
         gripper="binary",
+        # Historical label retained because V1 manifests are immutable. The
+        # arrays are physically in rig coordinates; retarget migrates the label.
         coordinate_frame="robot_base",
         hand_fit=False,
         pose_source="landmarks",
@@ -103,6 +105,8 @@ _PROFILES = {
         sg_polyorder=2,
         confidence_alpha=1.0,
         gripper="binary",
+        # Historical label retained because V1 manifests are immutable. The
+        # arrays are physically in rig coordinates; retarget migrates the label.
         coordinate_frame="robot_base",
         # This flag names the retired dense-cloud fitter.  It must remain off:
         # the stable profile uses only the post-process below.

@@ -1,71 +1,54 @@
-"""
-viki.retarget.cost
-------------------
-Single assembly point for the retargeting cost functional as PINK tasks
-(paper eq. 4).
-
-Terms, in order of effect:
-
-  * **frame task** — the data term: end-effector pose tracks the human target.
-  * **acceleration regulariser λ_a** — a ``PostureTask`` whose per-frame target
-    is the geodesic constant-velocity extrapolation ``q_pred`` of the last two
-    configurations, so its residual is exactly
-    ``‖q_t − q_pred‖² = ‖q_t − 2q_{t−1} + q_{t−2}‖²`` (discrete acceleration).
-    This is what replaces the old post-hoc Savitzky–Golay pass on the joint
-    trajectory — the smoothness is now *in* the solve, C² by construction.
-
-  * **Huber robustifier** ρ_δ on the data residual and the **collision /
-    self-collision barriers** h_j — a later pass; they refine but do not change
-    the structure. Stubs below.
-"""
+"""Pure trajectory-cost helpers used by the batch retarget solver."""
 
 from __future__ import annotations
 
-from typing import Any
+import numpy as np
+from scipy import sparse
 
 
-def build_tasks(pin: Any, robot: Any, cfg: Any, *, orientation_cost: float):
-    """PINK tasks for one differential-IK solve.
-
-    Returns ``(frame_task, accel_task, task_list)``. The caller sets
-    ``frame_task``'s target per frame and ``accel_task``'s target per frame
-    from :func:`accel_reference`; ``task_list`` is what goes to ``solve_ik``.
-    """
-    from pink.tasks import FrameTask, PostureTask
-
-    frame_task = FrameTask(
-        cfg.robot.ee_frame,
-        position_cost=cfg.ik_position_cost,
-        orientation_cost=orientation_cost,
-    )
-    accel_task = PostureTask(cost=float(cfg.ik_accel_cost))  # λ_a
-    return frame_task, accel_task, [frame_task, accel_task]
+def huber_loss(norms: np.ndarray, delta: float) -> np.ndarray:
+    """Huber ``rho_delta`` evaluated on non-negative residual norms."""
+    x = np.asarray(norms, dtype=np.float64)
+    if delta <= 0.0:
+        raise ValueError("Huber delta must be positive")
+    return np.where(x <= delta, 0.5 * x * x, delta * (x - 0.5 * delta))
 
 
-def accel_reference(pin: Any, model: Any, q_prev: Any, q_prev2: Any):
-    """Geodesic constant-velocity extrapolation of the last two configs:
-    ``q_pred = q_{t-1} ⊕ (q_{t-1} ⊖ q_{t-2})``. Pulling ``q_t`` toward this
-    penalises the discrete acceleration on whatever joint manifold the model
-    uses (revolute, free-flyer, …). With no history, returns ``q_prev``.
-    """
-    import numpy as np
-
-    if q_prev is None:
-        return None
-    if q_prev2 is None:
-        return np.asarray(q_prev, dtype=np.float64).copy()
-    dv = pin.difference(model, q_prev2, q_prev)          # tangent q_{t-2} → q_{t-1}
-    return np.asarray(pin.integrate(model, q_prev, dv), dtype=np.float64)
+def huber_irls_weights(norms: np.ndarray, delta: float) -> np.ndarray:
+    """Weights whose weighted least squares majorises the Huber data term."""
+    x = np.asarray(norms, dtype=np.float64)
+    if delta <= 0.0:
+        raise ValueError("Huber delta must be positive")
+    return np.sqrt(np.where(x <= delta, 1.0, delta / np.maximum(x, 1e-12)))
 
 
-# ── later pass (paper eq. 4, §3.7) ──────────────────────────────────────────
+def difference_matrix(n_frames: int, order: int, dt: float) -> sparse.csr_matrix:
+    """First/second temporal finite-difference matrix, scaled to SI time."""
+    if n_frames < 1:
+        raise ValueError("n_frames must be positive")
+    if order not in (1, 2):
+        raise ValueError("only first and second differences are supported")
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise ValueError("dt must be positive")
+    if n_frames <= order:
+        return sparse.csr_matrix((0, n_frames), dtype=np.float64)
+    if order == 1:
+        return sparse.diags(
+            (-np.ones(n_frames - 1), np.ones(n_frames - 1)),
+            (0, 1), shape=(n_frames - 1, n_frames), format="csr",
+        ) / dt
+    return sparse.diags(
+        (np.ones(n_frames - 2), -2.0 * np.ones(n_frames - 2), np.ones(n_frames - 2)),
+        (0, 1, 2), shape=(n_frames - 2, n_frames), format="csr",
+    ) / (dt * dt)
 
 
-def huber_residual(*_args, **_kwargs):
-    raise NotImplementedError("Huber data-term robustifier ρ_δ not implemented yet")
-
-
-def collision_barriers(*_args, **_kwargs):
-    raise NotImplementedError(
-        "collision / self-collision control-barrier functions h_j not implemented yet"
+def joint_difference_matrix(
+    n_frames: int, n_joints: int, order: int, dt: float
+) -> sparse.csr_matrix:
+    """Temporal difference matrix for a frame-major flattened joint vector."""
+    return sparse.kron(
+        difference_matrix(n_frames, order, dt),
+        sparse.eye(n_joints, format="csr"),
+        format="csr",
     )

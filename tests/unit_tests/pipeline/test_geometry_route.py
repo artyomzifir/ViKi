@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from viki.episode import new_episode
+from viki.retarget.archive import write_hdf5_archive
 
 
 def _synthetic(ep, T=8):
@@ -195,3 +196,41 @@ def test_geometry_404_for_missing_episode(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(geometry("nope", include_raw=0))
     assert exc.value.status_code == 404
+
+
+def test_retarget_scene_includes_target_and_achieved_orientation(tmp_path, monkeypatch):
+    episodes = tmp_path / "episodes"
+    monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
+    ep = new_episode(episodes)
+    rotations = np.stack([
+        np.eye(3),
+        np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]),
+    ]).astype(np.float32)
+    write_hdf5_archive(ep.plan_h5, {
+        "q": np.zeros((2, 6), np.float32),
+        "link_edges": np.array([[0, 1]], np.int32),
+        "link_positions_calibration": np.zeros((2, 2, 3), np.float32),
+        "target_position_calibration": np.zeros((2, 3), np.float32),
+        "target_rotation_calibration": rotations,
+        "achieved_position_calibration": np.ones((2, 3), np.float32),
+        "achieved_rotation_calibration": rotations[::-1],
+        "position_error_m": np.zeros(2, np.float32),
+        "orientation_error_rad": np.zeros(2, np.float32),
+        "base_position_calibration": np.zeros(3, np.float32),
+        "metrics_json": json.dumps({}),
+        "solver_status": "converged",
+        "robot": "robot.urdf",
+        "robot_key": "ur3",
+        "ee_frame": "tool0",
+        "fps": np.float32(15),
+        "gripper_closed": np.zeros(2, bool),
+    }, schema="viki_plan_hdf5_v2")
+
+    from viki.server.routes.pipeline import retarget_scene
+
+    payload = asyncio.run(retarget_scene(ep.id))
+    assert np.asarray(payload["target_rotation"]).shape == (2, 3, 3)
+    assert np.asarray(payload["achieved_rotation"]).shape == (2, 3, 3)
+    np.testing.assert_allclose(payload["target_rotation"], rotations)
+    np.testing.assert_allclose(payload["achieved_rotation"], rotations[::-1])

@@ -1,8 +1,10 @@
-"""Small HDF5 archive helpers for retarget outputs."""
+"""Small, atomic HDF5 archive helpers for trajectory artifacts."""
 
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import tempfile
 from typing import Any
 
 import h5py
@@ -39,28 +41,39 @@ class Hdf5Archive:
 
 
 def load_archive(path: Path):
-    """Open an HDF5 trajectory archive, or a legacy npz archive."""
-    suffix = path.suffix.lower()
-    if suffix in {".h5", ".hdf5"}:
-        return Hdf5Archive(path)
-    return np.load(path, allow_pickle=True)
+    """Open an HDF5 trajectory archive."""
+    if path.suffix.lower() not in {".h5", ".hdf5"}:
+        raise ValueError(f"trajectory artifacts must be HDF5, got {path}")
+    return Hdf5Archive(path)
 
 
-def write_hdf5_archive(path: Path, values: dict[str, Any]) -> None:
-    """Write arrays and scalar metadata to a flat HDF5 archive."""
+def write_hdf5_archive(
+    path: Path,
+    values: dict[str, Any],
+    *,
+    schema: str = "viki_trajectory_hdf5_v1",
+) -> None:
+    """Atomically write arrays and scalar metadata to a flat HDF5 archive."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with h5py.File(path, "w") as h5:
-        h5.attrs["archive_format"] = "viki_optimization_hdf5_v1"
-        for key, value in values.items():
-            if value is None:
-                continue
-            if isinstance(value, Path):
-                value = str(value)
-            if isinstance(value, str):
-                h5.create_dataset(key, data=np.array(value, dtype=STRING_DTYPE))
-            elif isinstance(value, bool):
-                h5.create_dataset(key, data=np.bool_(value))
-            elif isinstance(value, (int, float, np.generic)):
-                h5.create_dataset(key, data=value)
-            else:
-                h5.create_dataset(key, data=np.asarray(value))
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        with h5py.File(tmp_path, "w") as h5:
+            h5.attrs["archive_format"] = schema
+            for key, value in values.items():
+                if value is None:
+                    continue
+                if isinstance(value, Path):
+                    value = str(value)
+                if isinstance(value, str):
+                    h5.create_dataset(key, data=np.array(value, dtype=STRING_DTYPE))
+                elif isinstance(value, bool):
+                    h5.create_dataset(key, data=np.bool_(value))
+                elif isinstance(value, (int, float, np.generic)):
+                    h5.create_dataset(key, data=value)
+                else:
+                    h5.create_dataset(key, data=np.asarray(value))
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)

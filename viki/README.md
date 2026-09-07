@@ -26,7 +26,7 @@ cli.py        `viki record|extract|prepare|retarget|replay|label|export|run`
 | `contracts.py` | every cross-stage DTO, `LM` enum, Protocols, `Episode`/`EpisodeLabels`, `*_KEYS` schema tuples |
 | `config.py` | `Config` (frozen) + `load()`; UPPER_SNAKE keys mirror `data/*_configuration.json` |
 | `episode.py` | episode-directory helpers: `new_episode`, meta/status r/w, `mark_stage` |
-| `dsp.py` | Savitzky-Golay + NaN interpolation, shared by `prepare` and `retarget` |
+| `dsp.py` | Savitzky-Golay + NaN interpolation for perception preparation |
 | `gripper.py` | `Gripper` ABC + `BinaryGripper` (`cfg.GRIPPER`) |
 
 ## Rules

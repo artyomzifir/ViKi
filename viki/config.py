@@ -113,25 +113,25 @@ CALIB_VALIDATE_AMBER_ICP_ROT_DEG: float
 RECORDING_DURATION: int
 RECORDING_FPS: int
 RETARGET_DEFAULT_ROBOT: str
-RETARGET_LANDMARK_SG_WINDOW: int
-RETARGET_LANDMARK_SG_POLYORDER: int
-RETARGET_IK_POSITION_COST: float
-RETARGET_IK_ORIENTATION_COST: float
-RETARGET_IK_POSTURE_COST: float
-RETARGET_IK_ACCEL_COST: float  # λ_a: in-solver acceleration regulariser weight (replaces joint SG)
-RETARGET_IK_CONF_FLOOR: float  # lower clamp on ω_t when it scales the IK data term (0 disables the ω_t weighting)
-RETARGET_TARGET_MODE: str
-RETARGET_IK_SUBSTEPS: int
-RETARGET_IK_SOLVER: str
+RETARGET_ROBOT_BASE_POSITION: list[float]
+RETARGET_HAND_TO_EE_TRANSLATION: list[float]
+RETARGET_HAND_TO_EE_RPY_DEG: list[float]
+RETARGET_W_POSITION: float
+RETARGET_W_ORIENTATION: float
+RETARGET_W_VELOCITY: float
+RETARGET_W_ACCELERATION: float
+RETARGET_W_POSTURE: float
+RETARGET_HUBER_DELTA: float
+RETARGET_CONFIDENCE_FLOOR: float
+RETARGET_LM_DAMPING: float
+RETARGET_MAX_ITERATIONS: int
+RETARGET_MAX_STEP_RAD: float
+RETARGET_CONVERGENCE_RAD: float
+RETARGET_QP_SOLVER: str
+RETARGET_COLLISION_ENABLED: bool
+RETARGET_COLLISION_PAIRS: int
+RETARGET_COLLISION_MIN_DISTANCE_M: float
 RETARGET_APPROACH_SEC: float
-RETARGET_JOINT_SG_WINDOW: int
-RETARGET_JOINT_SG_POLYORDER: int
-RETARGET_RECENTER_TO_NEUTRAL: bool
-RETARGET_TRAJECTORY_SCALE: float
-ROBOT_BASE_OFFSET: list[float]
-TARGET_OFFSET: list[float]
-RETARGET_BASE_ROTATION: list[list[float]]
-RETARGET_BASE_TRANSLATION: list[float]
 MODELS_DIR: str
 
 
@@ -160,12 +160,6 @@ _config = _load_config()
 # Legacy access: `from viki.config import CONSTANT`. Kept until every stage takes
 # an explicit `Config` argument; new code should use `viki.config.load()`.
 globals().update(_config)
-
-if "ROBOT_BASE_OFFSET" not in _config:
-    globals()["ROBOT_BASE_OFFSET"] = [0.0, 0.0, 0.0]
-if "TARGET_OFFSET" not in _config:
-    globals()["TARGET_OFFSET"] = [0.0, 0.0, 0.0]
-
 
 # ─────────────────────────── explicit Config object ────────────────────────────
 
@@ -201,10 +195,26 @@ class Config:
 
 
 _DEFAULTS: dict[str, Any] = {
-    "ROBOT_BASE_OFFSET": [0.0, 0.0, 0.0],
-    "TARGET_OFFSET": [0.0, 0.0, 0.0],
-    "RETARGET_BASE_ROTATION": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-    "RETARGET_BASE_TRANSLATION": [0.0, 0.0, 0.0],
+    "RETARGET_DEFAULT_ROBOT": "ur10",
+    "RETARGET_ROBOT_BASE_POSITION": [0.0, 0.0, 0.0],
+    "RETARGET_HAND_TO_EE_TRANSLATION": [0.0, 0.0, 0.0],
+    "RETARGET_HAND_TO_EE_RPY_DEG": [-175.675, 15.45, -47.922],
+    "RETARGET_W_POSITION": 1.0,
+    "RETARGET_W_ORIENTATION": 0.01,
+    "RETARGET_W_VELOCITY": 0.002,
+    "RETARGET_W_ACCELERATION": 0.00002,
+    "RETARGET_W_POSTURE": 0.0001,
+    "RETARGET_HUBER_DELTA": 0.05,
+    "RETARGET_CONFIDENCE_FLOOR": 0.05,
+    "RETARGET_LM_DAMPING": 0.00001,
+    "RETARGET_MAX_ITERATIONS": 12,
+    "RETARGET_MAX_STEP_RAD": 0.2,
+    "RETARGET_CONVERGENCE_RAD": 0.0002,
+    "RETARGET_QP_SOLVER": "osqp",
+    "RETARGET_COLLISION_ENABLED": True,
+    "RETARGET_COLLISION_PAIRS": 8,
+    "RETARGET_COLLISION_MIN_DISTANCE_M": 0.02,
+    "RETARGET_APPROACH_SEC": 2.0,
     "POSE_BACKEND": "rtmpose-m-hand5",
     "GRIPPER": "binary",
     "EXPORT_FPS": 15,
@@ -260,7 +270,6 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_WARM_START_MAD_K": 6.0,
     "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
-    "RETARGET_IK_CONF_FLOOR": 0.05,
     "WORLD_ANCHOR_FILENAME": "data/world_anchor.json",
     "CALIB_POSE_MIN_ANGLE_DEG": 8.0,
     "CALIB_POSE_MIN_TRANSLATION_M": 0.05,

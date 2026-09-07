@@ -5,6 +5,7 @@ import * as cameras from './cameras.js';
 import * as calibration from './calibration.js';
 import * as record from './record.js';
 import * as perception from './perception.js';
+import * as retarget from './retarget.js';
 import * as viewer from './viewer.js';
 import * as configModal from './config.js';
 import { makeStub } from './tabs_stub.js';
@@ -13,7 +14,7 @@ const TABS = {
   calibration: { label: 'Calibration', mod: calibration },
   record: { label: 'Record', mod: record },
   extract: { label: 'Extract', mod: perception },
-  retarget: { label: 'Retarget', mod: makeStub('Retarget') },
+  retarget: { label: 'Retarget', mod: retarget },
   replay: { label: 'Replay', mod: makeStub('Replay') },
   export: { label: 'Export', mod: makeStub('Export') },
   viewer: { label: 'Viewer', mod: viewer },
