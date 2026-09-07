@@ -13,7 +13,6 @@ const TABS = {
   calibration: { label: 'Calibration', mod: calibration },
   record: { label: 'Record', mod: record },
   extract: { label: 'Extract', mod: perception },
-  prepare: { label: 'Prepare', mod: makeStub('Prepare') },
   retarget: { label: 'Retarget', mod: makeStub('Retarget') },
   replay: { label: 'Replay', mod: makeStub('Replay') },
   export: { label: 'Export', mod: makeStub('Export') },
