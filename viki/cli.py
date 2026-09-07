@@ -185,6 +185,38 @@ def _cmd_viz(a) -> None:
     print(out)
 
 
+def _cmd_hocap_import(a) -> None:
+    from viki.benchmark.hocap import import_sequence, render_report
+
+    res = import_sequence(
+        a.hocap_root,
+        a.subject,
+        a.sequence,
+        out_root=a.out,
+        cameras=a.cameras,
+        fps=a.fps,
+        max_frames=a.max_frames,
+        overwrite=a.force,
+        viki_episode_dir=a.viki_ref,
+        run_backend_check=a.backend_check,
+        run_pipeline_check=a.pipeline_check,
+        depth_frame=a.depth_frame,
+    )
+    if res.skipped and not res.acceptance:
+        print(f"SKIPPED {a.subject}/{a.sequence}: {res.skipped[0]['reason']}")
+        return
+    print(res.summary())
+    # Always drop a rendered report inside the episode dir (survives container
+    # teardown / unmounted docs/); also write to --report when given.
+    ep_copy = res.episode_dir / "hocap_import.md"
+    render_report([res], out_path=ep_copy)
+    print(f"report: {ep_copy}")
+    if a.report:
+        path = render_report([res], out_path=a.report)
+        res.report_path = path
+        print(f"report: {path}")
+
+
 def _cmd_run(a) -> None:
     from viki.episode import stage_done
     from viki.perception.extract import extract_episode
@@ -333,6 +365,41 @@ def _build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--stage", default="cln", choices=["rec", "cln"])
     pv.add_argument("--out", default=None, help="PNG path (default: <episode>/viz-<stage>.png)")
     pv.set_defaults(func=_cmd_viz)
+
+    phc = sub.add_parser(
+        "hocap-import",
+        help="convert one HO-Cap sequence into a 2-view ViKi episode + ground truth",
+    )
+    phc.add_argument("hocap_root", help="dir containing calibration/ and subject_*/")
+    phc.add_argument("--subject", required=True, help="e.g. subject_1")
+    phc.add_argument("--sequence", required=True, help="e.g. 20231025_165502")
+    phc.add_argument(
+        "--cameras", nargs=2, default=None, metavar=("CAM_A", "CAM_B"),
+        help="HO-Cap serials to use (default: auto-pick nearest ViKi kinect_0/1 geometry)",
+    )
+    phc.add_argument("--out", default="data/datasets/hocap", help="output dataset root")
+    phc.add_argument("--fps", type=float, default=None, help="override capture fps")
+    phc.add_argument("--max-frames", type=int, default=None)
+    phc.add_argument("--force", action="store_true", help="overwrite a non-empty output dir")
+    phc.add_argument(
+        "--viki-ref", default=None,
+        help="ViKi episode dir for the kinect_0/kinect_1 reference geometry",
+    )
+    phc.add_argument("--report", default="docs/hocap_import.md", help="'' to skip")
+    phc.add_argument(
+        "--backend-check", action="store_true",
+        help="run acceptance criterion 5 (pose backend on JPEG vs mp4)",
+    )
+    phc.add_argument(
+        "--pipeline-check", action="store_true",
+        help="run acceptance criterion 6 (viki extract + prepare on the episode)",
+    )
+    phc.add_argument(
+        "--depth-frame", default="color", choices=["color", "sensor"],
+        help="which HO-Cap intrinsics go in the depth slot (default: color — "
+        "HO-Cap depth PNGs are registered to the colour plane)",
+    )
+    phc.set_defaults(func=_cmd_hocap_import)
 
     prn = sub.add_parser("run", help="extract -> prepare -> retarget -> replay")
     prn.add_argument("episode")
