@@ -3,13 +3,7 @@ import { api, log, FRONTEND_CONFIG, sessionGet, sessionSet, sessionPatch } from 
 import * as scene3d from './scene3d.js';
 import * as episodes from './episodes.js';
 
-const LAYERS = {
-  cloud: 'cloud', trajectory: 'input wrist', targetTrajectory: 'EE target pose',
-  achievedTrajectory: 'robot EE pose', robot: 'robot', fused: 'hand', handFit: 'hand fit',
-  board: 'board', frusta: 'cameras', bbox: 'bbox', palm: 'palm',
-};
-
-let root = null, ctl = null, epList = [], robots = [], viewedEp = null, viewedPlan = null;
+let root = null, ctl = null, epList = [], robots = [], grippers = [], viewedEp = null, viewedPlan = null;
 let poll = 0, lastDoneSignature = '', showingPreview = false;
 
 function field(role, label, value, step = 'any', min = '') {
@@ -17,8 +11,8 @@ function field(role, label, value, step = 'any', min = '') {
     value="${value}" step="${step}" ${min !== '' ? `min="${min}"` : ''}></div>`;
 }
 
-function vectorFields(prefix, values, unit = 'm') {
-  return `<div class="ret-vector"><span>${prefix.replaceAll('-', ' ')} <i>${unit}</i></span>
+function vectorFields(prefix, values, unit = 'm', label = null) {
+  return `<div class="ret-vector"><span>${label || prefix.replaceAll('-', ' ')} <i>${unit}</i></span>
     ${['x', 'y', 'z'].map((axis, i) => `<label>${axis}<input type="number" data-role="${prefix}-${axis}"
       value="${values[i]}" step="0.001"></label>`).join('')}</div>`;
 }
@@ -27,7 +21,7 @@ export function mount(view) {
   const defaults = FRONTEND_CONFIG.retarget || {};
   // v3 resets position-only sessions now that the calibrated orientation term
   // is part of the default objective.
-  const S = { ...defaults, ...sessionGet('retarget-v3', {}) };
+  const S = { ...defaults, ...sessionGet('retarget-v4', {}) };
   root = document.createElement('div');
   root.className = 'retarget-tab';
   root.innerHTML = `
@@ -42,7 +36,6 @@ export function mount(view) {
 
     <div class="ret-viewer">
       <div class="viewer-canvas" data-role="canvas"></div>
-      <div class="perc-overlay perc-overlay-layers" data-role="layers"></div>
       <div class="perc-overlay ret-metrics" data-role="metrics">Select an episode to compare.</div>
       <div class="perc-overlay perc-overlay-transport">
         <button data-role="stop" title="stop">■</button>
@@ -64,23 +57,23 @@ export function mount(view) {
         <div class="cfg-row"><label>Pose source</label><select data-role="pose-source">
           <option value="landmarks">landmarks</option><option value="hand_fit">hand fit</option>
         </select></div>
-        <div class="cfg-row"><label>Gripper</label><select data-role="gripper" disabled>
-          <option value="binary">binary · open/closed</option></select></div>
+        <div class="cfg-row"><label>Gripper</label><select data-role="gripper"></select></div>
+        <div class="hint" data-role="gripper-meta">physical URDF · binary command</div>
       </section>
 
       <section class="calib-sec">
         <div class="calib-sec-title">2 · Calibration-frame placement</div>
         <div class="hint">Robot axes equal calibration axes. Registration is translation only.</div>
         ${vectorFields('base', S.basePosition || [0, 0, 0])}
-        ${vectorFields('hand-to-ee', S.handToEeTranslation || [0, 0, 0])}
-        ${vectorFields('hand-to-ee-rpy', S.handToEeRpyDeg || [0, 0, 0], 'deg')}
+        ${vectorFields('hand-to-ee', S.handToEeTranslation || [0, 0, 0], 'm', 'hand to TCP')}
+        ${vectorFields('hand-to-ee-rpy', S.handToEeRpyDeg || [0, 0, 0], 'deg', 'hand to TCP rpy')}
       </section>
 
       <section class="calib-sec">
         <div class="calib-sec-title">3 · Trajectory objective</div>
         ${field('w-position', 'position', S.wPosition ?? 1, 0.01, 0)}
         ${field('w-orientation', 'orientation', S.wOrientation ?? 0.01, 0.01, 0)}
-        <div class="hint">SO(3) tracking through the fixed hand→EE rotation above.</div>
+        <div class="hint">SO(3) tracking through the fixed hand→gripper TCP rotation above.</div>
         ${field('w-velocity', 'velocity λᵥ', S.wVelocity ?? 0.002, 0.0001, 0)}
         ${field('w-acceleration', 'acceleration λₐ', S.wAcceleration ?? 0.00002, 0.00001, 0)}
         ${field('w-posture', 'posture λᵣ', S.wPosture ?? 0.0001, 0.0001, 0)}
@@ -121,11 +114,13 @@ export function mount(view) {
     if (frameError) frameError.textContent = frameErrorText(viewedPlan, frameNo);
   });
   root.querySelector('[data-role="pose-source"]').value = S.poseSource || 'landmarks';
-  renderLayers();
+  ctl.onLayerChange(l => sessionSet('retargetLayers', l));
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
   root.addEventListener('input', onInput);
-  Promise.all([loadRobots(S.robot), loadDatasets(S.dataset)]).catch(e => log('retarget: ' + e, 'error'));
+  Promise.all([
+    loadRobots(S.robot), loadGrippers(S.gripper), loadDatasets(S.dataset),
+  ]).then(() => previewRobot()).catch(e => log('retarget: ' + e, 'error'));
   refreshQueue();
   poll = setInterval(refreshQueue, 1500);
 }
@@ -137,12 +132,6 @@ export function unmount() {
   root?.remove(); root = null;
 }
 
-function renderLayers() {
-  const state = ctl.layerState;
-  root.querySelector('[data-role="layers"]').innerHTML = Object.entries(LAYERS).map(([key, label]) =>
-    `<label><input type="checkbox" data-layer="${key}" ${state[key] ? 'checked' : ''}> ${label}</label>`
-  ).join('');
-}
 
 async function loadRobots(want) {
   ({ robots } = await api('GET', '/api/pipeline/retarget/robots'));
@@ -150,6 +139,18 @@ async function loadRobots(want) {
   select.innerHTML = robots.map(robot => `<option value="${robot.key}">${robot.key}</option>`).join('');
   if (robots.some(robot => robot.key === want)) select.value = want;
   syncRobotMeta();
+}
+
+async function loadGrippers(want) {
+  ({ grippers } = await api('GET', '/api/pipeline/retarget/grippers'));
+  const select = root.querySelector('[data-role="gripper"]');
+  select.innerHTML = grippers.map(item =>
+    `<option value="${item.key}" ${item.available ? '' : 'disabled'}>${item.label}${item.available ? '' : ' — pending URDF'}</option>`
+  ).join('');
+  const selected = grippers.find(item => item.key === want && item.available)
+    || grippers.find(item => item.available);
+  if (selected) select.value = selected.key;
+  syncGripperMeta();
 }
 
 async function loadDatasets(want) {
@@ -191,7 +192,7 @@ function options() {
   return {
     robot: root.querySelector('[data-role="robot"]').value,
     pose_source: root.querySelector('[data-role="pose-source"]').value,
-    gripper: 'binary',
+    gripper: root.querySelector('[data-role="gripper"]').value,
     base_position: vector('base'),
     hand_to_ee_translation: vector('hand-to-ee'),
     hand_to_ee_rpy_deg: vector('hand-to-ee-rpy'),
@@ -212,8 +213,8 @@ function options() {
 function persist() {
   if (!root) return;
   const o = options();
-  sessionSet('retarget-v3', {
-    robot: o.robot, poseSource: o.pose_source, basePosition: o.base_position,
+  sessionSet('retarget-v4', {
+    robot: o.robot, gripper: o.gripper, poseSource: o.pose_source, basePosition: o.base_position,
     handToEeTranslation: o.hand_to_ee_translation, handToEeRpyDeg: o.hand_to_ee_rpy_deg,
     wPosition: o.w_position, wOrientation: o.w_orientation, wVelocity: o.w_velocity,
     wAcceleration: o.w_acceleration, wPosture: o.w_posture, huberDelta: o.huber_delta,
@@ -228,30 +229,39 @@ function persist() {
 function syncRobotMeta() {
   const item = robots.find(r => r.key === root.querySelector('[data-role="robot"]').value);
   root.querySelector('[data-role="robot-meta"]').textContent = item
-    ? `${item.description} · EE ${item.ee_frame} · ${item.joints.length} DoF` : 'URDF model';
+    ? `${item.description} · mount ${item.mount_frame} · ${item.joints.length} DoF` : 'URDF model';
+}
+
+function syncGripperMeta() {
+  const item = grippers.find(g => g.key === root.querySelector('[data-role="gripper"]').value);
+  root.querySelector('[data-role="gripper-meta"]').textContent = item
+    ? `${item.description || 'URDF pending'} · TCP ${item.tcp_frame || 'pending'} · ${(1000 * item.max_width_m).toFixed(0)} mm · ${item.license}`
+    : 'physical URDF · binary command';
 }
 
 async function previewRobot() {
   if (!showingPreview || !ctl) return;
   const [x, y, z] = vector('base');
   const robot = encodeURIComponent(root.querySelector('[data-role="robot"]').value);
+  const gripper = encodeURIComponent(root.querySelector('[data-role="gripper"]').value);
   try {
-    const data = await api('GET', `/api/pipeline/retarget/preview?robot=${robot}&x=${x}&y=${y}&z=${z}`);
+    const data = await api('GET', `/api/pipeline/retarget/preview?robot=${robot}&gripper=${gripper}&x=${x}&y=${y}&z=${z}`);
     ctl.setRetargetData(data);
+    renderMetrics(data);
   } catch (e) { log('robot preview: ' + e, 'error'); }
 }
 
 function renderMetrics(data) {
   const box = root.querySelector('[data-role="metrics"]');
   if (!data?.ready || data.preview) {
-    box.innerHTML = `<b>${data?.robot_key || 'robot'} · neutral URDF preview</b><span>Run Retarget to compare trajectories.</span>`;
+    box.innerHTML = `<b>${data?.robot_key || 'robot'} + ${data?.gripper_label || data?.gripper_model || 'gripper'} · neutral URDF preview</b><span>Run Retarget to compare trajectories.</span>`;
     return;
   }
   const m = data.metrics || {};
   const orientation = Number(m.orientation_weight) > 0
     ? `orientation RMSE ${Number(m.orientation_rmse_deg).toFixed(1)}°`
     : 'orientation not constrained';
-  box.innerHTML = `<b>${data.robot_key} · ${data.solver_status}</b>
+  box.innerHTML = `<b>${data.robot_key} + ${data.gripper_model} · ${data.solver_status}</b>
     <span>position RMSE ${Number(m.position_rmse_mm).toFixed(1)} mm</span>
     <span>${orientation}</span>
     <span data-role="frame-error">${frameErrorText(data, ctl?.frame || 0)}</span>
@@ -276,7 +286,6 @@ async function viewEpisode(id) {
       showingPreview = false; viewedPlan = data; ctl.setRetargetData(data); renderMetrics(data);
     } else {
       showingPreview = true; await previewRobot();
-      renderMetrics({ ready: true, preview: true, robot_key: options().robot });
     }
   } catch (e) { showingPreview = true; await previewRobot(); log('plan view: ' + e, 'error'); }
 }
@@ -342,13 +351,11 @@ function onClick(event) {
 
 function onChange(event) {
   const el = event.target;
-  if (el.dataset.layer) {
-    ctl.setLayer(el.dataset.layer, el.checked);
-    sessionPatch('retargetLayers', { [el.dataset.layer]: el.checked });
-  } else if (el.dataset.role === 'dataset') loadEpisodes().catch(e => log('episodes: ' + e, 'error'));
+  if (el.dataset.role === 'dataset') loadEpisodes().catch(e => log('episodes: ' + e, 'error'));
   else if (el.dataset.role === 'all') root.querySelectorAll('[data-ep]').forEach(box => { box.checked = el.checked; });
   else if (el.dataset.ep) syncAll();
   else if (el.dataset.role === 'robot') { syncRobotMeta(); persist(); previewRobot(); }
+  else if (el.dataset.role === 'gripper') { syncGripperMeta(); persist(); previewRobot(); }
   else if (el.dataset.role) {
     persist();
     if (el.dataset.role.startsWith('base-')) previewRobot();

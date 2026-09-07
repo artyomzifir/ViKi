@@ -234,3 +234,45 @@ def test_retarget_scene_includes_target_and_achieved_orientation(tmp_path, monke
     assert np.asarray(payload["achieved_rotation"]).shape == (2, 3, 3)
     np.testing.assert_allclose(payload["target_rotation"], rotations)
     np.testing.assert_allclose(payload["achieved_rotation"], rotations[::-1])
+
+
+def test_retarget_scene_exposes_physical_gripper_layers(tmp_path, monkeypatch):
+    episodes = tmp_path / "episodes"
+    monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)
+    monkeypatch.setattr("viki.config.DATASETS_DIR", str(tmp_path / "datasets"), raising=False)
+    ep = new_episode(episodes)
+    write_hdf5_archive(ep.plan_h5, {
+        "q": np.zeros((2, 6), np.float32),
+        "link_edges": np.array([[0, 1], [1, 2]], np.int32),
+        "link_groups_json": json.dumps(["robot", "gripper"]),
+        "point_groups_json": json.dumps(["robot", "robot", "gripper"]),
+        "link_positions_calibration": np.zeros((2, 3, 3), np.float32),
+        "target_position_calibration": np.zeros((2, 3), np.float32),
+        "target_rotation_calibration": np.tile(np.eye(3), (2, 1, 1)),
+        "achieved_position_calibration": np.zeros((2, 3), np.float32),
+        "achieved_rotation_calibration": np.tile(np.eye(3), (2, 1, 1)),
+        "position_error_m": np.zeros(2, np.float32),
+        "orientation_error_rad": np.zeros(2, np.float32),
+        "base_position_calibration": np.zeros(3, np.float32),
+        "metrics_json": json.dumps({}),
+        "solver_status": "converged",
+        "robot": "ur3_official_description",
+        "robot_key": "ur3",
+        "ee_frame": "robotiq_2f85__robotiq_arg2f_tcp",
+        "fps": np.float32(15),
+        "gripper_closed": np.array([False, True]),
+        "gripper_model": "robotiq_2f85",
+        "gripper_tcp_frame": "robotiq_2f85__robotiq_arg2f_tcp",
+        "gripper_joint_position": np.array([0.0, 0.8], np.float32),
+        "gripper_opening_m": np.array([0.085, 0.0], np.float32),
+    }, schema="viki_plan_hdf5_v3")
+
+    from viki.server.routes.pipeline import retarget_scene
+
+    payload = asyncio.run(retarget_scene(ep.id))
+    assert payload["gripper_model"] == "robotiq_2f85"
+    assert payload["gripper_tcp_frame"].endswith("robotiq_arg2f_tcp")
+    assert payload["gripper_joint_position"] == pytest.approx([0.0, 0.8])
+    assert payload["gripper_opening_m"] == pytest.approx([0.085, 0.0])
+    assert payload["link_groups"] == ["robot", "gripper"]
+    assert payload["point_groups"] == ["robot", "robot", "gripper"]

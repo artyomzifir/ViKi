@@ -1,16 +1,10 @@
 // Viewer tab — a thin shell around the shared scene3d controller: episode
-// picker, layer toggles, cloud colour + stride, a timeline and transport.
-// The Extract tab reuses the same scene3d module.
+// picker, cloud colour + stride, a timeline and transport. Layer toggles live
+// in the scene's own legend overlay (scene3d.js). The Extract tab reuses it.
 import { api, log, sessionGet, sessionSet, sessionPatch } from './core.js';
 import * as scene3d from './scene3d.js';
 
 let root = null, ctl = null, episodes = [], variants = [];
-
-const LAYER_LABELS = {
-  cloud: 'point cloud', perCamera: 'per-camera skeletons', fused: 'fused skeleton',
-  trajectory: 'wrist trajectory', palm: 'palm + gripper', frusta: 'camera frusta',
-  board: 'ChArUco board', bbox: 'workspace box', handFit: 'fitted hand',
-};
 
 export function mount(view) {
   const vs = sessionGet('viewer', { color: 'rgb', stride: 1 });
@@ -36,8 +30,7 @@ export function mount(view) {
       <label class="viewer-field">Cloud stride
         <input type="number" data-role="stride" min="1" max="12" value="${vs.stride || 1}">
       </label>
-      <div class="viewer-layers" data-role="layers"></div>
-      <p class="viewer-help">drag orbit · wheel zoom · right-drag pan</p>
+      <p class="viewer-help">layers: click a row in the scene legend<br>drag orbit · wheel zoom · right-drag pan</p>
     </aside>
     <div class="viewer-timeline">
       <button data-role="stop" title="stop">■</button>
@@ -64,8 +57,8 @@ export function mount(view) {
     $('[data-role="time"]').value = f;
     $('[data-role="frame-lbl"]').textContent = `${n ? f + 1 : 0} / ${n}`;
   });
+  ctl.onLayerChange(l => sessionSet('viewerLayers', l));
 
-  renderLayers();
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
   root.addEventListener('input', onInput);
@@ -77,14 +70,6 @@ export function unmount() {
   ctl = null;
   root?.remove();
   root = null;
-}
-
-function renderLayers() {
-  const box = root.querySelector('[data-role="layers"]');
-  const st = ctl.layerState;
-  box.innerHTML = Object.entries(LAYER_LABELS).map(([k, label]) =>
-    `<label class="viewer-layer"><input type="checkbox" data-layer="${k}" ${st[k] ? 'checked' : ''}> ${label}</label>`
-  ).join('');
 }
 
 async function loadEpisodes() {
@@ -174,9 +159,6 @@ function onChange(e) {
   }
   else if (el.dataset.role === 'color') {
     ctl.setColorMode(el.value); sessionPatch('viewer', { color: el.value });
-  } else if (el.dataset.layer) {
-    ctl.setLayer(el.dataset.layer, el.checked);
-    sessionPatch('viewerLayers', { [el.dataset.layer]: el.checked });
   }
 }
 

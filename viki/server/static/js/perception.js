@@ -17,11 +17,6 @@ const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need th
 const DEFAULT_LM = [...Array(21).keys()];           // track every landmark by default
 const CLEAN_BASELINE = 'clean-triangulated-landmarks-v1';
 const STABLE_PIPELINE = 'stable-fused-hand-v1';
-const LAYER_LABELS = {
-  cloud: 'cloud', perCamera: 'per-camera', fused: 'fused', trajectory: 'traj',
-  palm: 'palm+grip', frusta: 'frusta', board: 'board', bbox: 'bbox', handFit: 'hand fit',
-};
-
 // 21-point hand diagram, palm toward you, fingers up. [x, y] in a 0..100 box.
 const HAND_XY = [
   [50, 94],                                  // 0 wrist
@@ -65,7 +60,6 @@ export function mount(view) {
 
     <div class="perc-viewer">
       <div class="viewer-canvas" data-role="canvas"></div>
-      <div class="perc-overlay perc-overlay-layers" data-role="layers"></div>
       <div class="perc-overlay perc-overlay-transport">
         <button data-role="stop" title="stop">■</button>
         <button data-role="prev" title="prev frame">◄</button>
@@ -141,9 +135,9 @@ export function mount(view) {
     root.querySelector('[data-role="time"]').value = f;
     root.querySelector('[data-role="frame-lbl"]').textContent = `${n ? f + 1 : 0} / ${n}`;
   });
+  ctl.onLayerChange(l => sessionSet('viewerLayers', l));
 
   renderHand(S.track_lm);
-  renderLayers();
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
   root.addEventListener('input', onInput);
@@ -259,12 +253,6 @@ function trackSelection() { return _trackSel.slice(); }
 function updateTrackSummary() {
   root.querySelector('[data-role="track-sum"]').textContent =
     `${_trackSel.length} / 21 tracked`;
-}
-
-function renderLayers() {
-  const st = ctl.layerState;
-  root.querySelector('[data-role="layers"]').innerHTML = Object.entries(LAYER_LABELS).map(([k, l]) =>
-    `<label><input type="checkbox" data-layer="${k}" ${st[k] ? 'checked' : ''}> ${l}</label>`).join('');
 }
 
 // mirror the current form into the session store so leaving the tab and coming
@@ -430,10 +418,6 @@ function onChange(e) {
   if (el.dataset.role === 'profile') syncProfile();
   else if (el.dataset.role === 'model') syncModel();
   else if (el.dataset.role === 'dataset') { persist(); loadEpisodes(); }
-  else if (el.dataset.layer) {
-    ctl.setLayer(el.dataset.layer, el.checked);
-    sessionPatch('viewerLayers', { [el.dataset.layer]: el.checked });
-  }
   else if (el.dataset.role === 'all') {
     root.querySelectorAll('[data-ep]').forEach(c => { c.checked = el.checked; });
   }

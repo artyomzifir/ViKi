@@ -417,6 +417,7 @@ async def retarget_robots():
                 "key": key,
                 "description": value.description,
                 "ee_frame": value.ee_frame,
+                "mount_frame": value.mount_frame,
                 "joints": list(value.joint_names),
             }
             for key, value in ROBOT_CONFIGS.items()
@@ -424,21 +425,44 @@ async def retarget_robots():
     }
 
 
+@_ep.get("/retarget/grippers")
+async def retarget_grippers():
+    from viki.retarget.grippers import gripper_catalog
+
+    return {"grippers": gripper_catalog()}
+
+
 @_ep.get("/retarget/preview")
 async def retarget_preview(
-    robot: str = "ur10", x: float = 0.0, y: float = 0.0, z: float = 0.0,
+    robot: str = "ur10",
+    gripper: str = "robotiq_2f85",
+    x: float = 0.0,
+    y: float = 0.0,
+    z: float = 0.0,
 ):
-    """Neutral URDF kinematics at a proposed calibration-frame base position."""
+    """Neutral arm plus open-gripper URDF at a proposed base position."""
     from viki.retarget.frames import robot_to_calibration
+    from viki.retarget.grippers import attach_gripper, normalize_gripper
     from viki.retarget.run import _load_robot_description
     from viki.retarget.robots import normalize_robot
     from viki.retarget.solver import PinocchioKinematics
 
     cfg = normalize_robot(robot)
-    model = _load_robot_description(cfg.description)
+    gripper_cfg = normalize_gripper(gripper)
+    arm = _load_robot_description(cfg.description)
+    assembly = attach_gripper(arm, cfg, gripper_cfg)
     kinematics = PinocchioKinematics(
-        model, cfg.ee_frame, collision_pairs=0, collision_min_distance_m=0.0,
+        assembly.robot,
+        assembly.tcp_frame,
+        collision_pairs=0,
+        collision_min_distance_m=0.0,
+        actuated_joint_names=cfg.joint_names,
+        passive_joint_positions={
+            assembly.drive_joint: gripper_cfg.joint_positions(np.asarray([False])),
+        },
+        gripper_prefix=assembly.gripper_prefix,
     )
+    kinematics.set_frame(0)
     base = np.asarray([x, y, z], dtype=np.float64)
     points = robot_to_calibration(kinematics.joint_points(kinematics.q_reference), base)
     return {
@@ -446,12 +470,18 @@ async def retarget_preview(
         "preview": True,
         "robot": cfg.description,
         "robot_key": robot,
-        "ee_frame": cfg.ee_frame,
+        "ee_frame": assembly.tcp_frame,
+        "gripper_model": gripper_cfg.key,
+        "gripper_label": gripper_cfg.label,
+        "gripper_tcp_frame": assembly.tcp_frame,
+        "gripper_opening_m": [gripper_cfg.max_width_m],
         "solver_status": "preview",
         "n_frames": 1,
         "fps": 15.0,
         "base_position": base.tolist(),
         "link_edges": kinematics.link_edges.tolist(),
+        "link_groups": list(kinematics.link_groups),
+        "point_groups": list(kinematics.point_groups),
         "link_positions": [points.tolist()],
         "target_trajectory": [],
         "target_rotation": [],
@@ -502,6 +532,14 @@ async def retarget_scene(ep_id: str):
                 "fps": float(plan["fps"]),
                 "base_position": np.asarray(plan["base_position_calibration"]).tolist(),
                 "link_edges": np.asarray(plan["link_edges"], dtype=np.int32).tolist(),
+                "link_groups": (
+                    json.loads(str(plan["link_groups_json"]))
+                    if "link_groups_json" in plan else []
+                ),
+                "point_groups": (
+                    json.loads(str(plan["point_groups_json"]))
+                    if "point_groups_json" in plan else []
+                ),
                 "link_positions": np.asarray(
                     plan["link_positions_calibration"], dtype=np.float32
                 ).tolist(),
@@ -522,6 +560,21 @@ async def retarget_scene(ep_id: str):
                     plan["orientation_error_rad"], dtype=np.float32
                 ).tolist(),
                 "gripper_closed": np.asarray(plan["gripper_closed"], dtype=bool).tolist(),
+                "gripper_model": (
+                    str(plan["gripper_model"]) if "gripper_model" in plan else "binary"
+                ),
+                "gripper_tcp_frame": (
+                    str(plan["gripper_tcp_frame"])
+                    if "gripper_tcp_frame" in plan else str(plan["ee_frame"])
+                ),
+                "gripper_joint_position": (
+                    np.asarray(plan["gripper_joint_position"], dtype=np.float32).tolist()
+                    if "gripper_joint_position" in plan else []
+                ),
+                "gripper_opening_m": (
+                    np.asarray(plan["gripper_opening_m"], dtype=np.float32).tolist()
+                    if "gripper_opening_m" in plan else []
+                ),
                 "metrics": metrics,
             }
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:

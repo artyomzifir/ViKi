@@ -113,6 +113,7 @@ export async function initializeFrontendConfig(config) {
     },
     retarget: {
       robot: config.RETARGET_DEFAULT_ROBOT ?? 'ur10',
+      gripper: config.RETARGET_DEFAULT_GRIPPER_MODEL ?? 'robotiq_2f85',
       basePosition: config.RETARGET_ROBOT_BASE_POSITION ?? [0, 0, 0],
       handToEeTranslation: config.RETARGET_HAND_TO_EE_TRANSLATION ?? [0, 0, 0],
       handToEeRpyDeg: config.RETARGET_HAND_TO_EE_RPY_DEG ?? [0, 0, 0],
@@ -133,7 +134,6 @@ export async function initializeFrontendConfig(config) {
       collisionMinDistanceM: config.RETARGET_COLLISION_MIN_DISTANCE_M ?? 0.02,
       approachSec: config.RETARGET_APPROACH_SEC ?? 2,
       poseSource: config.PERCEPTION_HAND_POSE_SOURCE ?? 'landmarks',
-      gripper: config.GRIPPER ?? 'binary',
     },
   };
 

@@ -43,9 +43,10 @@ def replay_episode(
         robot = str(plan["robot"])
         command = np.asarray(plan["gripper_command"], dtype=np.float64)
         gripper_model = str(plan["gripper_model"])
-    if gripper_model != "binary" or command.shape != (len(q_plan), 1):
+    if command.shape != (len(q_plan), 1):
         raise ValueError(
-            "the current replay driver accepts only binary (T, 1) gripper commands"
+            f"the current replay driver accepts only one-dimensional binary "
+            f"gripper commands, got {gripper_model!r} {command.shape}"
         )
     gripper = command[:, 0] >= 0.5
 

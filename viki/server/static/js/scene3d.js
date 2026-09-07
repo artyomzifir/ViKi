@@ -17,6 +17,65 @@ const HAND_EDGES = [
   [13, 17], [17, 18], [18, 19], [19, 20], [0, 17],
 ];
 const CAM_PALETTE = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0];
+const CAM_COLORS = CAM_PALETTE.map(h => new THREE.Color(h));
+const cssHex = n => '#' + (n >>> 0).toString(16).padStart(6, '0');
+
+// Every hand in the scene — the fused skeleton, the per-camera skeletons and
+// the fitted hand — is drawn the same way: capsules for the 21-point topology
+// plus a sphere at each joint. WebGL ignores line widths, so a LineSegments
+// skeleton is a 1px hairline; capsules read at any zoom and match hand_fit.
+const HAND_BONE_R = 0.0038;
+const HAND_JOINT_R = 0.0052;
+const MAX_SKEL_CAMS = 8;
+
+const _up = new THREE.Vector3(0, 1, 0);
+const _pa = new THREE.Vector3(), _pb = new THREE.Vector3(), _pmid = new THREE.Vector3();
+const _pdir = new THREE.Vector3(), _pquat = new THREE.Quaternion();
+const _pscl = new THREE.Vector3(), _pmat = new THREE.Matrix4();
+
+// Write one 21-point hand into `bones` (unit cylinders) + `joints` (unit
+// spheres) starting at the given instance offsets. `pts` is 21×[x,y,z] whose
+// entries may be null / hold null. When `color` is given every written instance
+// gets it (so several hands can share one mesh, tinted per camera). Returns the
+// instance counts written, for a caller packing hands back to back.
+function packCapsuleHand(bones, joints, boneOff, jointOff, pts, boneR, jointR, color) {
+  let nb = 0;
+  for (const [ia, ib] of HAND_EDGES) {
+    const a = pts?.[ia], b = pts?.[ib];
+    if (!a || !b || a[0] == null || b[0] == null) continue;
+    _pa.fromArray(a); _pb.fromArray(b);
+    _pdir.subVectors(_pb, _pa);
+    const len = _pdir.length();
+    if (!Number.isFinite(len) || len < 1e-7) continue;
+    _pmid.addVectors(_pa, _pb).multiplyScalar(0.5);
+    _pquat.setFromUnitVectors(_up, _pdir.multiplyScalar(1 / len));
+    _pscl.set(boneR, len, boneR);
+    _pmat.compose(_pmid, _pquat, _pscl);
+    bones.setMatrixAt(boneOff + nb, _pmat);
+    if (color) bones.setColorAt(boneOff + nb, color);
+    nb++;
+  }
+  let nj = 0;
+  _pquat.identity(); _pscl.setScalar(jointR);
+  for (const p of (pts || [])) {
+    if (!p || p[0] == null) continue;
+    _pa.fromArray(p);
+    if (!Number.isFinite(_pa.x + _pa.y + _pa.z)) continue;
+    _pmat.compose(_pa, _pquat, _pscl);
+    joints.setMatrixAt(jointOff + nj, _pmat);
+    if (color) joints.setColorAt(jointOff + nj, color);
+    nj++;
+  }
+  return { nb, nj };
+}
+
+// One hand filling a dedicated pair of meshes from instance 0.
+function drawCapsuleHand(bones, joints, pts, boneR, jointR) {
+  const { nb, nj } = packCapsuleHand(bones, joints, 0, 0, pts, boneR, jointR, null);
+  bones.count = nb; joints.count = nj;
+  bones.instanceMatrix.needsUpdate = true;
+  joints.instanceMatrix.needsUpdate = true;
+}
 
 const DEFAULT_LAYERS = {
   cloud: true, perCamera: false, fused: true, trajectory: true,
@@ -133,19 +192,36 @@ export function create(canvasEl, {
   targetPoseFrame.visible = achievedPoseFrame.visible = false;
   calibrationGroup.add(targetPoseFrame, achievedPoseFrame);
 
-  const fusedSkel = new THREE.LineSegments(
-    new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({ color: 0xffd166, linewidth: 2 })
+  // Fused skeleton → IK: solid amber capsule hand.
+  const fusedBones = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(1, 1, 1, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffd166 }),
+    HAND_EDGES.length,
   );
-  const fusedPositions = new Float32Array(HAND_EDGES.length * 6);
-  const fusedPositionAttr = new THREE.BufferAttribute(fusedPositions, 3);
-  fusedSkel.geometry.setAttribute('position', fusedPositionAttr);
-  fusedSkel.geometry.setDrawRange(0, 0);
-  fusedSkel.frustumCulled = false;
-  worldGroup.add(fusedSkel);
+  const fusedJoints = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 12, 9),
+    new THREE.MeshBasicMaterial({ color: 0xffdf9e }),
+    21,
+  );
+  fusedBones.count = fusedJoints.count = 0;
+  fusedBones.frustumCulled = fusedJoints.frustumCulled = false;
+  worldGroup.add(fusedBones, fusedJoints);
 
-  const camSkelGroup = new THREE.Group();
-  worldGroup.add(camSkelGroup);
+  // Per-camera lifted skeletons: one capsule hand per camera, tinted from
+  // CAM_PALETTE (same key as the frusta). All cameras share one instanced mesh.
+  const perCamBones = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(1, 1, 1, 8),
+    new THREE.MeshBasicMaterial(),
+    MAX_SKEL_CAMS * HAND_EDGES.length,
+  );
+  const perCamJoints = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 10, 8),
+    new THREE.MeshBasicMaterial(),
+    MAX_SKEL_CAMS * 21,
+  );
+  perCamBones.count = perCamJoints.count = 0;
+  perCamBones.frustumCulled = perCamJoints.frustumCulled = false;
+  worldGroup.add(perCamBones, perCamJoints);
 
   // Fitted hand: translucent cylinders are used because WebGL ignores line
   // widths. Reconstructing the MediaPipe joints from capsule endpoints lets us
@@ -181,13 +257,87 @@ export function create(canvasEl, {
   let frame = 0, playing = false, playTimer = 0, playSerial = 0, playPending = false;
   let colorMode = initColor || 'rgb', stride = initStride || 1;
   let layers = { ...DEFAULT_LAYERS, ...(initLayers || {}) };
-  let frameCb = null;
+  let frameCb = null, layerCb = null;
   const cloudCache = new Map();     // frame -> Promise<{xyz, rgb}>
   const fgCache = new Map();        // frame -> Promise<geometry?frame= payload>
   const CACHE_CAP = 80;
   let loadSerial = 0, loadingEpisode = false;
   let cloudPos = new Float32Array(0), cloudCol = new Uint8Array(0);
   let raf = 0, disposed = false;
+
+  // ── legend overlay ────────────────────────────────────────────────────
+  // A colour key for what the scene draws, pinned into the canvas container.
+  // Each row mirrors a layer toggle: it dims when that layer is off and hides
+  // when the thing can't be present (robot rows without a retarget result).
+  const legendEl = document.createElement('div');
+  legendEl.className = 'scene-legend';
+  canvasEl.appendChild(legendEl);
+  const camKeyGradient = () =>
+    `linear-gradient(90deg,${CAM_PALETTE.slice(0, 3).map(cssHex).join(',')})`;
+  const haveGeo = () => !!geo;
+  const havePlan = () => !!retarget?.ready;
+  // show() gates a row on whether that thing can be on screen at all (data
+  // loaded); the .off class then dims it when its layer toggle is off.
+  const LEGEND_ROWS = [
+    { key: null,        label: 'world  X · Y · Z',      swatch: 'triad' },
+    { key: 'cloud',     label: 'point cloud',           show: () => !!cmeta,
+      swatch: () => colorMode === 'height'
+        ? 'linear-gradient(90deg,#2b6cff,#57c06a,#ff5a5a)' : '#cfd6df' },
+    { key: 'fused',     label: 'fused hand → IK',       swatch: '#ffd166', show: haveGeo },
+    { key: 'perCamera', label: 'per-camera hands',      swatch: camKeyGradient, show: haveGeo },
+    { key: 'handFit',   label: 'fitted hand',           swatch: '#7dd3fc', show: haveGeo },
+    { key: 'trajectory', label: 'wrist path',           swatch: '#9aa4b2', show: haveGeo },
+    { key: 'palm',      label: 'palm frame',            swatch: 'triad', show: haveGeo },
+    { key: 'palm',      label: 'gripper  open / closed', show: haveGeo, swatch:
+        'linear-gradient(90deg,#4ade80 0 50%,#f87171 50% 100%)' },
+    { key: 'frusta',    label: 'camera frusta',         swatch: camKeyGradient,
+      show: () => !!geo?.cameras },
+    { key: 'board',     label: 'ChArUco board',         swatch: '#5b7fff',
+      show: () => !!geo?.board },
+    { key: 'bbox',      label: 'workspace box',         swatch: '#5b6370',
+      show: () => !!geo?.workspace_bbox },
+    { key: 'robot',     label: 'robot  arm / gripper',  show: havePlan, swatch:
+        'linear-gradient(90deg,#8aa4ba 0 55%,#f59e0b 55% 100%)' },
+    { key: 'targetTrajectory',   label: 'target EE',    swatch: '#f472b6', show: havePlan },
+    { key: 'achievedTrajectory', label: 'achieved EE',  swatch: '#22d3ee', show: havePlan },
+  ];
+  for (const row of LEGEND_ROWS) {
+    const interactive = row.key != null;
+    const el = document.createElement(interactive ? 'button' : 'div');
+    el.className = 'scene-legend-row' + (interactive ? '' : ' static');
+    if (interactive) {
+      el.type = 'button';
+      el.title = 'toggle ' + row.label;
+      el.addEventListener('click', () => setLayer(row.key, !layers[row.key]));
+    }
+    const tick = document.createElement('span');
+    tick.className = 'scene-legend-tick';
+    const sw = document.createElement('span');
+    sw.className = 'scene-legend-sw' + (row.swatch === 'triad' ? ' triad' : '');
+    const label = document.createElement('span');
+    label.className = 'scene-legend-label';
+    label.textContent = row.label;
+    el.append(tick, sw, label);
+    legendEl.appendChild(el);
+    row._el = el; row._sw = sw;
+  }
+  function updateLegend() {
+    let anyVisible = false;
+    for (const row of LEGEND_ROWS) {
+      const present = !row.show || row.show();
+      row._el.hidden = !present;
+      if (!present) continue;
+      anyVisible = true;
+      const on = row.key == null || !!layers[row.key];
+      row._el.classList.toggle('off', !on);
+      if (row.key != null) row._el.setAttribute('aria-pressed', String(on));
+      if (row.swatch !== 'triad') {
+        row._sw.style.background = typeof row.swatch === 'function' ? row.swatch() : row.swatch;
+      }
+    }
+    legendEl.hidden = !anyVisible;
+  }
+  updateLegend();
 
   // ── render loop ───────────────────────────────────────────────────────
   function resize() {
@@ -224,8 +374,8 @@ export function create(canvasEl, {
   function applyLayerVisibility() {
     cloud.visible = layers.cloud;
     trajLine.visible = layers.trajectory;
-    fusedSkel.visible = layers.fused;
-    camSkelGroup.visible = layers.perCamera;
+    fusedBones.visible = fusedJoints.visible = layers.fused;
+    perCamBones.visible = perCamJoints.visible = layers.perCamera;
     boardGroup.visible = layers.board;
     bboxGroup.visible = layers.bbox;
     frustaGroup.visible = layers.frusta;
@@ -242,6 +392,7 @@ export function create(canvasEl, {
     achievedDot.visible = layers.achievedTrajectory && !!retarget?.achieved_trajectory?.length;
     achievedPoseFrame.visible = layers.achievedTrajectory && !!retarget?.ready
       && !!achievedPoseFrame.userData.have;
+    updateLegend();
   }
 
   function applyWorldDisplay(m) {
@@ -371,16 +522,29 @@ export function create(canvasEl, {
     clearGroup(robotGroup);
     if (!retarget?.ready) return;
     const linkMaterial = new THREE.MeshStandardMaterial({ color: 0x8aa4ba, roughness: 0.65 });
+    const gripperMaterial = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.55 });
     const jointMaterial = new THREE.MeshStandardMaterial({ color: 0xdbeafe, roughness: 0.45 });
-    for (const _edge of retarget.link_edges || []) {
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 12), linkMaterial);
+    const gripperJointMaterial = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.45 });
+    for (const [index, _edge] of (retarget.link_edges || []).entries()) {
+      const part = retarget.link_groups?.[index] || 'robot';
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(1, 1, 1, 12),
+        part === 'gripper' ? gripperMaterial : linkMaterial,
+      );
       mesh.userData.kind = 'robot-link';
+      mesh.userData.part = part;
       robotGroup.add(mesh);
     }
     const count = retarget.link_positions?.[0]?.length || 0;
     for (let i = 0; i < count; i++) {
-      const joint = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 10), jointMaterial);
+      const part = retarget.point_groups?.[i] || 'robot';
+      const radius = part === 'gripper' ? 0.009 : 0.018;
+      const joint = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 12, 10),
+        part === 'gripper' ? gripperJointMaterial : jointMaterial,
+      );
       joint.userData.kind = 'robot-joint';
+      joint.userData.part = part;
       robotGroup.add(joint);
     }
     const baseAxes = fatAxes(0.10, 0.004);
@@ -397,7 +561,9 @@ export function create(canvasEl, {
     const links = robotGroup.children.filter(child => child.userData.kind === 'robot-link');
     const joints = robotGroup.children.filter(child => child.userData.kind === 'robot-joint');
     (retarget.link_edges || []).forEach(([a, b], k) => {
-      if (points[a] && points[b] && links[k]) placeCylinder(links[k], points[a], points[b]);
+      if (points[a] && points[b] && links[k]) {
+        placeCylinder(links[k], points[a], points[b], links[k].userData.part === 'gripper' ? 0.006 : 0.012);
+      }
     });
     joints.forEach((joint, k) => {
       joint.visible = !!points[k];
@@ -519,85 +685,47 @@ export function create(canvasEl, {
   }
 
   // ── per-frame skeletons ───────────────────────────────────────────────
-  function skelPositions(pts) {
-    // pts: 21x3 (values may be null). Returns Float32Array of edge endpoints.
-    const seg = [];
-    for (const [a, b] of HAND_EDGES) {
-      const pa = pts[a], pb = pts[b];
-      if (!pa || !pb || pa[0] == null || pb[0] == null) continue;
-      seg.push(pa[0], pa[1], pa[2], pb[0], pb[1], pb[2]);
-    }
-    return new Float32Array(seg);
-  }
-
   function updateHandFit(caps) {
     if (!Array.isArray(caps) || caps.length < 16) {
       handBones.count = handJoints.count = 0;
       return;
     }
-
     // Capsule 0 is palm; then 3 phalanges for thumb/index/middle/ring/pinky.
+    // Rebuild the 21 MediaPipe joints, then draw them like every other hand.
     const joints = [caps[0][0]];
     for (let start = 1; start < 16; start += 3) {
       joints.push(caps[start][0], caps[start][1], caps[start + 1][1], caps[start + 2][1]);
     }
-    const up = new THREE.Vector3(0, 1, 0);
-    const a = new THREE.Vector3(), b = new THREE.Vector3();
-    const mid = new THREE.Vector3(), direction = new THREE.Vector3();
-    const rotation = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-    const matrix = new THREE.Matrix4();
-    let boneCount = 0;
-    for (const [ia, ib] of HAND_EDGES) {
-      a.fromArray(joints[ia]); b.fromArray(joints[ib]);
-      direction.subVectors(b, a);
-      const length = direction.length();
-      if (!Number.isFinite(length) || length < 1e-7) continue;
-      mid.addVectors(a, b).multiplyScalar(0.5);
-      rotation.setFromUnitVectors(up, direction.multiplyScalar(1 / length));
-      scale.set(0.0038, length, 0.0038);
-      matrix.compose(mid, rotation, scale);
-      handBones.setMatrixAt(boneCount++, matrix);
-    }
-    handBones.count = boneCount;
-    handBones.instanceMatrix.needsUpdate = true;
-
-    let jointCount = 0;
-    rotation.identity(); scale.setScalar(0.0052);
-    for (const p of joints) {
-      a.fromArray(p);
-      if (!Number.isFinite(a.x + a.y + a.z)) continue;
-      matrix.compose(a, rotation, scale);
-      handJoints.setMatrixAt(jointCount++, matrix);
-    }
-    handJoints.count = jointCount;
-    handJoints.instanceMatrix.needsUpdate = true;
+    drawCapsuleHand(handBones, handJoints, joints, HAND_BONE_R, HAND_JOINT_R);
   }
 
   function updateFrameGeometry(fg) {
-    // Hidden diagnostic layers must be computationally hidden too. Previously
-    // these Three.js objects were destroyed and rebuilt on every frame even
-    // though per-camera skeletons are off by default.
+    // Hidden diagnostic layers must be computationally hidden too — per-camera
+    // skeletons are off by default, so skip the packing entirely when hidden.
     if (layers.perCamera) {
-      clearGroup(camSkelGroup);
       const per = fg?.per_camera || {};
-      Object.keys(per).forEach((dev, i) => {
-        const arr = skelPositions(per[dev].points);
-        if (!arr.length) return;
-        const ls = new THREE.LineSegments(
-          new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(arr, 3)),
-          new THREE.LineBasicMaterial({ color: CAM_PALETTE[i % CAM_PALETTE.length] }));
-        camSkelGroup.add(ls);
+      let bOff = 0, jOff = 0;
+      Object.keys(per).slice(0, MAX_SKEL_CAMS).forEach((dev, i) => {
+        const r = packCapsuleHand(
+          perCamBones, perCamJoints, bOff, jOff, per[dev].points,
+          HAND_BONE_R, HAND_JOINT_R, CAM_COLORS[i % CAM_COLORS.length]);
+        bOff += r.nb; jOff += r.nj;
       });
+      perCamBones.count = bOff; perCamJoints.count = jOff;
+      perCamBones.instanceMatrix.needsUpdate = true;
+      perCamJoints.instanceMatrix.needsUpdate = true;
+      if (perCamBones.instanceColor) perCamBones.instanceColor.needsUpdate = true;
+      if (perCamJoints.instanceColor) perCamJoints.instanceColor.needsUpdate = true;
+    } else {
+      perCamBones.count = perCamJoints.count = 0;
     }
 
-    // Keep one small GPU buffer for the fused skeleton instead of replacing
-    // its BufferAttribute (and WebGL buffer) on every frame.
-    const fArr = fg?.fused_skeleton ? skelPositions(fg.fused_skeleton) : new Float32Array(0);
-    fusedPositions.fill(0);
-    fusedPositions.set(fArr.subarray(0, fusedPositions.length));
-    fusedPositionAttr.needsUpdate = true;
-    fusedSkel.geometry.setDrawRange(0, fArr.length / 3);
+    // Fused skeleton → IK: the amber capsule hand.
+    if (layers.fused) {
+      drawCapsuleHand(fusedBones, fusedJoints, fg?.fused_skeleton, HAND_BONE_R, HAND_JOINT_R);
+    } else {
+      fusedBones.count = fusedJoints.count = 0;
+    }
 
     // fitted capsule hand: fg.hand_capsules = C×[[ax,ay,az],[bx,by,bz]] world
     if (layers.handFit) updateHandFit(fg?.hand_capsules);
@@ -744,19 +872,24 @@ export function create(canvasEl, {
     return id;
   }
 
+  // These layers are packed on demand in updateFrameGeometry, so switching one
+  // back on needs a frame re-pack, not just a visibility flip.
+  const LAZY_LAYERS = ['perCamera', 'handFit', 'fused'];
   function setLayer(name, on) {
-    const needsRefresh = !!on && !layers[name] && (name === 'perCamera' || name === 'handFit');
+    const needsRefresh = !!on && !layers[name] && LAZY_LAYERS.includes(name);
     layers[name] = !!on;
     applyLayerVisibility();
     if (needsRefresh) setFrame(frame);
+    layerCb && layerCb({ ...layers });
   }
   function setLayers(obj) {
-    const needsRefresh = (!layers.perCamera && obj?.perCamera)
-      || (!layers.handFit && obj?.handFit);
+    const needsRefresh = LAZY_LAYERS.some(k => !layers[k] && obj?.[k]);
     layers = { ...layers, ...obj };
     applyLayerVisibility();
     if (needsRefresh) setFrame(frame);
+    layerCb && layerCb({ ...layers });
   }
+  function onLayerChange(cb) { layerCb = cb; }
   function setColorMode(m) { colorMode = m; applyLayerVisibility(); if (cmeta) setFrame(frame); }
   function setStride(n) { stride = Math.max(1, n | 0); applyLayerVisibility(); if (cmeta) setFrame(frame); }
   function onFrame(cb) { frameCb = cb; }
@@ -776,12 +909,13 @@ export function create(canvasEl, {
     renderer.dispose();
     renderer.forceContextLoss?.();
     renderer.domElement.remove();
+    legendEl.remove();
   }
 
   return {
     loadEpisode, setFrame, step, play, pause, stop, togglePlay, setRetargetData,
     skipSeconds, nextEpisode, setLayer, setLayers, setColorMode, setStride,
-    onFrame, dispose,
+    onFrame, onLayerChange, dispose,
     get frame() { return frame; },
     get nFrames() { return nFrames(); },
     get fps() { return fps(); },

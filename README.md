@@ -71,4 +71,7 @@ See [`viki/README.md`](viki/README.md) for the full package map and cross-cuttin
 
 ## License
 
-See [LICENSE](LICENSE).
+ViKi's source code is licensed under [Apache-2.0](LICENSE). Third-party
+dependencies, hardware SDKs, model weights, and robot assets retain their own
+terms. See the open [license audit and remediation checklist](docs/licensing_todo.md)
+before distributing the application or its Docker image.

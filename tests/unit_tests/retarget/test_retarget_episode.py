@@ -14,6 +14,8 @@ from viki.retarget.archive import load_archive
 
 def _synthetic_cln(ep, T: int = 12) -> None:
     pos = np.linspace([0.30, 0.0, 0.30], [0.38, 0.05, 0.30], T).astype(np.float32)
+    gripper = np.zeros(T, bool)
+    gripper[T // 2:] = True
     np.savez_compressed(
         ep.cln_npz,
         positions=pos,
@@ -21,7 +23,7 @@ def _synthetic_cln(ep, T: int = 12) -> None:
         rpy=np.zeros((T, 3), np.float32),
         valid=np.ones(T, bool),
         omega=np.ones(T, np.float32),
-        gripper=np.zeros(T, bool),
+        gripper=gripper,
         timestamps=(np.arange(T) * 33_000).astype(np.int64),
         raw_points=np.zeros((T, 21, 3), np.float32),
         smoothed_points=np.zeros((T, 21, 3), np.float32),
@@ -57,6 +59,14 @@ def test_retarget_episode_real_ik(tmp_path):
         assert q.ndim == 2 and q.shape[1] == 6 and np.isfinite(q).all()
         assert float(np.max(np.asarray(plan["position_error_m"]))) < 0.20  # < 20 cm
         assert np.asarray(plan["link_positions_calibration"]).shape[0] == len(q)
+        assert str(plan["gripper_model"]) == "robotiq_2f85"
+        assert str(plan["gripper_tcp_frame"]).endswith("robotiq_arg2f_tcp")
+        closed = np.asarray(plan["gripper_closed"], dtype=bool)
+        np.testing.assert_allclose(
+            np.asarray(plan["gripper_opening_m"]),
+            np.where(closed, 0.0, 0.085),
+        )
+        assert "gripper" in str(plan["point_groups_json"])
 
 
 @pytest.mark.slow

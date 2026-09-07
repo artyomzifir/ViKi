@@ -34,6 +34,13 @@ class Kinematics(Protocol):
     def collision_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]: ...
 
 
+def _set_frame(kinematics: Kinematics, frame: int) -> None:
+    """Select known per-frame passive joints when the adapter provides them."""
+    setter = getattr(kinematics, "set_frame", None)
+    if setter is not None:
+        setter(frame)
+
+
 @dataclass(frozen=True)
 class BatchWeights:
     position: float = 1.0
@@ -223,6 +230,7 @@ def solve_trajectory(
             report(stage="retarget_linearize", frame=iteration + 1, total=options.max_iterations)
         jacobians: list[np.ndarray] = []
         for t in range(n_frames):
+            _set_frame(kinematics, t)
             err, jac, pos, rot = _linearize_pose(
                 kinematics, q[t], positions[t], rotations[t], weights
             )
@@ -272,6 +280,7 @@ def solve_trajectory(
             rows: list[sparse.spmatrix] = []
             bounds: list[np.ndarray] = []
             for t in range(n_frames):
+                _set_frame(kinematics, t)
                 margin, jac = kinematics.collision_linearization(q[t])
                 margin = np.asarray(margin, dtype=np.float64).reshape(-1)
                 jac = np.asarray(jac, dtype=np.float64)
@@ -317,6 +326,7 @@ def solve_trajectory(
             break
 
     for t in range(n_frames):
+        _set_frame(kinematics, t)
         achieved_p[t], achieved_r[t] = kinematics.pose(q[t])
     position_error = np.linalg.norm(achieved_p - positions, axis=1)
     orientation_error = np.array([
@@ -337,13 +347,13 @@ def solve_trajectory(
 
 
 class PinocchioKinematics:
-    """Fixed-base adapter exposing one physical angle per actuated joint.
+    """Fixed-base adapter exposing only commanded arm joints to the solver.
 
     Pinocchio represents unbounded revolute joints as ``[cos(q), sin(q)]`` so
-    UR models have ``model.nq != model.nv``.  The batch problem and robot
-    command archive must contain six actual angles, not twelve embedding
-    coordinates.  We therefore optimise a tangent chart around neutral and
-    convert it to Pinocchio configuration vectors only for FK/collision.
+    some models have ``model.nq != model.nv``. The batch problem and robot
+    command archive contain physical arm angles, while attached-tool joints are
+    known inputs selected per frame. We optimise the arm in a tangent chart and
+    inject passive gripper positions only for FK and collision evaluation.
     """
 
     def __init__(
@@ -353,6 +363,9 @@ class PinocchioKinematics:
         *,
         collision_pairs: int,
         collision_min_distance_m: float,
+        actuated_joint_names: tuple[str, ...] | None = None,
+        passive_joint_positions: dict[str, np.ndarray] | None = None,
+        gripper_prefix: str = "",
     ) -> None:
         try:
             import pinocchio as pin
@@ -369,28 +382,119 @@ class PinocchioKinematics:
         if self.frame_id >= len(self.model.frames):
             raise ValueError(f"robot model has no end-effector frame {ee_frame!r}")
         self.configuration_reference = np.asarray(pin.neutral(self.model), dtype=np.float64)
-        self.nq = int(self.model.nv)
+
+        if actuated_joint_names is None:
+            active_joint_ids = [
+                joint_id
+                for joint_id in range(1, self.model.njoints)
+                if int(self.model.nvs[joint_id]) > 0
+            ]
+        else:
+            active_joint_ids = []
+            for name in actuated_joint_names:
+                joint_id = int(self.model.getJointId(name))
+                if joint_id >= self.model.njoints:
+                    raise ValueError(f"robot model has no actuated joint {name!r}")
+                active_joint_ids.append(joint_id)
+        if not active_joint_ids:
+            raise ValueError("robot model exposes no actuated joints")
+
+        active_v_indices: list[int] = []
+        for joint_id in active_joint_ids:
+            joint_nv = int(self.model.nvs[joint_id])
+            if joint_nv != 1:
+                raise ValueError(
+                    "PoC batch solver supports fixed-base chains with 1-DoF arm joints"
+                )
+            active_v_indices.append(int(self.model.idx_vs[joint_id]))
+        if len(set(active_v_indices)) != len(active_v_indices):
+            raise ValueError("actuated joint list contains duplicate velocity coordinates")
+        self._active_joint_ids = tuple(active_joint_ids)
+        self._active_v_indices = np.asarray(active_v_indices, dtype=np.int32)
+        self.nq = len(active_joint_ids)
         self.q_reference = np.zeros(self.nq, dtype=np.float64)
         self.q_min = np.full(self.nq, -np.inf, dtype=np.float64)
         self.q_max = np.full(self.nq, np.inf, dtype=np.float64)
-        for joint_id in range(1, self.model.njoints):
+        for output_index, joint_id in enumerate(active_joint_ids):
             joint_nq = int(self.model.nqs[joint_id])
             joint_nv = int(self.model.nvs[joint_id])
-            if joint_nv == 0:
-                continue
             if joint_nv != 1 or joint_nq not in (1, 2):
                 raise ValueError(
                     "PoC batch solver supports fixed-base chains with 1-DoF joints"
                 )
-            v_index = int(self.model.idx_vs[joint_id])
             if joint_nq == 1:
                 q_index = int(self.model.idx_qs[joint_id])
-                self.q_min[v_index] = float(self.model.lowerPositionLimit[q_index])
-                self.q_max[v_index] = float(self.model.upperPositionLimit[q_index])
+                self.q_min[output_index] = float(self.model.lowerPositionLimit[q_index])
+                self.q_max[output_index] = float(self.model.upperPositionLimit[q_index])
         self.q_min[~np.isfinite(self.q_min) | (self.q_min < -1e10)] = -np.inf
         self.q_max[~np.isfinite(self.q_max) | (self.q_max > 1e10)] = np.inf
-        self.velocity_limit = np.asarray(self.model.velocityLimit, dtype=np.float64).copy()
+        self.velocity_limit = np.asarray(
+            self.model.velocityLimit, dtype=np.float64
+        )[self._active_v_indices].copy()
         self.velocity_limit[~np.isfinite(self.velocity_limit) | (self.velocity_limit <= 0)] = np.inf
+
+        self._passive_positions: list[tuple[int, np.ndarray]] = []
+        passive_lengths: set[int] = set()
+        for name, trajectory in (passive_joint_positions or {}).items():
+            joint_id = int(self.model.getJointId(name))
+            if joint_id >= self.model.njoints:
+                raise ValueError(f"robot model has no passive joint {name!r}")
+            if joint_id in active_joint_ids:
+                raise ValueError(f"joint {name!r} cannot be both actuated and passive")
+            if int(self.model.nqs[joint_id]) != 1 or int(self.model.nvs[joint_id]) != 1:
+                raise ValueError(f"passive joint {name!r} must own one configuration coordinate")
+            values = np.asarray(trajectory, dtype=np.float64)
+            if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
+                raise ValueError(f"passive joint {name!r} needs a finite 1-D trajectory")
+            q_index = int(self.model.idx_qs[joint_id])
+            lower = float(self.model.lowerPositionLimit[q_index])
+            upper = float(self.model.upperPositionLimit[q_index])
+            if np.any(values < lower - 1e-9) or np.any(values > upper + 1e-9):
+                raise ValueError(
+                    f"passive joint {name!r} exceeds URDF limits [{lower}, {upper}]"
+                )
+            self._passive_positions.append((q_index, values.copy()))
+            passive_lengths.add(len(values))
+        if len(passive_lengths) > 1:
+            raise ValueError("passive joint trajectories have different frame counts")
+        self._passive_frame_count = next(iter(passive_lengths), 0)
+        self._frame = 0
+
+        self._scene_frame_ids = [0] + [
+            frame_id
+            for frame_id, frame in enumerate(self.model.frames)
+            if frame_id > 0 and frame.type == pin.FrameType.BODY
+        ]
+        scene_index = {
+            frame_id: index for index, frame_id in enumerate(self._scene_frame_ids)
+        }
+        scene_edges: list[tuple[int, int]] = []
+        scene_edge_groups: list[str] = []
+        for child_index, frame_id in enumerate(self._scene_frame_ids[1:], start=1):
+            parent_frame = int(self.model.frames[frame_id].parentFrame)
+            seen: set[int] = set()
+            while parent_frame not in scene_index and parent_frame not in seen:
+                seen.add(parent_frame)
+                if parent_frame <= 0:
+                    parent_frame = 0
+                    break
+                parent_frame = int(self.model.frames[parent_frame].parentFrame)
+            parent_index = scene_index.get(parent_frame, 0)
+            scene_edges.append((parent_index, child_index))
+            child_name = str(self.model.frames[frame_id].name)
+            scene_edge_groups.append(
+                "gripper" if gripper_prefix and child_name.startswith(gripper_prefix)
+                else "robot"
+            )
+        self._link_edges = np.asarray(scene_edges, dtype=np.int32).reshape(-1, 2)
+        self._link_groups = tuple(scene_edge_groups)
+        self._point_groups = tuple(
+            "gripper"
+            if gripper_prefix
+            and str(self.model.frames[frame_id].name).startswith(gripper_prefix)
+            else "robot"
+            for frame_id in self._scene_frame_ids
+        )
 
         self.collision_model = getattr(robot, "collision_model", None)
         self.collision_data = None
@@ -406,22 +510,21 @@ class PinocchioKinematics:
             # removal). Apply this to generated and vendor/SRDF-provided lists.
             collision_data = self.collision_model.createData()
             neutral_data = self.model.createData()
-            self.pin.forwardKinematics(
-                self.model, neutral_data, self.configuration_reference
-            )
+            neutral_configuration = self._configuration(self.q_reference)
+            self.pin.forwardKinematics(self.model, neutral_data, neutral_configuration)
             self.pin.updateGeometryPlacements(
                 self.model,
                 neutral_data,
                 self.collision_model,
                 collision_data,
-                self.configuration_reference,
+                neutral_configuration,
             )
             self.pin.computeDistances(
                 self.model,
                 neutral_data,
                 self.collision_model,
                 collision_data,
-                self.configuration_reference,
+                neutral_configuration,
             )
             keep_pairs = []
             for pair, distance in zip(
@@ -452,6 +555,16 @@ class PinocchioKinematics:
                 min(int(collision_pairs), total), d_min=float(collision_min_distance_m)
             )
 
+    def set_frame(self, frame: int) -> None:
+        if self._passive_frame_count == 0:
+            self._frame = 0
+            return
+        if not 0 <= int(frame) < self._passive_frame_count:
+            raise IndexError(
+                f"passive-joint frame {frame} outside [0, {self._passive_frame_count})"
+            )
+        self._frame = int(frame)
+
     def pose(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         configuration = self._configuration(q)
         self.pin.forwardKinematics(self.model, self.data, configuration)
@@ -466,8 +579,13 @@ class PinocchioKinematics:
         values = np.asarray(q, dtype=np.float64)
         if values.shape != (self.nq,):
             raise ValueError(f"expected {self.nq} joint angles, got {values.shape}")
+        reference = self.configuration_reference.copy()
+        for q_index, trajectory in self._passive_positions:
+            reference[q_index] = trajectory[self._frame]
+        tangent = np.zeros(self.model.nv, dtype=np.float64)
+        tangent[self._active_v_indices] = values
         return np.asarray(
-            self.pin.integrate(self.model, self.configuration_reference, values),
+            self.pin.integrate(self.model, reference, tangent),
             dtype=np.float64,
         )
 
@@ -481,26 +599,33 @@ class PinocchioKinematics:
             collision_model=self.collision_model,
             collision_data=self.collision_model.createData(),
         )
+        jacobian = np.asarray(self.collision_barrier.compute_jacobian(configuration))
         return (
             np.asarray(self.collision_barrier.compute_barrier(configuration)),
-            np.asarray(self.collision_barrier.compute_jacobian(configuration)),
+            jacobian[:, self._active_v_indices],
         )
 
     def joint_points(self, q: np.ndarray) -> np.ndarray:
-        """URDF joint origins, including the robot-base origin at index zero."""
+        """URDF body-frame origins, including fixed tool/TCP frames."""
         self.pin.forwardKinematics(self.model, self.data, self._configuration(q))
-        points = np.zeros((self.model.njoints, 3), dtype=np.float64)
-        for joint_id in range(1, self.model.njoints):
-            points[joint_id] = np.asarray(self.data.oMi[joint_id].translation)
+        self.pin.updateFramePlacements(self.model, self.data)
+        points = np.zeros((len(self._scene_frame_ids), 3), dtype=np.float64)
+        for index, frame_id in enumerate(self._scene_frame_ids[1:], start=1):
+            points[index] = np.asarray(self.data.oMf[frame_id].translation)
         return points
 
     @property
     def link_edges(self) -> np.ndarray:
-        return np.asarray(
-            [[int(self.model.parents[j]), j] for j in range(1, self.model.njoints)],
-            dtype=np.int32,
-        )
+        return self._link_edges.copy()
+
+    @property
+    def link_groups(self) -> tuple[str, ...]:
+        return self._link_groups
+
+    @property
+    def point_groups(self) -> tuple[str, ...]:
+        return self._point_groups
 
     @property
     def joint_names(self) -> list[str]:
-        return [str(name) for name in self.model.names]
+        return [str(self.model.names[joint_id]) for joint_id in self._active_joint_ids]

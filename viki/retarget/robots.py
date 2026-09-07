@@ -16,6 +16,7 @@ __all__ = ["RobotConfig", "ROBOT_CONFIGS", "ROBOT_ALIASES", "normalize_robot"]
 class RobotConfig:
     description: str  # robot_descriptions model name
     ee_frame: str  # Pinocchio frame tracked by the IK
+    mount_frame: str  # flange/tool frame where a gripper model is appended
     joint_names: tuple[str, ...]
 
 
@@ -30,12 +31,14 @@ _UR = (
 _IIWA = tuple(f"iiwa_joint_{i}" for i in range(1, 8))
 
 ROBOT_CONFIGS: dict[str, RobotConfig] = {
-    "ur3": RobotConfig("ur3_official_description", "wrist_3_link", _UR),
-    "ur5": RobotConfig("ur5_official_description", "wrist_3_link", _UR),
-    "ur10": RobotConfig("ur10_official_description", "wrist_3_link", _UR),
-    "ur5e": RobotConfig("ur5e_description", "wrist_3_link", _UR),
-    "ur10e": RobotConfig("ur10e_description", "wrist_3_link", _UR),
-    "iiwa14": RobotConfig("iiwa14_description", "iiwa_link_ee", _IIWA),
+    "ur3": RobotConfig("ur3_official_description", "wrist_3_link", "tool0", _UR),
+    "ur5": RobotConfig("ur5_official_description", "wrist_3_link", "tool0", _UR),
+    "ur10": RobotConfig("ur10_official_description", "wrist_3_link", "tool0", _UR),
+    "ur5e": RobotConfig("ur5e_description", "wrist_3_link", "tool0", _UR),
+    "ur10e": RobotConfig("ur10e_description", "wrist_3_link", "tool0", _UR),
+    "iiwa14": RobotConfig(
+        "iiwa14_description", "iiwa_link_ee", "iiwa_link_ee", _IIWA
+    ),
 }
 
 # Legacy / verbose spellings accepted on the CLI and in saved archives.

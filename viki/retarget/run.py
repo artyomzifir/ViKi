@@ -32,6 +32,11 @@ from viki.retarget.frames import (
     robot_to_calibration,
     validate_base_position,
 )
+from viki.retarget.grippers import (
+    DEFAULT_GRIPPER,
+    attach_gripper,
+    normalize_gripper,
+)
 from viki.retarget.robots import RobotConfig, normalize_robot
 from viki.retarget.solver import (
     BatchOptions,
@@ -123,12 +128,21 @@ def config_from_options(
         qp_solver=str(_setting(values, "qp_solver", "RETARGET_QP_SOLVER", "osqp")),
         collision_enabled=collision_enabled,
     )
+    gripper_name = str(
+        _setting(
+            values,
+            "gripper",
+            "RETARGET_DEFAULT_GRIPPER_MODEL",
+            DEFAULT_GRIPPER,
+        )
+    )
+    physical_gripper = normalize_gripper(gripper_name)
     out = RetargetConfig(
         robot=str(robot or _setting(values, "robot", "RETARGET_DEFAULT_ROBOT", "ur10")),
         base_position=tuple(float(x) for x in base),
         hand_to_ee_translation=tuple(float(x) for x in hand_t),
         hand_to_ee_rpy_deg=tuple(float(x) for x in hand_rpy),
-        gripper=str(_setting(values, "gripper", "GRIPPER", "binary")),
+        gripper=physical_gripper.key,
         pose_source=str(
             _setting(values, "pose_source", "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
         ),
@@ -156,7 +170,6 @@ def config_from_options(
         raise ValueError("approach_sec must be non-negative")
     if out.collision_pairs < 0 or out.collision_min_distance_m < 0.0:
         raise ValueError("collision settings must be non-negative")
-    load_gripper(out.gripper)  # validate the implementation at request time
     normalize_robot(out.robot)
     return out
 
@@ -272,8 +285,12 @@ def _load_robot_description(description: str):
     return load_robot_description(description)
 
 
-def _gripper_commands(closed: np.ndarray, confidence: np.ndarray, name: str) -> tuple[np.ndarray, tuple[str, ...]]:
-    model = load_gripper(name)
+def _gripper_commands(
+    closed: np.ndarray, confidence: np.ndarray
+) -> tuple[np.ndarray, tuple[str, ...]]:
+    # Perception still emits one semantic binary state. The physical gripper
+    # registry separately maps it to the URDF's master joint for geometry.
+    model = load_gripper("binary")
     states = [
         GripperState(
             closed=bool(is_closed),
@@ -345,6 +362,7 @@ def retarget_episode(
         raise FileNotFoundError(f"no cln.npz for episode {ep.id}; run Extract first")
     cfg = config_from_options(robot, options)
     robot_cfg: RobotConfig = normalize_robot(cfg.robot)
+    gripper_cfg = normalize_gripper(cfg.gripper)
     targets = load_targets(ep.cln_npz, cfg)
     rig_to_calibration = load_rig_to_calibration(ep.raw_dir)
     hand_calib_p, hand_calib_r = rig_pose_to_calibration(
@@ -364,12 +382,19 @@ def retarget_episode(
             f"{robot_cfg.description}: {len(target_robot_p)} frames in {CALIBRATION_FRAME}, "
             f"base={list(cfg.base_position)}"
         )
-    robot_model = _load_robot_description(robot_cfg.description)
+    arm_model = _load_robot_description(robot_cfg.description)
+    assembly = attach_gripper(arm_model, robot_cfg, gripper_cfg)
+    gripper_joint_position = gripper_cfg.joint_positions(targets.gripper_closed)
     kinematics = PinocchioKinematics(
-        robot_model,
-        robot_cfg.ee_frame,
+        assembly.robot,
+        assembly.tcp_frame,
         collision_pairs=cfg.collision_pairs,
         collision_min_distance_m=cfg.collision_min_distance_m,
+        actuated_joint_names=robot_cfg.joint_names,
+        passive_joint_positions={
+            assembly.drive_joint: gripper_joint_position,
+        },
+        gripper_prefix=assembly.gripper_prefix,
     )
     result = solve_trajectory(
         kinematics,
@@ -382,12 +407,15 @@ def retarget_episode(
         report=report,
     )
     achieved_calib = robot_to_calibration(result.achieved_position, cfg.base_position)
-    link_positions = np.stack([
-        robot_to_calibration(kinematics.joint_points(q), cfg.base_position)
-        for q in result.q
-    ])
+    link_positions = []
+    for frame, q in enumerate(result.q):
+        kinematics.set_frame(frame)
+        link_positions.append(
+            robot_to_calibration(kinematics.joint_points(q), cfg.base_position)
+        )
+    link_positions = np.stack(link_positions)
     gripper_command, command_names = _gripper_commands(
-        targets.gripper_closed, targets.confidence, cfg.gripper
+        targets.gripper_closed, targets.confidence
     )
     dt = 1.0 / targets.fps
     velocity = np.gradient(result.q, dt, axis=0) if len(result.q) > 1 else np.zeros_like(result.q)
@@ -419,16 +447,18 @@ def retarget_episode(
         ),
     }
     plan = {
-        "schema_version": 2,
+        "schema_version": 3,
         "coordinate_frame": CALIBRATION_FRAME,
         "timestamps": targets.timestamps,
         "fps": targets.fps,
         "dt": dt,
         "robot": robot_cfg.description,
         "robot_key": cfg.robot,
-        "ee_frame": robot_cfg.ee_frame,
+        "ee_frame": assembly.tcp_frame,
         "joint_names_json": json.dumps(kinematics.joint_names),
         "link_edges": kinematics.link_edges,
+        "link_groups_json": json.dumps(kinematics.link_groups),
+        "point_groups_json": json.dumps(kinematics.point_groups),
         "T_calibration_rig": rig_to_calibration,
         "base_position_calibration": np.asarray(cfg.base_position),
         "q": result.q.astype(np.float32),
@@ -436,9 +466,16 @@ def retarget_episode(
         "joint_velocity": velocity.astype(np.float32),
         "joint_acceleration": acceleration.astype(np.float32),
         "gripper_model": cfg.gripper,
+        "gripper_description": str(gripper_cfg.description),
+        "gripper_tcp_frame": assembly.tcp_frame,
+        "gripper_drive_joint": assembly.drive_joint,
         "gripper_command_names_json": json.dumps(command_names),
         "gripper_command": gripper_command,
         "gripper_closed": targets.gripper_closed,
+        "gripper_joint_position": gripper_joint_position.astype(np.float32),
+        "gripper_opening_m": gripper_cfg.opening_widths(
+            targets.gripper_closed
+        ).astype(np.float32),
         "omega": targets.confidence.astype(np.float32),
         "target_position_calibration": target_calib_p.astype(np.float32),
         "target_rotation_calibration": target_calib_r.astype(np.float32),
@@ -454,7 +491,7 @@ def retarget_episode(
         "source_pose": targets.pose_source,
     }
     assert set(plan) == set(PLAN_KEYS)
-    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v2")
+    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v3")
     mark_stage(
         ep,
         "retarget",
