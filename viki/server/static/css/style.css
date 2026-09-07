@@ -220,6 +220,11 @@ header h1 {
 }
 .calib-cards, .record-cards { min-width: 0; overflow-y: auto; align-content: start;
   display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 14px; }
+/* Record tab: depth is behind the RGB/D toggle now, so the preview does not
+   need to dominate the card — keep cards compact and packed. */
+.record-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 360px));
+  justify-content: start; }
+.record-cards .stream-panel { max-height: 24vh; }
 
 .calib-sets { flex: 1; min-height: 0; display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
