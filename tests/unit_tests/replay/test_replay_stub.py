@@ -12,9 +12,10 @@ from viki.retarget.archive import load_archive, write_hdf5_archive
 
 def test_dryrun_driver_echoes_plan():
     q = np.random.rand(20, 6)
-    g = np.zeros(20, dtype=bool)
+    g = np.linspace(0.0, 1.0, 20)
     log = DryRunDriver().execute(q, g, dt=1 / 30)
     np.testing.assert_array_equal(log.q_attained, q)
+    np.testing.assert_array_equal(log.gripper_attained, g)
     assert np.isnan(log.controller_residual).all()
 
 
@@ -52,3 +53,5 @@ def test_replay_episode_writes_replay_h5(tmp_path):
     with load_archive(ep.replay_h5) as arc:
         assert set(arc.files) == set(REPLAY_KEYS)
         assert str(arc["verdict"]) in ("dry-run", "pass", "reject")
+        # Legacy binary ``closed=0`` is migrated to continuous fully-open=1.
+        np.testing.assert_array_equal(arc["gripper_attained"], np.ones(15))

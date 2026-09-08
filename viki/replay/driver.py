@@ -23,7 +23,7 @@ class ProprioLog:
     """What the robot actually did during execution."""
 
     q_attained: np.ndarray  # (T, nq)
-    gripper_attained: np.ndarray  # (T,) bool
+    gripper_attained: np.ndarray  # (T,) float, normalised opening
     controller_residual: np.ndarray  # (T,) float, NaN if not measured
 
 
@@ -46,7 +46,11 @@ class DryRunDriver(RobotDriver):
 
     def execute(self, q_traj: np.ndarray, gripper: np.ndarray, dt: float) -> ProprioLog:
         q = np.asarray(q_traj, dtype=np.float64)
-        g = np.asarray(gripper, dtype=bool)
+        g = np.asarray(gripper, dtype=np.float64)
+        if g.shape != (len(q),) or not np.isfinite(g).all():
+            raise ValueError("gripper opening must be a finite (T,) trajectory")
+        if np.any(g < 0.0) or np.any(g > 1.0):
+            raise ValueError("gripper opening must stay in [0, 1]")
         return ProprioLog(
             q_attained=q.copy(),
             gripper_attained=g.copy(),

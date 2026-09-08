@@ -15,6 +15,7 @@ The re-solve loop is not implemented (``max_resolves`` is accepted but ignored).
 from __future__ import annotations
 
 import logging
+import json
 
 import numpy as np
 
@@ -43,12 +44,23 @@ def replay_episode(
         robot = str(plan["robot"])
         command = np.asarray(plan["gripper_command"], dtype=np.float64)
         gripper_model = str(plan["gripper_model"])
+        command_names = (
+            json.loads(str(plan["gripper_command_names_json"]))
+            if "gripper_command_names_json" in plan else []
+        )
     if command.shape != (len(q_plan), 1):
         raise ValueError(
-            f"the current replay driver accepts only one-dimensional binary "
-            f"gripper commands, got {gripper_model!r} {command.shape}"
+            f"the current replay driver accepts one-dimensional gripper "
+            f"commands, got {gripper_model!r} {command.shape}"
         )
-    gripper = command[:, 0] >= 0.5
+    # V3 and older plans encoded ``closed`` (1 closed). V4 encodes normalised
+    # ``opening`` (0 closed, 1 open). Drivers only see the current convention.
+    legacy_closed = command_names == ["closed"] or (
+        not command_names and gripper_model == "binary"
+    )
+    gripper = 1.0 - command[:, 0] if legacy_closed else command[:, 0]
+    if not np.isfinite(gripper).all() or np.any(gripper < 0.0) or np.any(gripper > 1.0):
+        raise ValueError("gripper command must be a normalised opening in [0, 1]")
 
     drv = load_driver(driver)
     try:

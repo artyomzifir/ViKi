@@ -61,7 +61,7 @@ def _episode_frames(ep: Episode, fps: int) -> tuple[list[dict], str, int, list[s
         else:
             command = np.asarray(arc["gripper_command"], dtype=np.float32)
             if command.ndim != 2 or command.shape[1] != 1:
-                raise ValueError("export currently supports binary gripper plans only")
+                raise ValueError("export currently supports one-dimensional gripper plans only")
             grip = command[:, 0]
         resid = np.asarray(
             arc["controller_residual"] if "controller_residual" in arc else np.full(len(q), np.nan),
