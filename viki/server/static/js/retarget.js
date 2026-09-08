@@ -1,27 +1,41 @@
 // Retarget tab — whole-trajectory IK plus a shared scene3d comparison view.
 import { api, log, FRONTEND_CONFIG, sessionGet, sessionSet, sessionPatch } from './core.js';
+import { refreshJobs } from './jobs.js';
 import * as scene3d from './scene3d.js';
 import * as episodes from './episodes.js';
 
 let root = null, ctl = null, epList = [], robots = [], grippers = [], viewedEp = null, viewedPlan = null;
-let poll = 0, lastDoneSignature = '', showingPreview = false;
+let lastDoneSignature = '', showingPreview = false;
 
 function field(role, label, value, step = 'any', min = '') {
   return `<div class="cfg-row"><label>${label}</label><input type="number" data-role="${role}"
     value="${value}" step="${step}" ${min !== '' ? `min="${min}"` : ''}></div>`;
 }
 
-function vectorFields(prefix, values, unit = 'm', label = null) {
+function vectorFields(prefix, values, unit = 'm', label = null, step = 0.001) {
   return `<div class="ret-vector"><span>${label || prefix.replaceAll('-', ' ')} <i>${unit}</i></span>
     ${['x', 'y', 'z'].map((axis, i) => `<label>${axis}<input type="number" data-role="${prefix}-${axis}"
-      value="${values[i]}" step="0.001"></label>`).join('')}</div>`;
+      value="${values[i]}" step="${step}"></label>`).join('')}</div>`;
+}
+
+function rpyFields(prefix, values, label = 'RPY', step = 1) {
+  const axes = ['x', 'y', 'z'];
+  const names = ['roll', 'pitch', 'yaw'];
+  return `<div class="ret-vector"><span>${label} <i>deg</i></span>
+    ${axes.map((axis, i) => `<label>${names[i]}<input type="number" data-role="${prefix}-${axis}"
+      value="${values[i]}" step="${step}"></label>`).join('')}</div>`;
 }
 
 export function mount(view) {
   const defaults = FRONTEND_CONFIG.retarget || {};
   // v3 resets position-only sessions now that the calibrated orientation term
   // is part of the default objective.
-  const S = { ...defaults, ...sessionGet('retarget-v4', {}) };
+  const S = { ...defaults, ...sessionGet('retarget-v5', {}) };
+  // A fresh tab starts with the neutral assembly instead of an empty scene.
+  // Selecting an episode below replaces it with that episode's plan.
+  showingPreview = true;
+  viewedEp = null;
+  viewedPlan = null;
   root = document.createElement('div');
   root.className = 'retarget-tab';
   root.innerHTML = `
@@ -57,20 +71,38 @@ export function mount(view) {
         <div class="cfg-row"><label>Pose source</label><select data-role="pose-source">
           <option value="landmarks">landmarks</option><option value="hand_fit">hand fit</option>
         </select></div>
+        <div class="cfg-row"><label>Position anchor</label><select data-role="target-anchor">
+          <option value="pinch_center">thumb–index midpoint</option>
+          <option value="wrist">wrist (legacy)</option>
+        </select></div>
         <div class="cfg-row"><label>Gripper</label><select data-role="gripper"></select></div>
-        <div class="hint" data-role="gripper-meta">physical URDF · binary command</div>
+        <div class="hint" data-role="gripper-meta">physical URDF · continuous opening</div>
       </section>
 
       <section class="calib-sec">
         <div class="calib-sec-title">2 · Calibration-frame placement</div>
-        <div class="hint">Robot axes equal calibration axes. Registration is translation only.</div>
-        ${vectorFields('base', S.basePosition || [0, 0, 0])}
-        ${vectorFields('hand-to-ee', S.handToEeTranslation || [0, 0, 0], 'm', 'hand to TCP')}
-        ${vectorFields('hand-to-ee-rpy', S.handToEeRpyDeg || [0, 0, 0], 'deg', 'hand to TCP rpy')}
+        <div class="hint">Robot-base pose in the calibrated scene. RPY is extrinsic XYZ in degrees.</div>
+        ${vectorFields('base', S.basePosition || [0, 0, 0], 'm', 'position')}
+        ${rpyFields('base-rpy', S.baseRpyDeg || [0, 0, 0], 'base RPY')}
       </section>
 
       <section class="calib-sec">
-        <div class="calib-sec-title">3 · Trajectory objective</div>
+        <div class="calib-sec-title">3 · User adapter (PoC cylinder)</div>
+        <div class="hint">Flange → gripper-base offset. The cylinder spans this vector and is used for visualisation and collision.</div>
+        ${vectorFields('adapter', S.adapterTranslationMm || [0, 0, 11], 'mm', 'offset', 0.1)}
+        ${vectorFields('adapter-rpy', S.adapterRpyDeg || [0, 0, 0], 'deg', 'gripper RPY', 0.1)}
+        ${field('adapter-radius', 'cylinder radius, mm', S.adapterRadiusMm ?? 35, 0.5, 0.1)}
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">4 · Human target → TCP</div>
+        <div class="hint">Position is tracked at the midpoint of both jaw panels; orientation comes from the stable palm frame.</div>
+        ${vectorFields('hand-to-ee', S.handToEeTranslation || [0, 0, 0], 'm', 'target to TCP')}
+        ${vectorFields('hand-to-ee-rpy', S.handToEeRpyDeg || [0, 0, 0], 'deg', 'palm to TCP RPY')}
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">5 · Trajectory objective</div>
         ${field('w-position', 'position', S.wPosition ?? 1, 0.01, 0)}
         ${field('w-orientation', 'orientation', S.wOrientation ?? 0.01, 0.01, 0)}
         <div class="hint">SO(3) tracking through the fixed hand→gripper TCP rotation above.</div>
@@ -91,12 +123,9 @@ export function mount(view) {
         ${field('max-iterations', 'GN iterations', S.maxIterations ?? 40, 1, 1)}
         ${field('max-step', 'trust step, rad', S.maxStepRad ?? 0.2, 0.05, 0.01)}
         ${field('approach-sec', 'approach, s', S.approachSec ?? 2, 0.5, 0)}
-        <div class="hint">joint limits · velocity limits · OSQP · sparse whole-trajectory QP</div>
+        <div class="hint">collision-geometry floor z ≥ 0 · joint limits · velocity limits · OSQP · sparse whole-trajectory QP</div>
       </section>
 
-      <section class="calib-sec">
-        <div class="calib-sec-title">Queue</div><div class="perc-queue" data-role="queue"></div>
-      </section>
     </aside>`;
   view.appendChild(root);
 
@@ -114,6 +143,7 @@ export function mount(view) {
     if (frameError) frameError.textContent = frameErrorText(viewedPlan, frameNo);
   });
   root.querySelector('[data-role="pose-source"]').value = S.poseSource || 'landmarks';
+  root.querySelector('[data-role="target-anchor"]').value = S.targetPositionAnchor || 'pinch_center';
   ctl.onLayerChange(l => sessionSet('retargetLayers', l));
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
@@ -121,15 +151,30 @@ export function mount(view) {
   Promise.all([
     loadRobots(S.robot), loadGrippers(S.gripper), loadDatasets(S.dataset),
   ]).then(() => previewRobot()).catch(e => log('retarget: ' + e, 'error'));
-  refreshQueue();
-  poll = setInterval(refreshQueue, 1500);
+  document.addEventListener('jobs:updated', onJobsUpdated);
+  refreshJobs();
 }
 
 export function unmount() {
-  clearInterval(poll); poll = 0;
+  document.removeEventListener('jobs:updated', onJobsUpdated);
   ctl?.dispose(); ctl = null;
   viewedPlan = null;
   root?.remove(); root = null;
+}
+
+// The global job widget owns the queue UI now; the Retarget tab only still
+// cares that when a retarget job for the episode on screen finishes, the
+// comparison view refreshes to the freshly solved plan.
+function onJobsUpdated(e) {
+  if (!root) return;
+  const done = (e.detail || [])
+    .filter(job => job.kind === 'retarget' && job.status === 'done');
+  const signature = done.map(job => `${job.id}:${job.finished}`).join('|');
+  if (viewedEp && signature && signature !== lastDoneSignature
+      && done.some(job => job.episode === viewedEp)) {
+    viewEpisode(viewedEp);
+  }
+  lastDoneSignature = signature;
 }
 
 
@@ -192,8 +237,13 @@ function options() {
   return {
     robot: root.querySelector('[data-role="robot"]').value,
     pose_source: root.querySelector('[data-role="pose-source"]').value,
+    target_position_anchor: root.querySelector('[data-role="target-anchor"]').value,
     gripper: root.querySelector('[data-role="gripper"]').value,
     base_position: vector('base'),
+    base_rpy_deg: vector('base-rpy'),
+    adapter_translation_mm: vector('adapter'),
+    adapter_rpy_deg: vector('adapter-rpy'),
+    adapter_radius_mm: number('adapter-radius'),
     hand_to_ee_translation: vector('hand-to-ee'),
     hand_to_ee_rpy_deg: vector('hand-to-ee-rpy'),
     w_position: number('w-position'), w_orientation: number('w-orientation'),
@@ -213,8 +263,12 @@ function options() {
 function persist() {
   if (!root) return;
   const o = options();
-  sessionSet('retarget-v4', {
-    robot: o.robot, gripper: o.gripper, poseSource: o.pose_source, basePosition: o.base_position,
+  sessionSet('retarget-v5', {
+    robot: o.robot, gripper: o.gripper, poseSource: o.pose_source,
+    targetPositionAnchor: o.target_position_anchor, basePosition: o.base_position,
+    baseRpyDeg: o.base_rpy_deg,
+    adapterTranslationMm: o.adapter_translation_mm, adapterRpyDeg: o.adapter_rpy_deg,
+    adapterRadiusMm: o.adapter_radius_mm,
     handToEeTranslation: o.hand_to_ee_translation, handToEeRpyDeg: o.hand_to_ee_rpy_deg,
     wPosition: o.w_position, wOrientation: o.w_orientation, wVelocity: o.w_velocity,
     wAcceleration: o.w_acceleration, wPosture: o.w_posture, huberDelta: o.huber_delta,
@@ -235,17 +289,28 @@ function syncRobotMeta() {
 function syncGripperMeta() {
   const item = grippers.find(g => g.key === root.querySelector('[data-role="gripper"]').value);
   root.querySelector('[data-role="gripper-meta"]').textContent = item
-    ? `${item.description || 'URDF pending'} · TCP ${item.tcp_frame || 'pending'} · ${(1000 * item.max_width_m).toFixed(0)} mm · ${item.license}`
-    : 'physical URDF · binary command';
+    ? `${item.description || 'URDF pending'} · point ${item.tracking_point || item.tcp_frame || 'pending'} · ${(1000 * item.max_width_m).toFixed(0)} mm · ${(1000 * item.max_speed_m_s).toFixed(0)} mm/s · ${item.license}`
+    : 'physical URDF · continuous opening';
 }
 
 async function previewRobot() {
   if (!showingPreview || !ctl) return;
   const [x, y, z] = vector('base');
-  const robot = encodeURIComponent(root.querySelector('[data-role="robot"]').value);
-  const gripper = encodeURIComponent(root.querySelector('[data-role="gripper"]').value);
+  const [baseRoll, basePitch, baseYaw] = vector('base-rpy');
+  const robot = root.querySelector('[data-role="robot"]').value;
+  const gripper = root.querySelector('[data-role="gripper"]').value;
+  const [adapterX, adapterY, adapterZ] = vector('adapter');
+  const [adapterRoll, adapterPitch, adapterYaw] = vector('adapter-rpy');
+  const params = new URLSearchParams({
+    robot, gripper, x, y, z,
+    base_roll_deg: baseRoll, base_pitch_deg: basePitch, base_yaw_deg: baseYaw,
+    adapter_x_mm: adapterX, adapter_y_mm: adapterY, adapter_z_mm: adapterZ,
+    adapter_roll_deg: adapterRoll, adapter_pitch_deg: adapterPitch,
+    adapter_yaw_deg: adapterYaw, adapter_radius_mm: number('adapter-radius'),
+    target_position_anchor: root.querySelector('[data-role="target-anchor"]').value,
+  });
   try {
-    const data = await api('GET', `/api/pipeline/retarget/preview?robot=${robot}&gripper=${gripper}&x=${x}&y=${y}&z=${z}`);
+    const data = await api('GET', `/api/pipeline/retarget/preview?${params}`);
     ctl.setRetargetData(data);
     renderMetrics(data);
   } catch (e) { log('robot preview: ' + e, 'error'); }
@@ -254,17 +319,25 @@ async function previewRobot() {
 function renderMetrics(data) {
   const box = root.querySelector('[data-role="metrics"]');
   if (!data?.ready || data.preview) {
-    box.innerHTML = `<b>${data?.robot_key || 'robot'} + ${data?.gripper_label || data?.gripper_model || 'gripper'} · neutral URDF preview</b><span>Run Retarget to compare trajectories.</span>`;
+    const adapter = 1000 * Number(data?.adapter?.length_m || 0);
+    const anchor = data?.target_position_anchor === 'pinch_center' ? 'thumb–index midpoint' : 'wrist';
+    box.innerHTML = `<b>${data?.robot_key || 'robot'} + ${data?.gripper_label || data?.gripper_model || 'gripper'} · neutral URDF preview</b><span>adapter ${adapter.toFixed(1)} mm · target ${anchor}</span><span>Run Retarget to compare trajectories.</span>`;
     return;
   }
   const m = data.metrics || {};
   const orientation = Number(m.orientation_weight) > 0
     ? `orientation RMSE ${Number(m.orientation_rmse_deg).toFixed(1)}°`
     : 'orientation not constrained';
+  const adapter = 1000 * Math.hypot(...(data.adapter?.translation_m || [0, 0, 0]));
+  const anchor = data.target_position_anchor === 'pinch_center' ? 'thumb–index midpoint' : 'wrist';
+  const floor = Math.max(0, Number(m.min_floor_margin_mm));
+  const floorText = Number.isFinite(floor) ? `floor clearance ${floor.toFixed(1)} mm` : 'floor constraint unavailable';
   box.innerHTML = `<b>${data.robot_key} + ${data.gripper_model} · ${data.solver_status}</b>
+    <span>target ${anchor} → jaw-panel midpoint · adapter ${adapter.toFixed(1)} mm</span>
     <span>position RMSE ${Number(m.position_rmse_mm).toFixed(1)} mm</span>
     <span>${orientation}</span>
     <span data-role="frame-error">${frameErrorText(data, ctl?.frame || 0)}</span>
+    <span>${floorText}</span>
     <span>velocity max ${Number(m.max_joint_velocity_rad_s).toFixed(2)} rad/s</span>`;
 }
 
@@ -272,7 +345,9 @@ function frameErrorText(data, frameNo) {
   const position = Number(data?.position_error_m?.[frameNo]);
   const orientation = Number(data?.orientation_error_rad?.[frameNo]);
   if (!Number.isFinite(position) || !Number.isFinite(orientation)) return 'frame error unavailable';
-  return `frame error ${(position * 1000).toFixed(1)} mm · ${(orientation * 180 / Math.PI).toFixed(1)}°`;
+  const opening = Number(data?.gripper_opening_m?.[frameNo]);
+  const grip = Number.isFinite(opening) ? ` · gripper ${(opening * 1000).toFixed(1)} mm` : '';
+  return `frame error ${(position * 1000).toFixed(1)} mm · ${(orientation * 180 / Math.PI).toFixed(1)}°${grip}`;
 }
 
 async function viewEpisode(id) {
@@ -296,28 +371,8 @@ async function processSelected() {
   try {
     const result = await api('POST', '/api/pipeline/retarget', { episodes: selected, opts: options() });
     log(`Queued retarget for ${selected.length} episode(s) (${result.job_ids.length} jobs)`, 'ok');
-    refreshQueue();
+    refreshJobs();
   } catch (e) { log('retarget: ' + e, 'error'); }
-}
-
-async function refreshQueue() {
-  if (!root) return;
-  let jobs = [];
-  try { ({ jobs } = await api('GET', '/api/pipeline/jobs')); } catch { return; }
-  const relevant = jobs.filter(job => job.kind === 'retarget');
-  root.querySelector('[data-role="queue"]').innerHTML = relevant.slice(0, 12).map(job => {
-    const p = job.progress || {};
-    const pct = p.total ? Math.round(100 * (p.frame || 0) / p.total) : 0;
-    const label = job.status === 'queued' ? `queued #${job.queue_pos}`
-      : job.status === 'running' ? `${p.stage || 'solve'} ${p.frame || 0}/${p.total || '?'}` : job.status;
-    return `<div class="perc-job ${job.status}"><span class="perc-job-ep">${job.episode}</span>
-      <span class="perc-job-st">${label}</span><span class="perc-bar"><i style="width:${job.status === 'done' ? 100 : pct}%"></i></span>
-      ${job.status === 'queued' ? `<button data-cancel="${job.id}">✕</button>` : ''}</div>`;
-  }).join('') || '<div class="hint">no retarget jobs</div>';
-  const signature = relevant.filter(job => job.status === 'done').map(job => `${job.id}:${job.finished}`).join('|');
-  if (viewedEp && signature && signature !== lastDoneSignature
-      && relevant.some(job => job.episode === viewedEp && job.status === 'done')) viewEpisode(viewedEp);
-  lastDoneSignature = signature;
 }
 
 function setPlayIcon(value) {
@@ -336,10 +391,6 @@ function onClick(event) {
   const button = event.target.closest('button');
   if (!button || !ctl) return;
   if (button.dataset.view) { viewEpisode(button.dataset.view); return; }
-  if (button.dataset.cancel) {
-    api('DELETE', `/api/pipeline/jobs/${button.dataset.cancel}`).then(refreshQueue)
-      .catch(e => log('cancel: ' + e, 'error')); return;
-  }
   ({
     process: processSelected,
     stop: () => { ctl.stop(); setPlayIcon(false); },
@@ -358,7 +409,8 @@ function onChange(event) {
   else if (el.dataset.role === 'gripper') { syncGripperMeta(); persist(); previewRobot(); }
   else if (el.dataset.role) {
     persist();
-    if (el.dataset.role.startsWith('base-')) previewRobot();
+    if (el.dataset.role === 'target-anchor' || el.dataset.role.startsWith('base-')
+        || el.dataset.role.startsWith('adapter-')) previewRobot();
   }
 }
 

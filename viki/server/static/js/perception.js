@@ -3,6 +3,7 @@
 // result (per-camera + fused hand skeletons, cloud, trajectory) in the shared
 // scene3d viewer on the left.
 import { api, log, sessionGet, sessionSet, sessionPatch } from './core.js';
+import { refreshJobs } from './jobs.js';
 import * as scene3d from './scene3d.js';
 import * as episodes from './episodes.js';
 
@@ -16,7 +17,8 @@ const LM_NAMES = [
 const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need these
 const DEFAULT_LM = [...Array(21).keys()];           // track every landmark by default
 const CLEAN_BASELINE = 'clean-triangulated-landmarks-v1';
-const STABLE_PIPELINE = 'stable-fused-hand-v1';
+const STABLE_PIPELINE_V1 = 'stable-fused-hand-v1';
+const STABLE_PIPELINE = 'stable-fused-hand-v2';
 // 21-point hand diagram, palm toward you, fingers up. [x, y] in a 0..100 box.
 const HAND_XY = [
   [50, 94],                                  // 0 wrist
@@ -41,10 +43,10 @@ const DEFAULT_OPTS = {
   regen_cloud: false, cloud_stride: 1, cloud_bbox: '', dataset: '',
 };
 
-let root = null, ctl = null, models = {}, epList = [], poll = 0, viewedEp = null;
+let root = null, ctl = null, models = {}, epList = [], viewedEp = null;
 
 export function mount(view) {
-  const S = { ...DEFAULT_OPTS, ...sessionGet('perceive', {}) };
+  const S = { ...DEFAULT_OPTS, ...sessionGet('perceive-v2', {}) };
   root = document.createElement('div');
   root.className = 'perception-tab';
   root.innerHTML = `
@@ -79,7 +81,8 @@ export function mount(view) {
         <div class="calib-sec-title">1 · Model</div>
         <div class="cfg-row"><label>Pipeline</label>
           <select data-role="profile">
-            <option value="${STABLE_PIPELINE}" ${S.profile === STABLE_PIPELINE ? 'selected' : ''}>stable fused + hand fit v1</option>
+            <option value="${STABLE_PIPELINE}" ${S.profile === STABLE_PIPELINE ? 'selected' : ''}>stable fused + hand fit v2</option>
+            <option value="${STABLE_PIPELINE_V1}" ${S.profile === STABLE_PIPELINE_V1 ? 'selected' : ''}>stable v1 · binary gripper (legacy)</option>
             <option value="${CLEAN_BASELINE}" ${S.profile === CLEAN_BASELINE ? 'selected' : ''}>clean baseline v1</option>
             <option value="" ${!S.profile ? 'selected' : ''}>custom / config</option>
           </select></div>
@@ -120,10 +123,6 @@ export function mount(view) {
           <input type="number" data-role="stride" min="1" max="12" value="${S.cloud_stride}"></div>
       </section>
 
-      <section class="calib-sec">
-        <div class="calib-sec-title">Queue</div>
-        <div class="perc-queue" data-role="queue"></div>
-      </section>
     </aside>`;
   view.appendChild(root);
 
@@ -144,12 +143,10 @@ export function mount(view) {
 
   loadModels(S);
   loadDatasets(S.dataset);
-  refreshQueue();
-  poll = setInterval(refreshQueue, 1500);
+  refreshJobs();
 }
 
 export function unmount() {
-  clearInterval(poll); poll = 0;
   ctl?.dispose(); ctl = null;
   root?.remove(); root = null;
 }
@@ -193,7 +190,7 @@ function syncModel() {
 
 function syncProfile() {
   const profile = root.querySelector('[data-role="profile"]').value;
-  const locked = profile === CLEAN_BASELINE || profile === STABLE_PIPELINE;
+  const locked = [CLEAN_BASELINE, STABLE_PIPELINE, STABLE_PIPELINE_V1].includes(profile);
   const fixed = {
     model: 'mediapipe', flip: false, minconf: 0.5, gap: 0, sgwin: 7, sgpoly: 2,
   };
@@ -212,7 +209,9 @@ function syncProfile() {
   });
   root.querySelector('[data-role="profile-meta"]').textContent =
     profile === STABLE_PIPELINE
-      ? 'locked: clean triangulated → fused · articulated-landmarks-v1 → hand fit'
+      ? 'locked v2: fused + hand fit · continuous gripper opening'
+      : profile === STABLE_PIPELINE_V1
+        ? 'locked v1: fused + hand fit · legacy binary gripper'
       : profile === CLEAN_BASELINE
         ? 'locked: MediaPipe · all 21 · triangulate · fill all · SG 7/2 · fused only'
         : 'experimental settings below are used directly';
@@ -239,7 +238,7 @@ function renderHand(sel) {
 let _trackSel = DEFAULT_LM.slice();
 
 function toggleLm(i) {
-  if ([CLEAN_BASELINE, STABLE_PIPELINE].includes(
+  if ([CLEAN_BASELINE, STABLE_PIPELINE, STABLE_PIPELINE_V1].includes(
     root.querySelector('[data-role="profile"]').value)) return;
   if (REQUIRED_LM.has(i)) return;
   const s = new Set(_trackSel);
@@ -260,7 +259,7 @@ function updateTrackSummary() {
 function persist() {
   if (!root) return;
   const o = opts();
-  sessionSet('perceive', {
+  sessionSet('perceive-v2', {
     ...o,
     regen_cloud: o.build_cloud,
     cloud_bbox: root.querySelector('[data-role="cloud-bbox"]').value || '',
@@ -342,7 +341,7 @@ async function process() {
   try {
     const { job_ids } = await api('POST', '/api/pipeline/perceive', { episodes: eps, opts: opts() });
     log(`Queued perception for ${eps.length} episode(s) (${job_ids.length} jobs)`, 'ok');
-    refreshQueue();
+    refreshJobs();
   } catch (e) { log('perceive: ' + e, 'error'); }
 }
 
@@ -351,29 +350,8 @@ async function downloadModel() {
   try {
     await api('POST', '/api/pipeline/models/download', { model });
     log(`Downloading ${model}…`, 'ok');
-    refreshQueue();
+    refreshJobs();
   } catch (e) { log('download: ' + e, 'error'); }
-}
-
-async function refreshQueue() {
-  if (!root) return;
-  let jobs = [];
-  try { ({ jobs } = await api('GET', '/api/pipeline/jobs')); } catch { return; }
-  const box = root.querySelector('[data-role="queue"]');
-  const rel = jobs.filter(j => ['perceive', 'download', 'cloud', 'extract', 'prepare'].includes(j.kind));
-  box.innerHTML = rel.slice(0, 12).map(j => {
-    const p = j.progress || {};
-    const pct = p.total ? Math.round(100 * (p.frame || 0) / p.total) : 0;
-    const label = j.status === 'queued' ? `queued #${j.queue_pos}`
-      : j.status === 'running' ? `${p.stage || 'run'} ${p.frame || 0}/${p.total || '?'}`
-        : j.status;
-    return `<div class="perc-job ${j.status}">
-      <span class="perc-job-ep">${j.episode || j.kind}</span>
-      <span class="perc-job-st">${label}</span>
-      <span class="perc-bar"><i style="width:${j.status === 'running' ? pct : (j.status === 'done' ? 100 : 0)}%"></i></span>
-      ${j.status === 'queued' ? `<button data-cancel="${j.id}">✕</button>` : ''}
-    </div>`;
-  }).join('') || '<div class="hint">no jobs</div>';
 }
 
 // ── events ────────────────────────────────────────────────────────────
@@ -387,11 +365,6 @@ function onClick(e) {
   if (b.dataset.view) {
     ctl.loadEpisode(b.dataset.view, epList);
     markViewed(b.dataset.view);
-    return;
-  }
-  if (b.dataset.cancel) {
-    api('DELETE', `/api/pipeline/jobs/${b.dataset.cancel}`).then(refreshQueue)
-      .catch(err => log('cancel: ' + err, 'error'));
     return;
   }
   switch (b.dataset.role) {

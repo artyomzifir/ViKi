@@ -23,6 +23,10 @@
 
     <div class="header-right">
       <div id="sysmon" class="sysmon" title="host load — CPU · RAM · GPU util / memory"></div>
+      <span class="hr-sep"></span>
+      <button class="job-toggle" id="job-toggle" data-action="toggleJobs" title="Background jobs">≣</button>
+      <div class="job-line" id="job-line" data-action="toggleJobs" title="Background jobs"></div>
+      <span class="hr-sep"></span>
       <button class="log-toggle" data-action="toggleLog" title="Show log">▸</button>
       <div class="log-line" id="log-line"></div>
       <button class="gear" data-action="toggleConfig" title="Configuration">⚙</button>
@@ -47,6 +51,14 @@
       <button data-action="toggleLog">✕</button>
     </div>
     <div class="log-list"></div>
+  </div>
+
+  <div id="job-popover" hidden>
+    <div class="log-popover-head">
+      <span>Background jobs</span>
+      <button data-action="toggleJobs">✕</button>
+    </div>
+    <div class="job-list"></div>
   </div>
 
   <div id="config-modal" hidden>

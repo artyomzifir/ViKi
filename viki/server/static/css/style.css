@@ -13,6 +13,37 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
 
+/* ── scrollbars ───────────────────────────────────────────────────────── */
+/* Match the dark shell instead of the OS default. Firefox + modern Chromium
+   honour the standard properties; the ::-webkit-* rules cover older WebKit. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 2px solid var(--bg);   /* inset so the thumb reads as a pill */
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-thumb:active { background: var(--accent); }
+/* Panels painted on --surface: fade the track/inset border into that ground. */
+.cfg-body, #log-popover .log-list, .calib-cards, .record-cards, #calib-sets-list,
+.episode-list, .perc-side, .perc-eps, .ret-side, .ret-eps,
+.calib-leftcol, .record-leftcol {
+  scrollbar-color: var(--border) var(--surface);
+}
+.cfg-body::-webkit-scrollbar-thumb, #log-popover .log-list::-webkit-scrollbar-thumb,
+.calib-cards::-webkit-scrollbar-thumb, .record-cards::-webkit-scrollbar-thumb,
+#calib-sets-list::-webkit-scrollbar-thumb, .episode-list::-webkit-scrollbar-thumb,
+.perc-side::-webkit-scrollbar-thumb, .perc-eps::-webkit-scrollbar-thumb,
+.ret-side::-webkit-scrollbar-thumb, .ret-eps::-webkit-scrollbar-thumb {
+  border-color: var(--surface);
+}
+
 html, body { height: 100%; }
 body {
   background: var(--bg);
@@ -113,7 +144,25 @@ header h1 {
 .sysmon .bad  { color: var(--red); }
 .log-line.error { color: var(--red); }
 .log-line.ok { color: var(--green); }
-.log-toggle, .gear { padding: 4px 9px; }
+.log-toggle, .gear, .job-toggle { padding: 4px 9px; }
+
+/* header background-job widget — same idea as .log-line + #log-popover */
+.hr-sep { width: 1px; align-self: stretch; background: var(--border); }
+.job-toggle.busy { color: var(--accent); border-color: var(--accent); }
+.job-line {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--muted); cursor: pointer;
+  max-width: 40ch; overflow: hidden; white-space: nowrap;
+}
+.job-line:empty { display: none; }
+.job-line .job-cls { overflow: hidden; text-overflow: ellipsis; }
+.job-line .job-cls.running { color: var(--text); }
+.job-line .job-cls.error { color: var(--red); }
+.job-line .job-mini {
+  flex: 0 0 44px; height: 4px; border-radius: 2px;
+  background: var(--border); overflow: hidden;
+}
+.job-line .job-mini i { display: block; height: 100%; background: var(--accent); }
 
 /* ── tab bar ──────────────────────────────────────────────────────────── */
 
@@ -156,6 +205,29 @@ header h1 {
 #log-popover .entry { padding: 1px 0; }
 #log-popover .entry.error { color: var(--red); }
 #log-popover .entry.ok { color: var(--green); }
+
+/* ── job popover ──────────────────────────────────────────────────────── */
+
+#job-popover {
+  position: fixed; top: 46px; right: 16px; z-index: 60;
+  width: 460px; max-height: 60vh;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+#job-popover .job-list {
+  overflow-y: auto; padding: 6px 10px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.job-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 60px 22px;
+  gap: 8px; align-items: center; font-size: 10px;
+}
+.job-row-ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.job-row-st { color: var(--muted); white-space: nowrap; }
+.job-row.error .job-row-st { color: var(--red); }
+.job-row.done .job-row-st { color: var(--green); }
+.job-row button { padding: 1px 5px; font-size: 10px; }
 
 /* ── config modal ─────────────────────────────────────────────────────── */
 
@@ -460,15 +532,9 @@ button.scene-legend-row:focus-visible { outline: 1px solid var(--accent, #6b8cff
    scrolling box, with a select checkbox + view button per row. */
 .perc-eps { flex: 1; min-height: 80px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
 .perc-all { font-size: 11px; color: var(--muted); display: flex; gap: 6px; }
-.perc-queue { display: flex; flex-direction: column; gap: 4px; }
-.perc-job { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; font-size: 10px; }
-.perc-job-ep { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.perc-job-st { color: var(--muted); }
-.perc-job.error .perc-job-st { color: var(--red); }
-.perc-job.done .perc-job-st { color: var(--green); }
+/* the per-frame progress pill is reused by the job popover and episode rows */
 .perc-bar { width: 60px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .perc-bar i { display: block; height: 100%; background: var(--accent); }
-.perc-job button { padding: 1px 5px; font-size: 10px; }
 
 /* ── Retarget tab: same scene grammar, denser solver controls ────────── */
 .retarget-tab {

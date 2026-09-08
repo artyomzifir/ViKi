@@ -114,7 +114,12 @@ export async function initializeFrontendConfig(config) {
     retarget: {
       robot: config.RETARGET_DEFAULT_ROBOT ?? 'ur10',
       gripper: config.RETARGET_DEFAULT_GRIPPER_MODEL ?? 'robotiq_2f85',
+      targetPositionAnchor: config.RETARGET_TARGET_POSITION_ANCHOR ?? 'pinch_center',
       basePosition: config.RETARGET_ROBOT_BASE_POSITION ?? [0, 0, 0],
+      baseRpyDeg: config.RETARGET_ROBOT_BASE_RPY_DEG ?? [0, 0, 0],
+      adapterTranslationMm: config.RETARGET_ADAPTER_TRANSLATION_MM ?? [0, 0, 11],
+      adapterRpyDeg: config.RETARGET_ADAPTER_RPY_DEG ?? [0, 0, 0],
+      adapterRadiusMm: config.RETARGET_ADAPTER_RADIUS_MM ?? 35,
       handToEeTranslation: config.RETARGET_HAND_TO_EE_TRANSLATION ?? [0, 0, 0],
       handToEeRpyDeg: config.RETARGET_HAND_TO_EE_RPY_DEG ?? [0, 0, 0],
       wPosition: config.RETARGET_W_POSITION ?? 1,

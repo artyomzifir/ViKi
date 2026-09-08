@@ -320,8 +320,8 @@ export function create(canvasEl, {
     { key: 'handFit',   label: 'fitted hand',           swatch: '#7dd3fc', show: haveGeo },
     { key: 'trajectory', label: 'wrist path',           swatch: '#9aa4b2', show: haveGeo },
     { key: 'palm',      label: 'palm frame',            swatch: 'triad', show: haveGeo },
-    { key: 'palm',      label: 'gripper  open / closed', show: haveGeo, swatch:
-        'linear-gradient(90deg,#4ade80 0 50%,#f87171 50% 100%)' },
+    { key: 'palm',      label: 'gripper opening  0…1', show: haveGeo, swatch:
+        'linear-gradient(90deg,#f87171 0%,#4ade80 100%)' },
     { key: 'frusta',    label: 'camera frusta',         swatch: camKeyGradient,
       show: () => !!geo?.cameras },
     { key: 'board',     label: 'ChArUco board',         swatch: '#5b7fff',
@@ -332,8 +332,8 @@ export function create(canvasEl, {
         'linear-gradient(90deg,#8aa4ba 0 55%,#f59e0b 55% 100%)' },
     { key: 'robotMesh', label: 'robot: solid mesh',     swatch: '#b9c4d0',
       show: () => havePlan() && !!retarget?.robot_visuals?.length },
-    { key: 'targetTrajectory',   label: 'target EE',    swatch: '#f472b6', show: havePlan },
-    { key: 'achievedTrajectory', label: 'achieved EE',  swatch: '#22d3ee', show: havePlan },
+    { key: 'targetTrajectory',   label: 'target TCP',    swatch: '#f472b6', show: havePlan },
+    { key: 'achievedTrajectory', label: 'achieved TCP',  swatch: '#22d3ee', show: havePlan },
   ];
   for (const row of LEGEND_ROWS) {
     const interactive = row.key != null;
@@ -426,7 +426,10 @@ export function create(canvasEl, {
     robotMeshGroup.visible = meshMode;
     for (const c of robotGroup.children) {
       if (c.userData.kind === 'robot-link' || c.userData.kind === 'robot-joint') {
-        c.visible = !meshMode;
+        // Degenerate/fixed-frame edges are deliberately hidden by
+        // updateRobotFrame(). Do not resurrect their untouched unit geometry
+        // when switching from the solid mesh back to the stick figure.
+        c.visible = !meshMode && !!c.userData.frameVisible;
       }
     }
     targetTrajLine.visible = layers.targetTrajectory && !!retarget?.ready;
@@ -636,8 +639,12 @@ export function create(canvasEl, {
         let geo = null;
         if (p.type === 'box') geo = new THREE.BoxGeometry(...(p.size || [0.05, 0.05, 0.05]));
         else if (p.type === 'sphere') geo = new THREE.SphereGeometry(p.radius || 0.02, 16, 12);
-        else if (p.type === 'cylinder') geo = new THREE.CylinderGeometry(
-          p.radius || 0.02, p.radius || 0.02, p.length || 0.05, 16);
+        else if (p.type === 'cylinder') {
+          geo = new THREE.CylinderGeometry(
+            p.radius || 0.02, p.radius || 0.02, p.length || 0.05, 16);
+          // hpp-fcl/URDF cylinders are Z-aligned; Three.js builds them on Y.
+          geo.rotateX(Math.PI / 2);
+        }
         if (geo) attach(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x9aa4b2, roughness: 0.7 })));
         done();
       } else {
@@ -663,6 +670,8 @@ export function create(canvasEl, {
       );
       mesh.userData.kind = 'robot-link';
       mesh.userData.part = part;
+      mesh.userData.frameVisible = false;
+      mesh.visible = false;
       robotGroup.add(mesh);
     }
     const count = retarget.link_positions?.[0]?.length || 0;
@@ -675,11 +684,19 @@ export function create(canvasEl, {
       );
       joint.userData.kind = 'robot-joint';
       joint.userData.part = part;
+      joint.userData.frameVisible = false;
+      joint.visible = false;
       robotGroup.add(joint);
     }
     const baseAxes = fatAxes(0.10, 0.004);
     baseAxes.userData.kind = 'robot-base';
-    baseAxes.position.set(...retarget.base_position);
+    if (retarget.base_transform) {
+      baseAxes.matrixAutoUpdate = false;
+      baseAxes.matrix.copy(rowMajorMatrix4(retarget.base_transform));
+      baseAxes.matrixWorldNeedsUpdate = true;
+    } else {
+      baseAxes.position.set(...retarget.base_position);
+    }
     robotGroup.add(baseAxes);
     robotGroup.add(new THREE.HemisphereLight(0xffffff, 0x111827, 1.7));
     loadRobotVisuals();
@@ -691,14 +708,20 @@ export function create(canvasEl, {
     const points = retarget.link_positions?.[index] || [];
     const links = robotGroup.children.filter(child => child.userData.kind === 'robot-link');
     const joints = robotGroup.children.filter(child => child.userData.kind === 'robot-joint');
+    const finitePoint = point => Array.isArray(point) && point.length === 3
+      && point.every(Number.isFinite);
     (retarget.link_edges || []).forEach(([a, b], k) => {
-      if (points[a] && points[b] && links[k]) {
-        placeCylinder(links[k], points[a], points[b], links[k].userData.part === 'gripper' ? 0.006 : 0.012);
-      }
+      const link = links[k];
+      if (!link) return;
+      if (finitePoint(points[a]) && finitePoint(points[b])) {
+        placeCylinder(link, points[a], points[b], link.userData.part === 'gripper' ? 0.006 : 0.012);
+      } else link.visible = false;
+      link.userData.frameVisible = link.visible;
     });
     joints.forEach((joint, k) => {
-      joint.visible = !!points[k];
-      if (points[k]) joint.position.set(...points[k]);
+      joint.userData.frameVisible = finitePoint(points[k]);
+      joint.visible = joint.userData.frameVisible;
+      if (joint.userData.frameVisible) joint.position.set(...points[k]);
     });
     if (robotMeshReady && retarget.robot_joint_placements?.length) {
       const jp = retarget.robot_joint_placements[
@@ -889,7 +912,10 @@ export function create(canvasEl, {
       palmTriad.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
         m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, 0, 0, 0, 1));
       gripDot.position.set(o[0], o[1], o[2] + 0.03);
-      gripDot.material.color.set(fg?.gripper ? 0xf87171 : 0x4ade80);
+      const opening = THREE.MathUtils.clamp(Number(fg?.gripper ?? 1), 0, 1);
+      // Continuous red (closed) → green (open), matching the normalised
+      // command instead of collapsing it back to a boolean in the viewer.
+      gripDot.material.color.setRGB(1 - 0.71 * opening, 0.44 + 0.43 * opening, 0.44);
     }
     updateRobotFrame(fi);
     applyLayerVisibility();

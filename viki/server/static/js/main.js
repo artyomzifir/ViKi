@@ -1,6 +1,7 @@
 // Entry point: the tab router + the persistent top-bar wiring. Each tab module
 // exposes mount(viewEl) / unmount(); switching tabs replaces #view entirely.
 import { api, log, mountLog, initializeFrontendConfig } from './core.js';
+import { mountJobs } from './jobs.js';
 import * as cameras from './cameras.js';
 import * as calibration from './calibration.js';
 import * as record from './record.js';
@@ -56,6 +57,12 @@ const CLICK_ACTIONS = {
   toggleLog: () => {
     const p = document.getElementById('log-popover');
     if (p) p.hidden = !p.hidden;
+    if (p && !p.hidden) document.getElementById('job-popover')?.setAttribute('hidden', '');
+  },
+  toggleJobs: () => {
+    const p = document.getElementById('job-popover');
+    if (p) p.hidden = !p.hidden;
+    if (p && !p.hidden) document.getElementById('log-popover')?.setAttribute('hidden', '');
   },
   toggleConfig: () => configModal.toggle(),
   cfgSave: () => configModal.save(),
@@ -74,8 +81,8 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     configModal.close();
-    const p = document.getElementById('log-popover');
-    if (p) p.hidden = true;
+    document.getElementById('log-popover')?.setAttribute('hidden', '');
+    document.getElementById('job-popover')?.setAttribute('hidden', '');
   }
 });
 
@@ -88,6 +95,7 @@ document.getElementById('config-modal')?.addEventListener('click', e => {
 
 async function init() {
   mountLog();
+  mountJobs();
   try {
     const cfg = await api('GET', '/api/config');
     await initializeFrontendConfig(cfg);
