@@ -17,13 +17,14 @@ track exists — the object-relative form.
 | `checkpoints.py` | atomic NPZ/JSON checkpoint persistence plus motion/anatomy diagnostics |
 | `represent.py` | `object_relative(wrist_world, object_world)` = `inv(O)·H` *(stub: no object tracker → returns `None`, paper §3.6)* |
 | Savitzky-Golay | in `viki.dsp` (`smooth_landmark_sequence`), shared with `retarget` |
-| gripper | `viki.gripper.BinaryGripper` over the fused frames |
+| gripper | `viki.gripper.LinearGripper` over fused frames; V1 profiles retain `BinaryGripper` |
 
 ## Contract
 
 - **out:** `cln.npz` — keys in `contracts.CLN_KEYS`:
   `timestamps`, `positions (T,3)`, `rotations (T,3,3)`, `valid (T,)`,
-  `omega (T,)` (aggregated confidence), `gripper (T,)`, `coordinate_frame`,
+  `omega (T,)` (aggregated confidence), `gripper (T,)` as normalised opening
+  (`0=closed`, `1=open`), `coordinate_frame`,
   `raw_points`, `smoothed_points`, `landmark_ids`.
   Optional `landmark_confidence (T,L)`, `T_world_obj` / `T_obj_hand`, and the
   non-destructive `hand_fit_*` trajectory arrays when those stages run.

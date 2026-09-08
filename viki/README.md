@@ -7,8 +7,8 @@ artifacts inside an **episode directory**.
 ```
 record        cameras/      live RGB-D  ->  episodes/<id>/raw/
 extract       perception/   raw/        ->  rec.npz      per-camera hand landmark trajectories
-prepare       prepare/      rec.npz     ->  cln.npz      fused + smoothed wrist trajectory + EE pose + gripper
-retarget      retarget/     cln.npz     ->  plan.h5      synthesised robot joint trajectory
+prepare       prepare/      rec.npz     ->  cln.npz      fused + smoothed landmarks + palm pose + gripper
+retarget      retarget/     cln.npz     ->  plan.h5      pinch/palm target -> adapter -> gripper TCP -> robot joints
 replay        replay/       plan.h5     ->  replay.h5    proprioception attained on hardware   [stub]
 label         labeling.py   -> meta.json["labels"]       task string / phase segments / outcome
 export        export/       episodes/*  ->  datasets/<name>/   LeRobot dataset                 [stub]
@@ -27,7 +27,7 @@ cli.py        `viki record|extract|prepare|retarget|replay|label|export|run`
 | `config.py` | `Config` (frozen) + `load()`; UPPER_SNAKE keys mirror `data/*_configuration.json` |
 | `episode.py` | episode-directory helpers: `new_episode`, meta/status r/w, `mark_stage` |
 | `dsp.py` | Savitzky-Golay + NaN interpolation for perception preparation |
-| `gripper.py` | `Gripper` ABC + `BinaryGripper` (`cfg.GRIPPER`) |
+| `gripper.py` | `Gripper` ABC + default continuous `LinearGripper`; legacy `BinaryGripper` |
 
 ## Rules
 

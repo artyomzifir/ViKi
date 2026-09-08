@@ -25,7 +25,7 @@ is not `reject`, its label `outcome` is not `bad`, and it has a non-empty
 | key | source |
 |---|---|
 | `observation.images.<cam>` | `raw/<cam>.mp4`, decimated to `fps` |
-| `observation.state` | `replay.h5:q_attained` + `gripper_attained` (falls back to `plan.h5`) |
+| `observation.state` | `replay.h5:q_attained` + continuous normalised `gripper_attained` (falls back to `plan.h5`) |
 | `action` | next-step `observation.state` |
 | `task` | `EpisodeLabels.task` (per-segment when phase segments are set → frame-level task) |
 | `next.success` | `outcome == "good" and verdict in {pass, dry-run}` |

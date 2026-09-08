@@ -17,7 +17,8 @@ actually attained, and screen for feasibility. Exporting the *attained* states
 ## Contract
 
 - **out:** `replay.h5` — keys in `contracts.REPLAY_KEYS`:
-  `q_attained (T,nq)`, `gripper_attained (T,)`, `controller_residual (T,)`
+  `q_attained (T,nq)`, `gripper_attained (T,)` as normalised opening,
+  `controller_residual (T,)`
   *(NaN under dry-run)*, `verdict` (`pass`｜`reject`｜`dry-run`),
   `rejection_cause`, `resolve_attempts`, `robot`, `dt`.
 
