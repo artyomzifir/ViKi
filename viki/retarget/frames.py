@@ -2,8 +2,8 @@
 
 Perception artifacts stay in the camera-rig frame.  The calibration snapshot's
 ``T_world_display`` maps that rig into the installed calibration base used by
-retargeting.  Robot axes are parallel to the calibration axes; the user-provided
-``[x, y, z]`` is therefore a translation from calibration to robot base.
+retargeting.  The user-provided base position and extrinsic XYZ roll/pitch/yaw
+define the complete robot-base pose in that calibration frame.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 CALIBRATION_FRAME = "calibration_base"
 RIG_FRAME = "rig"
@@ -29,20 +30,67 @@ def validate_base_position(value: object) -> np.ndarray:
     return out
 
 
-def calibration_to_robot(points: np.ndarray, base_position: object) -> np.ndarray:
-    """Translate calibration-frame points into the parallel robot base frame."""
+def base_rotation(base_rpy_deg: object = (0.0, 0.0, 0.0)) -> np.ndarray:
+    """Return calibration<-robot rotation from extrinsic XYZ angles in degrees."""
+    rpy = validate_base_position(base_rpy_deg)
+    return Rotation.from_euler("xyz", rpy, degrees=True).as_matrix()
+
+
+def base_transform(
+    base_position: object,
+    base_rpy_deg: object = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """Return the homogeneous calibration<-robot-base transform."""
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = base_rotation(base_rpy_deg)
+    transform[:3, 3] = validate_base_position(base_position)
+    return transform
+
+
+def calibration_to_robot(
+    points: np.ndarray,
+    base_position: object,
+    base_rpy_deg: object = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """Transform calibration-frame points into the robot base frame."""
     values = np.asarray(points, dtype=np.float64)
     if values.shape[-1] != 3:
         raise ValueError(f"expected trailing xyz dimension, got {values.shape}")
-    return values - validate_base_position(base_position)
+    return (values - validate_base_position(base_position)) @ base_rotation(base_rpy_deg)
 
 
-def robot_to_calibration(points: np.ndarray, base_position: object) -> np.ndarray:
-    """Translate robot-frame points into the shared calibration frame."""
+def robot_to_calibration(
+    points: np.ndarray,
+    base_position: object,
+    base_rpy_deg: object = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """Transform robot-frame points into the shared calibration frame."""
     values = np.asarray(points, dtype=np.float64)
     if values.shape[-1] != 3:
         raise ValueError(f"expected trailing xyz dimension, got {values.shape}")
-    return values + validate_base_position(base_position)
+    return values @ base_rotation(base_rpy_deg).T + validate_base_position(base_position)
+
+
+def calibration_rotation_to_robot(
+    rotations: np.ndarray,
+    base_rpy_deg: object = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """Transform calibration-frame orientation matrices into robot coordinates."""
+    values = np.asarray(rotations, dtype=np.float64)
+    if values.shape[-2:] != (3, 3):
+        raise ValueError(f"expected trailing 3x3 rotation, got {values.shape}")
+    return np.einsum("ij,...jk->...ik", base_rotation(base_rpy_deg).T, values)
+
+
+def robot_rotation_to_calibration(
+    rotations: np.ndarray,
+    base_rpy_deg: object = (0.0, 0.0, 0.0),
+) -> np.ndarray:
+    """Transform robot-frame orientation matrices into calibration coordinates."""
+    values = np.asarray(rotations, dtype=np.float64)
+    if values.shape[-2:] != (3, 3):
+        raise ValueError(f"expected trailing 3x3 rotation, got {values.shape}")
+    return np.einsum("ij,...jk->...ik", base_rotation(base_rpy_deg), values)
 
 
 def _frame_name(value: object) -> str:

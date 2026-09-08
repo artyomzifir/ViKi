@@ -144,7 +144,20 @@ def _cmd_geometry_fit(a) -> None:
 def _cmd_retarget(a) -> None:
     from viki.retarget.run import retarget_episode
 
-    print(retarget_episode(_episode(a.episode), robot=a.robot))
+    options = {
+        key: value
+        for key, value in {
+            "gripper": a.gripper,
+            "target_position_anchor": a.target_anchor,
+            "base_position": a.base_position,
+            "base_rpy_deg": a.base_rpy_deg,
+            "adapter_translation_mm": a.adapter_offset_mm,
+            "adapter_rpy_deg": a.adapter_rpy_deg,
+            "adapter_radius_mm": a.adapter_radius_mm,
+        }.items()
+        if value is not None
+    }
+    print(retarget_episode(_episode(a.episode), robot=a.robot, options=options))
 
 
 def _cmd_replay(a) -> None:
@@ -312,6 +325,17 @@ def _build_parser() -> argparse.ArgumentParser:
     pt = sub.add_parser("retarget", help="cln.npz -> plan.h5")
     pt.add_argument("episode")
     pt.add_argument("--robot", default=None)
+    pt.add_argument("--gripper", default=None)
+    pt.add_argument(
+        "--target-anchor",
+        choices=["pinch_center", "wrist"],
+        default=None,
+    )
+    pt.add_argument("--base-position", nargs=3, type=float, default=None)
+    pt.add_argument("--base-rpy-deg", nargs=3, type=float, default=None)
+    pt.add_argument("--adapter-offset-mm", nargs=3, type=float, default=None)
+    pt.add_argument("--adapter-rpy-deg", nargs=3, type=float, default=None)
+    pt.add_argument("--adapter-radius-mm", type=float, default=None)
     pt.set_defaults(func=_cmd_retarget)
 
     prp = sub.add_parser("replay", help="plan.h5 -> replay.h5 (stub stage)")

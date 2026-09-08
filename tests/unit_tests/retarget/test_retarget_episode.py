@@ -5,6 +5,8 @@ Skips cleanly when Pinocchio is missing or the robot description cannot be
 fetched (the first run git-clones it, which a sandboxed CI blocks).
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -14,8 +16,10 @@ from viki.retarget.archive import load_archive
 
 def _synthetic_cln(ep, T: int = 12) -> None:
     pos = np.linspace([0.30, 0.0, 0.30], [0.38, 0.05, 0.30], T).astype(np.float32)
-    gripper = np.zeros(T, bool)
-    gripper[T // 2:] = True
+    gripper = np.linspace(1.0, 0.0, T, dtype=np.float32)
+    points = np.zeros((T, 21, 3), np.float32)
+    points[:, 4] = pos + np.array([0.0, -0.02, 0.0], np.float32)
+    points[:, 8] = pos + np.array([0.0, 0.02, 0.0], np.float32)
     np.savez_compressed(
         ep.cln_npz,
         positions=pos,
@@ -25,8 +29,8 @@ def _synthetic_cln(ep, T: int = 12) -> None:
         omega=np.ones(T, np.float32),
         gripper=gripper,
         timestamps=(np.arange(T) * 33_000).astype(np.int64),
-        raw_points=np.zeros((T, 21, 3), np.float32),
-        smoothed_points=np.zeros((T, 21, 3), np.float32),
+        raw_points=points,
+        smoothed_points=points,
         landmark_ids=np.arange(21, dtype=np.int32),
         coordinate_frame="rig",
     )
@@ -49,6 +53,8 @@ def test_retarget_episode_real_ik(tmp_path):
             "collision_pairs": 2,
             "approach_sec": 0.2,
             "w_orientation": 0.0,
+            "base_position": [0.7, 0.0, 0.0],
+            "base_rpy_deg": [0.0, 0.0, 180.0],
         })
     except Exception as exc:  # noqa: BLE001 - offline / model fetch failure
         pytest.skip(f"robot description unavailable: {exc}")
@@ -60,13 +66,24 @@ def test_retarget_episode_real_ik(tmp_path):
         assert float(np.max(np.asarray(plan["position_error_m"]))) < 0.20  # < 20 cm
         assert np.asarray(plan["link_positions_calibration"]).shape[0] == len(q)
         assert str(plan["gripper_model"]) == "robotiq_2f85"
-        assert str(plan["gripper_tcp_frame"]).endswith("robotiq_arg2f_tcp")
-        closed = np.asarray(plan["gripper_closed"], dtype=bool)
+        assert str(plan["gripper_tcp_frame"]).endswith("grasp_center")
+        opening = np.asarray(plan["gripper_opening"], dtype=np.float64)
+        assert np.all(np.diff(opening) <= 1e-8)
+        assert float(np.max(np.abs(np.diff(opening)))) <= 0.150 / 30 / 0.085 + 1e-6
         np.testing.assert_allclose(
             np.asarray(plan["gripper_opening_m"]),
-            np.where(closed, 0.0, 0.085),
+            opening * 0.085,
         )
+        assert str(plan["gripper_command_names_json"]) == '["opening"]'
+        np.testing.assert_allclose(np.asarray(plan["gripper_command"])[:, 0], opening)
         assert "gripper" in str(plan["point_groups_json"])
+        assert int(plan["schema_version"]) == 7
+        np.testing.assert_allclose(plan["base_position_calibration"], [0.7, 0.0, 0.0])
+        np.testing.assert_allclose(plan["base_rpy_deg_calibration"], [0.0, 0.0, 180.0])
+        assert str(plan["target_position_anchor"]) == "pinch_center"
+        assert str(plan["adapter_kind"]) == "user_cylinder"
+        metrics = json.loads(str(plan["metrics_json"]))
+        assert metrics["min_floor_margin_mm"] >= -1e-6
 
 
 @pytest.mark.slow

@@ -439,9 +439,21 @@ async def retarget_preview(
     x: float = 0.0,
     y: float = 0.0,
     z: float = 0.0,
+    base_roll_deg: float = 0.0,
+    base_pitch_deg: float = 0.0,
+    base_yaw_deg: float = 0.0,
+    adapter_x_mm: float = 0.0,
+    adapter_y_mm: float = 0.0,
+    adapter_z_mm: float = 11.0,
+    adapter_roll_deg: float = 0.0,
+    adapter_pitch_deg: float = 0.0,
+    adapter_yaw_deg: float = 0.0,
+    adapter_radius_mm: float = 35.0,
+    target_position_anchor: str = "pinch_center",
 ):
     """Neutral arm plus open-gripper URDF at a proposed base position."""
-    from viki.retarget.frames import robot_to_calibration
+    from viki.retarget.adapters import CylinderGripperAdapter
+    from viki.retarget.frames import base_rotation, base_transform, robot_to_calibration
     from viki.retarget.grippers import attach_gripper, normalize_gripper
     from viki.retarget.run import _load_robot_description
     from viki.retarget.robots import normalize_robot
@@ -449,24 +461,51 @@ async def retarget_preview(
 
     cfg = normalize_robot(robot)
     gripper_cfg = normalize_gripper(gripper)
+    target_position_anchor = target_position_anchor.strip().lower()
+    if target_position_anchor not in {"pinch_center", "wrist"}:
+        raise HTTPException(422, "target position anchor must be pinch_center or wrist")
+    try:
+        adapter = CylinderGripperAdapter(
+            translation_m=(
+                adapter_x_mm / 1000.0,
+                adapter_y_mm / 1000.0,
+                adapter_z_mm / 1000.0,
+            ),
+            rpy_deg=(adapter_roll_deg, adapter_pitch_deg, adapter_yaw_deg),
+            radius_m=adapter_radius_mm / 1000.0,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     arm = _load_robot_description(cfg.description)
-    assembly = attach_gripper(arm, cfg, gripper_cfg)
+    assembly = attach_gripper(arm, cfg, gripper_cfg, adapter)
     kinematics = PinocchioKinematics(
         assembly.robot,
-        assembly.tcp_frame,
+        assembly.orientation_frame,
         collision_pairs=0,
         collision_min_distance_m=0.0,
         actuated_joint_names=cfg.joint_names,
         passive_joint_positions={
-            assembly.drive_joint: gripper_cfg.joint_positions(np.asarray([False])),
+            assembly.drive_joint: gripper_cfg.joint_positions(np.asarray([1.0])),
         },
         gripper_prefix=assembly.gripper_prefix,
+        position_points=assembly.position_points,
+        floor_normal=(
+            base_rotation((base_roll_deg, base_pitch_deg, base_yaw_deg)).T
+            @ np.array([0.0, 0.0, 1.0])
+        ),
+        floor_offset_m=-float(z),
     )
     kinematics.set_frame(0)
     base = np.asarray([x, y, z], dtype=np.float64)
-    points = robot_to_calibration(kinematics.joint_points(kinematics.q_reference), base)
+    base_rpy = np.asarray(
+        [base_roll_deg, base_pitch_deg, base_yaw_deg], dtype=np.float64
+    )
+    base_pose = base_transform(base, base_rpy)
+    points = robot_to_calibration(
+        kinematics.joint_points(kinematics.q_reference), base, base_rpy
+    )
     placements = kinematics.joint_placements(kinematics.q_reference)
-    placements[:, :3, 3] += base
+    placements = np.einsum("ij,njk->nik", base_pose, placements)
     return {
         "ready": True,
         "preview": True,
@@ -476,11 +515,22 @@ async def retarget_preview(
         "gripper_model": gripper_cfg.key,
         "gripper_label": gripper_cfg.label,
         "gripper_tcp_frame": assembly.tcp_frame,
+        "target_position_anchor": target_position_anchor,
+        "adapter": {
+            "kind": adapter.kind,
+            "translation_m": list(adapter.translation_m),
+            "rpy_deg": list(adapter.rpy_deg),
+            "radius_m": adapter.radius_m,
+            "length_m": adapter.length_m,
+        },
+        "gripper_opening": [1.0],
         "gripper_opening_m": [gripper_cfg.max_width_m],
         "solver_status": "preview",
         "n_frames": 1,
         "fps": 15.0,
         "base_position": base.tolist(),
+        "base_rpy_deg": base_rpy.tolist(),
+        "base_transform": base_pose.tolist(),
         "link_edges": kinematics.link_edges.tolist(),
         "link_groups": list(kinematics.link_groups),
         "point_groups": list(kinematics.point_groups),
@@ -521,6 +571,7 @@ async def retarget_mesh(mesh_path: str):
 async def retarget_scene(ep_id: str):
     """Return browser-ready robot and comparison trajectories from plan.h5."""
     from viki.retarget.archive import load_archive
+    from viki.retarget.frames import base_transform
 
     ep = _episode(ep_id)
     if not ep.plan_h5.exists():
@@ -554,6 +605,17 @@ async def retarget_scene(ep_id: str):
                 "n_frames": int(len(plan["q"])),
                 "fps": float(plan["fps"]),
                 "base_position": np.asarray(plan["base_position_calibration"]).tolist(),
+                "base_rpy_deg": (
+                    np.asarray(plan["base_rpy_deg_calibration"], dtype=np.float32).tolist()
+                    if "base_rpy_deg_calibration" in plan else [0.0, 0.0, 0.0]
+                ),
+                "base_transform": base_transform(
+                    np.asarray(plan["base_position_calibration"]),
+                    (
+                        np.asarray(plan["base_rpy_deg_calibration"])
+                        if "base_rpy_deg_calibration" in plan else [0.0, 0.0, 0.0]
+                    ),
+                ).tolist(),
                 "link_edges": np.asarray(plan["link_edges"], dtype=np.int32).tolist(),
                 "link_groups": (
                     json.loads(str(plan["link_groups_json"]))
@@ -583,6 +645,13 @@ async def retarget_scene(ep_id: str):
                     plan["orientation_error_rad"], dtype=np.float32
                 ).tolist(),
                 "gripper_closed": np.asarray(plan["gripper_closed"], dtype=bool).tolist(),
+                "gripper_opening": (
+                    np.asarray(plan["gripper_opening"], dtype=np.float32).tolist()
+                    if "gripper_opening" in plan
+                    else (
+                        1.0 - np.asarray(plan["gripper_closed"], dtype=np.float32)
+                    ).tolist()
+                ),
                 "gripper_model": (
                     str(plan["gripper_model"]) if "gripper_model" in plan else "binary"
                 ),
@@ -590,6 +659,28 @@ async def retarget_scene(ep_id: str):
                     str(plan["gripper_tcp_frame"])
                     if "gripper_tcp_frame" in plan else str(plan["ee_frame"])
                 ),
+                "target_position_anchor": (
+                    str(plan["target_position_anchor"])
+                    if "target_position_anchor" in plan else "wrist"
+                ),
+                "adapter": {
+                    "kind": (
+                        str(plan["adapter_kind"])
+                        if "adapter_kind" in plan else "none"
+                    ),
+                    "translation_m": (
+                        np.asarray(plan["adapter_translation_m"], dtype=np.float32).tolist()
+                        if "adapter_translation_m" in plan else [0.0, 0.0, 0.0]
+                    ),
+                    "rpy_deg": (
+                        np.asarray(plan["adapter_rpy_deg"], dtype=np.float32).tolist()
+                        if "adapter_rpy_deg" in plan else [0.0, 0.0, 0.0]
+                    ),
+                    "radius_m": (
+                        float(plan["adapter_radius_m"])
+                        if "adapter_radius_m" in plan else 0.0
+                    ),
+                },
                 "gripper_joint_position": (
                     np.asarray(plan["gripper_joint_position"], dtype=np.float32).tolist()
                     if "gripper_joint_position" in plan else []
@@ -756,7 +847,15 @@ async def geometry(
             if 0 <= frame < n:
                 out["fused_skeleton"] = _nan_rows(d["smoothed_points"][frame])
                 out["landmark_ids"] = np.asarray(d["landmark_ids"], int).tolist()
-                out["gripper"] = bool(d["gripper"][frame])
+                raw_gripper = np.asarray(d["gripper"])
+                value = raw_gripper[frame]
+                # Protected V1 artifacts stored bool ``closed``; current CLNs
+                # store normalised opening. Keep the viewer meaningful for both.
+                out["gripper"] = (
+                    float(not bool(value))
+                    if np.issubdtype(raw_gripper.dtype, np.bool_)
+                    else float(np.clip(value, 0.0, 1.0))
+                )
                 out["frame_valid"] = bool(d["valid"][frame])
                 if "hand_fit_capsules" in d and frame < len(d["hand_fit_capsules"]):
                     hc = np.asarray(d["hand_fit_capsules"][frame], np.float32)  # (C, 2, 3)

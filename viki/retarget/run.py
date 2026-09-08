@@ -2,8 +2,8 @@
 
 The implementation intentionally has no object-centric or implicit legacy
 coordinate path. Input poses are explicitly transformed by the episode's
-calibration anchor; robot axes are parallel to that calibrated frame and
-``base_position=[x,y,z]`` is the sole robot registration parameter.
+calibration anchor; base position plus roll/pitch/yaw define the robot pose in
+that calibrated frame.
 """
 
 from __future__ import annotations
@@ -19,16 +19,21 @@ import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
 import viki.config as app_config
-from viki.contracts import Episode, GripperState, PLAN_KEYS, cln_pose_keys
+from viki.contracts import Episode, GripperState, LM, PLAN_KEYS, cln_pose_keys
 from viki.episode import mark_stage
 from viki.gripper import load_gripper
+from viki.retarget.adapters import CylinderGripperAdapter, GripperAdapter
 from viki.retarget.archive import write_hdf5_archive
 from viki.retarget.frames import (
     CALIBRATION_FRAME,
+    base_rotation,
+    base_transform,
     calibration_to_robot,
+    calibration_rotation_to_robot,
     load_rig_to_calibration,
     require_rig_frame,
     rig_pose_to_calibration,
+    robot_rotation_to_calibration,
     robot_to_calibration,
     validate_base_position,
 )
@@ -52,9 +57,12 @@ logger = logging.getLogger(__name__)
 class RetargetConfig:
     robot: str
     base_position: tuple[float, float, float]
+    base_rpy_deg: tuple[float, float, float]
     hand_to_ee_translation: tuple[float, float, float]
     hand_to_ee_rpy_deg: tuple[float, float, float]
     gripper: str
+    target_position_anchor: str
+    adapter: GripperAdapter
     pose_source: str
     approach_sec: float
     collision_pairs: int
@@ -70,9 +78,10 @@ class RetargetTargets:
     rotation_rig: np.ndarray
     confidence: np.ndarray
     valid: np.ndarray
-    gripper_closed: np.ndarray
+    gripper_opening: np.ndarray
     fps: float
     pose_source: str
+    position_anchor: str
 
 
 def _setting(options: Mapping[str, Any], key: str, config_key: str, default: Any) -> Any:
@@ -86,6 +95,9 @@ def config_from_options(
     values = dict(options or {})
     base = validate_base_position(
         _setting(values, "base_position", "RETARGET_ROBOT_BASE_POSITION", [0, 0, 0])
+    )
+    base_rpy = validate_base_position(
+        _setting(values, "base_rpy_deg", "RETARGET_ROBOT_BASE_RPY_DEG", [0, 0, 0])
     )
     hand_t = validate_base_position(
         _setting(values, "hand_to_ee_translation", "RETARGET_HAND_TO_EE_TRANSLATION", [0, 0, 0])
@@ -137,12 +149,54 @@ def config_from_options(
         )
     )
     physical_gripper = normalize_gripper(gripper_name)
+    position_anchor = str(
+        _setting(
+            values,
+            "target_position_anchor",
+            "RETARGET_TARGET_POSITION_ANCHOR",
+            "pinch_center",
+        )
+    ).strip().lower()
+    if position_anchor not in {"pinch_center", "wrist"}:
+        raise ValueError("target_position_anchor must be 'pinch_center' or 'wrist'")
+    adapter_translation_mm = validate_base_position(
+        _setting(
+            values,
+            "adapter_translation_mm",
+            "RETARGET_ADAPTER_TRANSLATION_MM",
+            [0, 0, 11],
+        )
+    )
+    adapter_rpy_deg = validate_base_position(
+        _setting(
+            values,
+            "adapter_rpy_deg",
+            "RETARGET_ADAPTER_RPY_DEG",
+            [0, 0, 0],
+        )
+    )
+    adapter_radius_mm = float(
+        _setting(
+            values,
+            "adapter_radius_mm",
+            "RETARGET_ADAPTER_RADIUS_MM",
+            35.0,
+        )
+    )
+    adapter = CylinderGripperAdapter(
+        translation_m=tuple(float(x) / 1000.0 for x in adapter_translation_mm),
+        rpy_deg=tuple(float(x) for x in adapter_rpy_deg),
+        radius_m=adapter_radius_mm / 1000.0,
+    )
     out = RetargetConfig(
         robot=str(robot or _setting(values, "robot", "RETARGET_DEFAULT_ROBOT", "ur10")),
         base_position=tuple(float(x) for x in base),
+        base_rpy_deg=tuple(float(x) for x in base_rpy),
         hand_to_ee_translation=tuple(float(x) for x in hand_t),
         hand_to_ee_rpy_deg=tuple(float(x) for x in hand_rpy),
         gripper=physical_gripper.key,
+        target_position_anchor=position_anchor,
+        adapter=adapter,
         pose_source=str(
             _setting(values, "pose_source", "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
         ),
@@ -217,6 +271,49 @@ def _interpolate_rotations(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return Slerp(indices.astype(np.float64), Rotation.from_matrix(clean))(query).as_matrix()
 
 
+def _pinch_centers(
+    data: Any, frame_count: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Extract thumb/index midpoint targets from a canonical CLN archive."""
+    required = {"smoothed_points", "landmark_ids"}
+    missing = sorted(required.difference(data.files))
+    if missing:
+        raise KeyError(
+            "pinch_center targeting needs smoothed_points and landmark_ids; "
+            "rerun Extract/Prepare for this episode"
+        )
+    points = np.asarray(data["smoothed_points"], dtype=np.float64)
+    landmark_ids = np.asarray(data["landmark_ids"], dtype=np.int64)
+    if points.ndim != 3 or points.shape[0] != frame_count or points.shape[2] != 3:
+        raise ValueError(
+            f"smoothed_points must have shape ({frame_count}, L, 3), got {points.shape}"
+        )
+    indices: dict[int, int] = {
+        int(landmark_id): index for index, landmark_id in enumerate(landmark_ids)
+    }
+    needed = (int(LM.THUMB_TIP), int(LM.INDEX_TIP))
+    if any(landmark_id not in indices for landmark_id in needed):
+        raise KeyError("pinch_center targeting needs thumb-tip and index-tip landmarks")
+    thumb = points[:, indices[int(LM.THUMB_TIP)]]
+    index = points[:, indices[int(LM.INDEX_TIP)]]
+    finite = np.isfinite(thumb).all(axis=1) & np.isfinite(index).all(axis=1)
+    anchor_confidence = np.ones(frame_count, dtype=np.float64)
+    if "landmark_confidence" in data.files:
+        landmark_confidence = np.asarray(data["landmark_confidence"], dtype=np.float64)
+        if landmark_confidence.shape != points.shape[:2]:
+            raise ValueError(
+                "landmark_confidence must match smoothed_points frame/landmark axes"
+            )
+        anchor_confidence = np.minimum(
+            landmark_confidence[:, indices[int(LM.THUMB_TIP)]],
+            landmark_confidence[:, indices[int(LM.INDEX_TIP)]],
+        )
+        anchor_confidence = np.clip(
+            np.nan_to_num(anchor_confidence, nan=0.0), 0.0, 1.0
+        )
+    return 0.5 * (thumb + index), finite, anchor_confidence
+
+
 def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
     """Read the canonical cln artifact and make finite batch-solver targets."""
     with np.load(path, allow_pickle=False) as data:
@@ -230,14 +327,30 @@ def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
         positions = np.asarray(data[p_key], dtype=np.float64)
         rotations = np.asarray(data[r_key], dtype=np.float64)
         valid = np.asarray(data["valid"], dtype=bool)
+        anchor_confidence = np.ones(len(timestamps), dtype=np.float64)
+        if cfg.target_position_anchor == "pinch_center":
+            positions, anchor_valid, anchor_confidence = _pinch_centers(
+                data, len(timestamps)
+            )
+            valid = valid & anchor_valid
         confidence = np.asarray(
             data["omega"] if "omega" in data.files else valid.astype(np.float64),
             dtype=np.float64,
         )
-        gripper = np.asarray(
-            data["gripper"] if "gripper" in data.files else np.zeros(len(valid)),
-            dtype=bool,
+        confidence = np.minimum(confidence, anchor_confidence)
+        raw_gripper = np.asarray(
+            data["gripper"] if "gripper" in data.files else np.ones(len(valid))
         )
+        # Protected V1 CLNs store bool ``closed``. Current CLNs store a
+        # normalised opening (0 closed, 1 fully open).
+        gripper = (
+            1.0 - raw_gripper.astype(np.float64)
+            if np.issubdtype(raw_gripper.dtype, np.bool_)
+            else np.asarray(raw_gripper, dtype=np.float64)
+        )
+        if not np.isfinite(gripper).all():
+            raise ValueError("cln gripper opening must be finite")
+        gripper = np.clip(gripper, 0.0, 1.0)
     n = len(timestamps)
     if any(len(value) != n for value in (positions, rotations, valid, confidence, gripper)):
         raise ValueError("cln target arrays have different frame counts")
@@ -253,9 +366,10 @@ def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
         rotation_rig=_interpolate_rotations(rotations, valid),
         confidence=np.clip(np.nan_to_num(confidence, nan=0.0), 0.0, 1.0) * valid,
         valid=valid,
-        gripper_closed=gripper,
+        gripper_opening=gripper,
         fps=estimate_fps(timestamps),
         pose_source=("hand_fit" if p_key.startswith("hand_fit") else "landmarks"),
+        position_anchor=cfg.target_position_anchor,
     )
 
 
@@ -286,18 +400,17 @@ def _load_robot_description(description: str):
 
 
 def _gripper_commands(
-    closed: np.ndarray, confidence: np.ndarray
+    opening: np.ndarray, confidence: np.ndarray
 ) -> tuple[np.ndarray, tuple[str, ...]]:
-    # Perception still emits one semantic binary state. The physical gripper
-    # registry separately maps it to the URDF's master joint for geometry.
-    model = load_gripper("binary")
+    """Encode the profiled continuous opening for replay/export."""
+    model = load_gripper("linear")
     states = [
         GripperState(
-            closed=bool(is_closed),
-            width=0.0 if is_closed else 1.0,
+            closed=bool(value <= 0.05),
+            width=float(value),
             confidence=float(confidence[t]),
         )
-        for t, is_closed in enumerate(closed)
+        for t, value in enumerate(opening)
     ]
     return model.encode(states), model.command_names
 
@@ -346,7 +459,9 @@ def _approach(
 
 
 def _config_json(cfg: RetargetConfig) -> str:
-    return json.dumps(asdict(cfg), sort_keys=True, separators=(",", ":"))
+    payload = asdict(cfg)
+    payload["adapter"]["kind"] = cfg.adapter.kind
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def retarget_episode(
@@ -376,18 +491,26 @@ def retarget_episode(
         cfg.hand_to_ee_translation,
         cfg.hand_to_ee_rpy_deg,
     )
-    target_robot_p = calibration_to_robot(target_calib_p, cfg.base_position)
+    target_robot_p = calibration_to_robot(
+        target_calib_p, cfg.base_position, cfg.base_rpy_deg
+    )
+    target_robot_r = calibration_rotation_to_robot(target_calib_r, cfg.base_rpy_deg)
     if log is not None:
         log(
             f"{robot_cfg.description}: {len(target_robot_p)} frames in {CALIBRATION_FRAME}, "
-            f"base={list(cfg.base_position)}"
+            f"target={targets.position_anchor}+palm, base={list(cfg.base_position)}, "
+            f"base_rpy_deg={list(cfg.base_rpy_deg)}, "
+            f"tool_point={gripper_cfg.grasp_center_name}, "
+            f"adapter={cfg.adapter.length_m * 1000.0:.1f} mm, floor=z>=0"
         )
     arm_model = _load_robot_description(robot_cfg.description)
-    assembly = attach_gripper(arm_model, robot_cfg, gripper_cfg)
-    gripper_joint_position = gripper_cfg.joint_positions(targets.gripper_closed)
+    assembly = attach_gripper(arm_model, robot_cfg, gripper_cfg, cfg.adapter)
+    dt = 1.0 / targets.fps
+    gripper_opening = gripper_cfg.profile_opening(targets.gripper_opening, dt)
+    gripper_joint_position = gripper_cfg.joint_positions(gripper_opening)
     kinematics = PinocchioKinematics(
         assembly.robot,
-        assembly.tcp_frame,
+        assembly.orientation_frame,
         collision_pairs=cfg.collision_pairs,
         collision_min_distance_m=cfg.collision_min_distance_m,
         actuated_joint_names=robot_cfg.joint_names,
@@ -395,36 +518,50 @@ def retarget_episode(
             assembly.drive_joint: gripper_joint_position,
         },
         gripper_prefix=assembly.gripper_prefix,
+        position_points=assembly.position_points,
+        # calibration z = e_z.T (R_calibration_robot p_robot + base_position).
+        # Express the same plane in robot coordinates so tilted base poses keep
+        # the physical calibration floor as the hard constraint.
+        floor_normal=base_rotation(cfg.base_rpy_deg).T @ np.array([0.0, 0.0, 1.0]),
+        floor_offset_m=-float(cfg.base_position[2]),
     )
     result = solve_trajectory(
         kinematics,
         target_robot_p,
-        target_calib_r,
+        target_robot_r,
         targets.confidence,
         1.0 / targets.fps,
         cfg.weights,
         cfg.solver,
         report=report,
     )
-    achieved_calib = robot_to_calibration(result.achieved_position, cfg.base_position)
+    achieved_calib = robot_to_calibration(
+        result.achieved_position, cfg.base_position, cfg.base_rpy_deg
+    )
+    achieved_calib_r = robot_rotation_to_calibration(
+        result.achieved_rotation, cfg.base_rpy_deg
+    )
     link_positions = []
     joint_placements = []
     for frame, q in enumerate(result.q):
         kinematics.set_frame(frame)
         link_positions.append(
-            robot_to_calibration(kinematics.joint_points(q), cfg.base_position)
+            robot_to_calibration(
+                kinematics.joint_points(q), cfg.base_position, cfg.base_rpy_deg
+            )
         )
         joint_placements.append(kinematics.joint_placements(q))
     link_positions = np.stack(link_positions)
-    # Robot-frame joint transforms -> calibration frame. Registration is
-    # translation-only (frames.py), so only the position column shifts.
     joint_placements = np.stack(joint_placements)              # (T, nJ, 4, 4)
-    joint_placements[:, :, :3, 3] += np.asarray(cfg.base_position, dtype=np.float64)
+    joint_placements = np.einsum(
+        "ij,tnjk->tnik",
+        base_transform(cfg.base_position, cfg.base_rpy_deg),
+        joint_placements,
+    )
     robot_visuals = kinematics.visual_geometries()
     gripper_command, command_names = _gripper_commands(
-        targets.gripper_closed, targets.confidence
+        gripper_opening, targets.confidence
     )
-    dt = 1.0 / targets.fps
     velocity = np.gradient(result.q, dt, axis=0) if len(result.q) > 1 else np.zeros_like(result.q)
     acceleration = np.gradient(velocity, dt, axis=0) if len(result.q) > 2 else np.zeros_like(result.q)
     q_approach = _approach(
@@ -452,9 +589,15 @@ def retarget_episode(
         "min_collision_margin": (
             result.min_collision_margin if np.isfinite(result.min_collision_margin) else None
         ),
+        "min_floor_margin_mm": (
+            result.min_floor_margin * 1000.0
+            if np.isfinite(result.min_floor_margin) else None
+        ),
+        "target_position_anchor": targets.position_anchor,
+        "adapter_length_mm": cfg.adapter.length_m * 1000.0,
     }
     plan = {
-        "schema_version": 3,
+        "schema_version": 7,
         "coordinate_frame": CALIBRATION_FRAME,
         "timestamps": targets.timestamps,
         "fps": targets.fps,
@@ -468,6 +611,8 @@ def retarget_episode(
         "point_groups_json": json.dumps(kinematics.point_groups),
         "T_calibration_rig": rig_to_calibration,
         "base_position_calibration": np.asarray(cfg.base_position),
+        "base_rpy_deg_calibration": np.asarray(cfg.base_rpy_deg),
+        "target_position_anchor": targets.position_anchor,
         "q": result.q.astype(np.float32),
         "q_approach": q_approach.astype(np.float32),
         "joint_velocity": velocity.astype(np.float32),
@@ -476,19 +621,26 @@ def retarget_episode(
         "gripper_description": str(gripper_cfg.description),
         "gripper_tcp_frame": assembly.tcp_frame,
         "gripper_drive_joint": assembly.drive_joint,
+        "adapter_kind": cfg.adapter.kind,
+        "adapter_translation_m": np.asarray(cfg.adapter.translation_m),
+        "adapter_rpy_deg": np.asarray(cfg.adapter.rpy_deg),
+        "adapter_radius_m": cfg.adapter.radius_m,
         "gripper_command_names_json": json.dumps(command_names),
         "gripper_command": gripper_command,
-        "gripper_closed": targets.gripper_closed,
+        # Compatibility convenience only; the authoritative command is the
+        # continuous opening below.
+        "gripper_closed": gripper_opening <= 0.05,
+        "gripper_opening": gripper_opening.astype(np.float32),
         "gripper_joint_position": gripper_joint_position.astype(np.float32),
         "gripper_opening_m": gripper_cfg.opening_widths(
-            targets.gripper_closed
+            gripper_opening
         ).astype(np.float32),
         "omega": targets.confidence.astype(np.float32),
         "target_position_calibration": target_calib_p.astype(np.float32),
         "target_rotation_calibration": target_calib_r.astype(np.float32),
         "target_position_robot": target_robot_p.astype(np.float32),
         "achieved_position_calibration": achieved_calib.astype(np.float32),
-        "achieved_rotation_calibration": result.achieved_rotation.astype(np.float32),
+        "achieved_rotation_calibration": achieved_calib_r.astype(np.float32),
         "position_error_m": result.position_error_m.astype(np.float32),
         "orientation_error_rad": result.orientation_error_rad.astype(np.float32),
         "link_positions_calibration": link_positions.astype(np.float32),
@@ -500,12 +652,15 @@ def retarget_episode(
         "source_pose": targets.pose_source,
     }
     assert set(plan) == set(PLAN_KEYS)
-    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v3")
+    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v7")
     mark_stage(
         ep,
         "retarget",
         robot=robot_cfg.description,
         coordinate_frame=CALIBRATION_FRAME,
+        target_position_anchor=targets.position_anchor,
+        adapter_kind=cfg.adapter.kind,
+        adapter_length_mm=cfg.adapter.length_m * 1000.0,
         position_rmse_mm=metrics["position_rmse_mm"],
         solver_status=plan["solver_status"],
     )

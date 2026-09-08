@@ -2,8 +2,9 @@
 
 Unlike the retired causal PINK loop, this module optimises ``q[0:T]`` in one
 sparse QP at every Gauss--Newton iteration.  Data, velocity, acceleration and
-posture terms therefore act on the same trajectory.  Joint/velocity limits and
-linearised self-collision barriers are hard constraints.
+posture terms therefore act on the same trajectory. Joint/velocity limits,
+the calibration-floor half-space and linearised self-collision barriers are
+hard constraints.
 """
 
 from __future__ import annotations
@@ -32,6 +33,86 @@ class Kinematics(Protocol):
     def pose(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]: ...
     def integrate(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray: ...
     def collision_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]: ...
+    def floor_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]: ...
+
+
+def _floor_support_descriptor(shape: object) -> tuple[str, object]:
+    """Cache enough local geometry to query its support point cheaply.
+
+    Meshes dominate the current URDFs.  Their lowest point in any direction is
+    exactly one of their vertices, so keeping the vertex array avoids crossing
+    the Python/C++ boundary for every frame and Gauss--Newton iteration.
+    """
+    vertices_attr = getattr(shape, "vertices", None)
+    if vertices_attr is not None:
+        vertices = vertices_attr() if callable(vertices_attr) else vertices_attr
+        values = np.asarray(vertices, dtype=np.float64)
+        if values.ndim == 2 and values.shape[1] == 3 and len(values):
+            return "vertices", values.copy()
+
+    kind = type(shape).__name__.lower()
+    if kind == "sphere":
+        return "sphere", float(shape.radius)
+    if kind == "box":
+        return "box", np.asarray(shape.halfSide, dtype=np.float64).copy()
+    if kind == "cylinder":
+        return "cylinder", (float(shape.radius), float(shape.halfLength))
+    if kind == "capsule":
+        return "capsule", (float(shape.radius), float(shape.halfLength))
+
+    # Unknown FCL primitives still get a safe, conservative constraint.  The
+    # local AABB contains the complete shape, so keeping its support above the
+    # plane also keeps the shape above it (at the cost of some extra clearance).
+    compute_aabb = getattr(shape, "computeLocalAABB", None)
+    if callable(compute_aabb):
+        compute_aabb()
+    aabb = getattr(shape, "aabb_local", None)
+    if aabb is None:
+        raise TypeError(f"unsupported floor collision geometry {type(shape).__name__}")
+    lower = np.asarray(aabb.min_, dtype=np.float64)
+    upper = np.asarray(aabb.max_, dtype=np.float64)
+    if lower.shape != (3,) or upper.shape != (3,):
+        raise TypeError(f"invalid local AABB for {type(shape).__name__}")
+    return "aabb", (lower.copy(), upper.copy())
+
+
+def _local_floor_support(
+    descriptor: tuple[str, object], direction: np.ndarray
+) -> np.ndarray:
+    """Point minimising ``direction @ point`` in geometry-local coordinates."""
+    kind, payload = descriptor
+    axis = np.asarray(direction, dtype=np.float64)
+    norm = float(np.linalg.norm(axis))
+    if axis.shape != (3,) or not np.isfinite(axis).all() or norm <= 1e-12:
+        raise ValueError("floor support direction must be a finite non-zero XYZ vector")
+    axis = axis / norm
+
+    if kind == "vertices":
+        vertices = np.asarray(payload, dtype=np.float64)
+        return vertices[int(np.argmin(vertices @ axis))].copy()
+    if kind == "sphere":
+        return -float(payload) * axis
+    if kind == "box":
+        half_side = np.asarray(payload, dtype=np.float64)
+        return np.where(axis > 0.0, -half_side, np.where(axis < 0.0, half_side, 0.0))
+    if kind in {"cylinder", "capsule"}:
+        radius, half_length = payload
+        if kind == "capsule":
+            point = -float(radius) * axis
+        else:
+            point = np.zeros(3, dtype=np.float64)
+            radial_norm = float(np.linalg.norm(axis[:2]))
+            if radial_norm > 1e-12:
+                point[:2] = -float(radius) * axis[:2] / radial_norm
+        if axis[2] > 0.0:
+            point[2] -= float(half_length)
+        elif axis[2] < 0.0:
+            point[2] += float(half_length)
+        return point
+    if kind == "aabb":
+        lower, upper = payload
+        return np.where(axis > 0.0, lower, np.where(axis < 0.0, upper, 0.5 * (lower + upper)))
+    raise RuntimeError(f"unknown floor support descriptor {kind!r}")
 
 
 def _set_frame(kinematics: Kinematics, frame: int) -> None:
@@ -92,6 +173,39 @@ class BatchResult:
     converged: bool
     objective: float
     min_collision_margin: float
+    min_floor_margin: float
+
+
+def _floor_linearization(
+    kinematics: Kinematics, q: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return optional hard floor margins without burdening simple adapters."""
+    linearize = getattr(kinematics, "floor_linearization", None)
+    if linearize is None:
+        return np.empty(0), np.empty((0, int(kinematics.nq)))
+    margin, jacobian = linearize(q)
+    return (
+        np.asarray(margin, dtype=np.float64).reshape(-1),
+        np.asarray(jacobian, dtype=np.float64),
+    )
+
+
+def _minimum_floor_margin(kinematics: Kinematics, q: np.ndarray) -> float:
+    """Evaluate the exact (non-linear) floor margin for one configuration."""
+    margins = getattr(kinematics, "floor_margins", None)
+    values = margins(q) if margins is not None else _floor_linearization(kinematics, q)[0]
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    return float(np.min(values)) if len(values) else np.inf
+
+
+def _trajectory_min_floor_margin(
+    kinematics: Kinematics, trajectory: np.ndarray
+) -> float:
+    minimum = np.inf
+    for frame, configuration in enumerate(trajectory):
+        _set_frame(kinematics, frame)
+        minimum = min(minimum, _minimum_floor_margin(kinematics, configuration))
+    return minimum
 
 
 def _pose_error(
@@ -221,6 +335,7 @@ def solve_trajectory(
     converged = False
     objective = np.inf
     min_collision = np.inf
+    min_floor = _trajectory_min_floor_margin(kinematics, q)
     achieved_p = np.empty((n_frames, 3), dtype=np.float64)
     achieved_r = np.empty((n_frames, 3, 3), dtype=np.float64)
     errors = np.empty((n_frames, 6), dtype=np.float64)
@@ -296,6 +411,27 @@ def solve_trajectory(
                 g_parts.append(sparse.vstack(rows, format="csr"))
                 h_parts.append(np.concatenate(bounds))
 
+        floor_rows: list[sparse.spmatrix] = []
+        floor_bounds: list[np.ndarray] = []
+        min_floor = np.inf
+        for t in range(n_frames):
+            _set_frame(kinematics, t)
+            margin, jac = _floor_linearization(kinematics, q[t])
+            if jac.shape != (len(margin), nq):
+                raise RuntimeError("floor barrier returned an invalid Jacobian")
+            if len(margin):
+                min_floor = min(min_floor, float(np.min(margin)))
+                left = sparse.csr_matrix((len(margin), t * nq))
+                right = sparse.csr_matrix((len(margin), (n_frames - t - 1) * nq))
+                floor_rows.append(
+                    sparse.hstack((left, -sparse.csr_matrix(jac), right))
+                )
+                floor_bounds.append(margin)
+        if floor_rows:
+            # margin(q + dq) ~= margin(q) + J dq >= 0
+            g_parts.append(sparse.vstack(floor_rows, format="csr"))
+            h_parts.append(np.concatenate(floor_bounds))
+
         inequalities = sparse.vstack(g_parts, format="csc") if g_parts else None
         inequality_bound = np.concatenate(h_parts) if h_parts else None
         delta = _solve_qp(
@@ -307,6 +443,28 @@ def solve_trajectory(
             upper=upper,
             solver=options.qp_solver,
         ).reshape(n_frames, nq)
+
+        # The QP uses a first-order floor approximation. Preserve the exact
+        # non-linear invariant as well by shortening the whole step until all
+        # constrained robot points are back on or above the plane. Scaling a
+        # feasible step also preserves the convex joint/velocity constraints.
+        if floor_rows:
+            current_floor = _trajectory_min_floor_margin(kinematics, q)
+            if current_floor >= -1e-9:
+                scale = 1.0
+                floor_step_found = False
+                while scale > 1e-6:
+                    candidate = np.stack([
+                        kinematics.integrate(q[t], scale * delta[t])
+                        for t in range(n_frames)
+                    ])
+                    if _trajectory_min_floor_margin(kinematics, candidate) >= -1e-9:
+                        floor_step_found = True
+                        break
+                    scale *= 0.5
+                if not floor_step_found:
+                    scale = 0.0
+                delta *= scale
         for t in range(n_frames):
             q[t] = kinematics.integrate(q[t], delta[t])
         max_step = float(np.max(np.abs(delta)))
@@ -333,6 +491,12 @@ def solve_trajectory(
         np.linalg.norm(Rotation.from_matrix(rotations[t].T @ achieved_r[t]).as_rotvec())
         for t in range(n_frames)
     ])
+    min_floor = _trajectory_min_floor_margin(kinematics, q)
+    if min_floor < -1e-7:
+        raise RuntimeError(
+            "retarget could not find a floor-feasible trajectory; remaining "
+            f"penetration is {-min_floor * 1000.0:.1f} mm"
+        )
     return BatchResult(
         q=q,
         achieved_position=achieved_p,
@@ -343,6 +507,7 @@ def solve_trajectory(
         converged=converged,
         objective=objective,
         min_collision_margin=min_collision,
+        min_floor_margin=min_floor,
     )
 
 
@@ -385,6 +550,12 @@ class PinocchioKinematics:
         actuated_joint_names: tuple[str, ...] | None = None,
         passive_joint_positions: dict[str, np.ndarray] | None = None,
         gripper_prefix: str = "",
+        position_points: tuple[
+            tuple[str, tuple[float, float, float]], ...
+        ] = (),
+        floor_z_m: float | None = None,
+        floor_normal: tuple[float, float, float] | np.ndarray | None = None,
+        floor_offset_m: float = 0.0,
     ) -> None:
         try:
             import pinocchio as pin
@@ -400,6 +571,41 @@ class PinocchioKinematics:
         self.frame_id = self.model.getFrameId(ee_frame)
         if self.frame_id >= len(self.model.frames):
             raise ValueError(f"robot model has no end-effector frame {ee_frame!r}")
+        self._task_position_points: tuple[tuple[int, np.ndarray], ...] = tuple(
+            (
+                int(self.model.getFrameId(frame_name)),
+                np.asarray(offset, dtype=np.float64),
+            )
+            for frame_name, offset in position_points
+        )
+        for (frame_name, _offset), (frame_id, offset) in zip(
+            position_points, self._task_position_points
+        ):
+            if frame_id >= len(self.model.frames):
+                raise ValueError(f"robot model has no task-point frame {frame_name!r}")
+            if offset.shape != (3,) or not np.isfinite(offset).all():
+                raise ValueError(f"task-point offset for {frame_name!r} must be finite XYZ")
+        if floor_z_m is not None and floor_normal is not None:
+            raise ValueError("use either floor_z_m or floor_normal, not both")
+        if floor_z_m is not None:
+            if not np.isfinite(floor_z_m):
+                raise ValueError("floor height must be finite")
+            floor_normal = (0.0, 0.0, 1.0)
+            floor_offset_m = float(floor_z_m)
+        if floor_normal is None:
+            self.floor_normal = None
+            self.floor_offset_m = 0.0
+        else:
+            normal = np.asarray(floor_normal, dtype=np.float64)
+            if normal.shape != (3,) or not np.isfinite(normal).all():
+                raise ValueError("floor normal must be a finite XYZ vector")
+            norm = float(np.linalg.norm(normal))
+            if norm <= 1e-12:
+                raise ValueError("floor normal must be non-zero")
+            if not np.isfinite(floor_offset_m):
+                raise ValueError("floor offset must be finite")
+            self.floor_normal = normal / norm
+            self.floor_offset_m = float(floor_offset_m) / norm
         self.configuration_reference = np.asarray(pin.neutral(self.model), dtype=np.float64)
 
         if actuated_joint_names is None:
@@ -518,6 +724,28 @@ class PinocchioKinematics:
         self.collision_model = getattr(robot, "collision_model", None)
         self.collision_data = None
         self.collision_barrier = None
+        self._floor_geometry_specs: tuple[
+            tuple[int, np.ndarray, np.ndarray, tuple[str, object]], ...
+        ] = ()
+        if self.floor_normal is not None:
+            if self.collision_model is None:
+                raise RuntimeError(
+                    "floor constraints requested but URDF has no collision model"
+                )
+            self._floor_geometry_specs = tuple(
+                (
+                    int(geometry.parentJoint),
+                    np.asarray(geometry.placement.rotation, dtype=np.float64).copy(),
+                    np.asarray(geometry.placement.translation, dtype=np.float64).copy(),
+                    _floor_support_descriptor(geometry.geometry),
+                )
+                for geometry in self.collision_model.geometryObjects
+                # The fixed pedestal is the definition of robot-base height,
+                # not an IK-controlled body. Vendor meshes can also extend a
+                # fraction of a millimetre below that mounting plane. All
+                # movable arm, adapter and gripper collision bodies are kept.
+                if int(geometry.parentJoint) != 0
+            )
         if collision_pairs > 0:
             if self.collision_model is None:
                 raise RuntimeError("collision constraints requested but URDF has no collision model")
@@ -589,7 +817,15 @@ class PinocchioKinematics:
         self.pin.forwardKinematics(self.model, self.data, configuration)
         self.pin.updateFramePlacements(self.model, self.data)
         pose = self.data.oMf[self.frame_id]
-        return np.asarray(pose.translation).copy(), np.asarray(pose.rotation).copy()
+        if self._task_position_points:
+            position = np.mean([
+                np.asarray(self.data.oMf[frame_id].translation)
+                + np.asarray(self.data.oMf[frame_id].rotation) @ offset
+                for frame_id, offset in self._task_position_points
+            ], axis=0)
+        else:
+            position = np.asarray(pose.translation)
+        return np.asarray(position).copy(), np.asarray(pose.rotation).copy()
 
     def integrate(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray:
         return np.asarray(q, dtype=np.float64) + np.asarray(dq, dtype=np.float64)
@@ -623,6 +859,97 @@ class PinocchioKinematics:
             np.asarray(self.collision_barrier.compute_barrier(configuration)),
             jacobian[:, self._active_v_indices],
         )
+
+    def _floor_geometry_supports(self) -> tuple[tuple[int, np.ndarray], ...]:
+        """Current world support point and parent joint for every collision body."""
+        if self.floor_normal is None:
+            return ()
+        supports: list[tuple[int, np.ndarray]] = []
+        for parent_joint, local_rotation, local_translation, descriptor in (
+            self._floor_geometry_specs
+        ):
+            joint_placement = self.data.oMi[parent_joint]
+            joint_rotation = np.asarray(joint_placement.rotation, dtype=np.float64)
+            joint_translation = np.asarray(joint_placement.translation, dtype=np.float64)
+            rotation = joint_rotation @ local_rotation
+            translation = joint_translation + joint_rotation @ local_translation
+            local_direction = rotation.T @ self.floor_normal
+            local_point = _local_floor_support(descriptor, local_direction)
+            supports.append((parent_joint, translation + rotation @ local_point))
+        return tuple(supports)
+
+    def floor_margins(self, q: np.ndarray) -> np.ndarray:
+        """Signed plane margins of complete collision bodies and task points."""
+        if self.floor_normal is None:
+            return np.empty(0)
+        configuration = self._configuration(q)
+        self.pin.forwardKinematics(self.model, self.data, configuration)
+        self.pin.updateFramePlacements(self.model, self.data)
+        geometry_margins = [
+            float(self.floor_normal @ point - self.floor_offset_m)
+            for _parent_joint, point in self._floor_geometry_supports()
+        ]
+        task_margins = [
+            float(self.floor_normal @ (
+                np.asarray(self.data.oMf[frame_id].translation)
+                + np.asarray(self.data.oMf[frame_id].rotation) @ offset
+            ) - self.floor_offset_m)
+            for frame_id, offset in self._task_position_points
+        ]
+        return np.asarray(geometry_margins + task_margins, dtype=np.float64)
+
+    def floor_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Linearise the floor at each collision body's lowest support point."""
+        if self.floor_normal is None:
+            return np.empty(0), np.empty((0, self.nq))
+        configuration = self._configuration(q)
+        self.pin.computeJointJacobians(self.model, self.data, configuration)
+        self.pin.updateFramePlacements(self.model, self.data)
+        margins: list[float] = []
+        rows: list[np.ndarray] = []
+        for parent_joint, point in self._floor_geometry_supports():
+            joint_origin = np.asarray(self.data.oMi[parent_joint].translation)
+            world_offset = point - joint_origin
+            if parent_joint == 0:
+                joint_jacobian = np.zeros((6, self.model.nv), dtype=np.float64)
+            else:
+                joint_jacobian = np.asarray(self.pin.getJointJacobian(
+                    self.model,
+                    self.data,
+                    parent_joint,
+                    self.pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
+                ))
+            skew = np.array([
+                [0.0, -world_offset[2], world_offset[1]],
+                [world_offset[2], 0.0, -world_offset[0]],
+                [-world_offset[1], world_offset[0], 0.0],
+            ])
+            point_jacobian = joint_jacobian[:3] - skew @ joint_jacobian[3:]
+            row = self.floor_normal @ point_jacobian[:, self._active_v_indices]
+            margins.append(float(self.floor_normal @ point - self.floor_offset_m))
+            rows.append(np.asarray(row, dtype=np.float64))
+        for frame_id, offset in self._task_position_points:
+            placement = self.data.oMf[frame_id]
+            world_offset = np.asarray(placement.rotation) @ offset
+            point = np.asarray(placement.translation) + world_offset
+            frame_jacobian = np.asarray(self.pin.getFrameJacobian(
+                self.model,
+                self.data,
+                frame_id,
+                self.pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
+            ))
+            skew = np.array([
+                [0.0, -world_offset[2], world_offset[1]],
+                [world_offset[2], 0.0, -world_offset[0]],
+                [-world_offset[1], world_offset[0], 0.0],
+            ])
+            point_jacobian = frame_jacobian[:3] - skew @ frame_jacobian[3:]
+            row = self.floor_normal @ point_jacobian[:, self._active_v_indices]
+            margins.append(float(self.floor_normal @ point - self.floor_offset_m))
+            rows.append(np.asarray(row, dtype=np.float64))
+        if not rows:
+            return np.empty(0), np.empty((0, self.nq))
+        return np.asarray(margins), np.stack(rows)
 
     def joint_points(self, q: np.ndarray) -> np.ndarray:
         """URDF body-frame origins, including fixed tool/TCP frames."""

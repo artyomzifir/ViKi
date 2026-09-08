@@ -234,6 +234,15 @@ def test_retarget_scene_includes_target_and_achieved_orientation(tmp_path, monke
     assert np.asarray(payload["achieved_rotation"]).shape == (2, 3, 3)
     np.testing.assert_allclose(payload["target_rotation"], rotations)
     np.testing.assert_allclose(payload["achieved_rotation"], rotations[::-1])
+    assert payload["target_position_anchor"] == "wrist"
+    assert payload["base_rpy_deg"] == [0.0, 0.0, 0.0]
+    np.testing.assert_allclose(payload["base_transform"], np.eye(4))
+    assert payload["adapter"] == {
+        "kind": "none",
+        "translation_m": [0.0, 0.0, 0.0],
+        "rpy_deg": [0.0, 0.0, 0.0],
+        "radius_m": 0.0,
+    }
 
 
 def test_retarget_scene_exposes_physical_gripper_layers(tmp_path, monkeypatch):
@@ -254,6 +263,7 @@ def test_retarget_scene_exposes_physical_gripper_layers(tmp_path, monkeypatch):
         "position_error_m": np.zeros(2, np.float32),
         "orientation_error_rad": np.zeros(2, np.float32),
         "base_position_calibration": np.zeros(3, np.float32),
+        "base_rpy_deg_calibration": np.array([0.0, 0.0, 90.0], np.float32),
         "metrics_json": json.dumps({}),
         "solver_status": "converged",
         "robot": "ur3_official_description",
@@ -261,6 +271,7 @@ def test_retarget_scene_exposes_physical_gripper_layers(tmp_path, monkeypatch):
         "ee_frame": "robotiq_2f85__robotiq_arg2f_tcp",
         "fps": np.float32(15),
         "gripper_closed": np.array([False, True]),
+        "gripper_opening": np.array([1.0, 0.0], np.float32),
         "gripper_model": "robotiq_2f85",
         "gripper_tcp_frame": "robotiq_2f85__robotiq_arg2f_tcp",
         "gripper_joint_position": np.array([0.0, 0.8], np.float32),
@@ -273,6 +284,13 @@ def test_retarget_scene_exposes_physical_gripper_layers(tmp_path, monkeypatch):
     assert payload["gripper_model"] == "robotiq_2f85"
     assert payload["gripper_tcp_frame"].endswith("robotiq_arg2f_tcp")
     assert payload["gripper_joint_position"] == pytest.approx([0.0, 0.8])
+    assert payload["gripper_opening"] == pytest.approx([1.0, 0.0])
     assert payload["gripper_opening_m"] == pytest.approx([0.085, 0.0])
+    assert payload["base_rpy_deg"] == pytest.approx([0.0, 0.0, 90.0])
+    np.testing.assert_allclose(
+        np.asarray(payload["base_transform"])[:3, :3],
+        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        atol=1e-7,
+    )
     assert payload["link_groups"] == ["robot", "gripper"]
     assert payload["point_groups"] == ["robot", "robot", "gripper"]
