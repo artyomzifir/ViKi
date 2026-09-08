@@ -105,10 +105,59 @@ function drawCapsuleHand(bones, joints, pts, boneR, jointR) {
 }
 
 const DEFAULT_LAYERS = {
+  axes: true, grid: true,
   cloud: true, perCamera: false, fused: true, trajectory: true,
   palm: true, frusta: true, board: true, bbox: false, handFit: false,
   robot: true, robotMesh: true, targetTrajectory: true, achievedTrajectory: true,
 };
+
+// The legend is one grouped list: a block per lifecycle/data-source, its rows
+// the individual scene elements. Each row's `key` is the DEFAULT_LAYERS flag it
+// toggles; `show()` gates the row on whether that thing can be on screen at all
+// (data loaded), and a whole block hides when none of its rows can show.
+const LEGEND_GROUPS = [
+  {
+    title: 'World',
+    rows: [
+      { key: 'axes', label: 'coordinate axes', swatch: 'triad' },
+      { key: 'grid', label: 'ground grid', swatch: '#2c2c34' },
+    ],
+  },
+  {
+    title: 'Scene',
+    rows: [
+      { key: 'board', label: 'ChArUco board', swatch: '#5b7fff', src: 'board' },
+      { key: 'bbox', label: 'workspace box', swatch: '#5b6370', src: 'workspace_bbox' },
+      { key: 'frusta', label: 'camera frusta', swatch: 'camKey', src: 'cameras' },
+      { key: 'trajectory', label: 'wrist path', swatch: '#9aa4b2', src: 'geo' },
+    ],
+  },
+  {
+    title: 'Hand',
+    rows: [
+      { key: 'perCamera', label: 'per-camera (raw lift)', swatch: 'camKey', src: 'geo' },
+      { key: 'fused', label: 'fused → IK', swatch: '#ffd166', src: 'geo' },
+      { key: 'handFit', label: 'articulated fit', swatch: '#7dd3fc', src: 'geo' },
+      { key: 'palm', label: 'palm frame', swatch: 'triad', src: 'geo' },
+    ],
+  },
+  {
+    title: 'Retarget',
+    rows: [
+      { key: 'robot', label: 'robot arm / gripper', src: 'plan',
+        swatch: 'linear-gradient(90deg,#8aa4ba 0 55%,#f59e0b 55% 100%)' },
+      { key: 'robotMesh', label: 'solid URDF mesh', swatch: '#b9c4d0', src: 'mesh' },
+      { key: 'targetTrajectory', label: 'target TCP', swatch: '#f472b6', src: 'plan' },
+      { key: 'achievedTrajectory', label: 'achieved TCP', swatch: '#22d3ee', src: 'plan' },
+    ],
+  },
+  {
+    title: 'Cloud',
+    rows: [
+      { key: 'cloud', label: 'point cloud', swatch: 'cloud', src: 'cloud' },
+    ],
+  },
+];
 
 export function create(canvasEl, {
   api, log, layers: initLayers, colorMode: initColor, stride: initStride,
@@ -260,29 +309,23 @@ export function create(canvasEl, {
   // draw the complete 21-joint topology, including the palm cross-links.
   const handBones = new THREE.InstancedMesh(
     new THREE.CylinderGeometry(1, 1, 1, 10),
-    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.42,
-      depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8 }),
     HAND_EDGES.length
   );
   const handJoints = new THREE.InstancedMesh(
     new THREE.SphereGeometry(1, 12, 9),
-    new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.72,
-      depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0x7dd3fc }),
     21
   );
   handBones.count = handJoints.count = 0;
   handBones.frustumCulled = handJoints.frustumCulled = false;
   worldGroup.add(handBones, handJoints);
 
-  const palmTriad = new THREE.AxesHelper(0.05);
+  // Same fat-cylinder axes as the achieved-TCP pose frame, so the two read the
+  // same in the scene.
+  const palmTriad = fatAxes(0.07, 0.0032);
   palmTriad.visible = false;
   worldGroup.add(palmTriad);
-  const gripDot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.012, 12, 12),
-    new THREE.MeshBasicMaterial({ color: 0x4ade80 })
-  );
-  gripDot.visible = false;
-  worldGroup.add(gripDot);
 
   // ── state ─────────────────────────────────────────────────────────────
   let geo = null, cmeta = null, retarget = null, epId = null, variantId = 'active', episodes = [], epIndex = -1;
@@ -298,76 +341,78 @@ export function create(canvasEl, {
   let raf = 0, disposed = false;
 
   // ── legend overlay ────────────────────────────────────────────────────
-  // A colour key for what the scene draws, pinned into the canvas container.
-  // Each row mirrors a layer toggle: it dims when that layer is off and hides
-  // when the thing can't be present (robot rows without a retarget result).
+  // One grouped list pinned into the canvas: a block per data-source/lifecycle
+  // (see LEGEND_GROUPS), each row a scene element toggle. A row dims when its
+  // layer is off and hides when its data isn't loaded; a block hides when none
+  // of its rows can show.
   const legendEl = document.createElement('div');
   legendEl.className = 'scene-legend';
   canvasEl.appendChild(legendEl);
   const camKeyGradient = () =>
     `linear-gradient(90deg,${CAM_PALETTE.slice(0, 3).map(cssHex).join(',')})`;
-  const haveGeo = () => !!geo;
-  const havePlan = () => !!retarget?.ready;
-  // show() gates a row on whether that thing can be on screen at all (data
-  // loaded); the .off class then dims it when its layer toggle is off.
-  const LEGEND_ROWS = [
-    { key: null,        label: 'world  X · Y · Z',      swatch: 'triad' },
-    { key: 'cloud',     label: 'point cloud',           show: () => !!cmeta,
-      swatch: () => colorMode === 'height'
-        ? 'linear-gradient(90deg,#2b6cff,#57c06a,#ff5a5a)' : '#cfd6df' },
-    { key: 'fused',     label: 'fused hand → IK',       swatch: '#ffd166', show: haveGeo },
-    { key: 'perCamera', label: 'per-camera hands',      swatch: camKeyGradient, show: haveGeo },
-    { key: 'handFit',   label: 'fitted hand',           swatch: '#7dd3fc', show: haveGeo },
-    { key: 'trajectory', label: 'wrist path',           swatch: '#9aa4b2', show: haveGeo },
-    { key: 'palm',      label: 'palm frame',            swatch: 'triad', show: haveGeo },
-    { key: 'palm',      label: 'gripper opening  0…1', show: haveGeo, swatch:
-        'linear-gradient(90deg,#f87171 0%,#4ade80 100%)' },
-    { key: 'frusta',    label: 'camera frusta',         swatch: camKeyGradient,
-      show: () => !!geo?.cameras },
-    { key: 'board',     label: 'ChArUco board',         swatch: '#5b7fff',
-      show: () => !!geo?.board },
-    { key: 'bbox',      label: 'workspace box',         swatch: '#5b6370',
-      show: () => !!geo?.workspace_bbox },
-    { key: 'robot',     label: 'robot  arm / gripper',  show: havePlan, swatch:
-        'linear-gradient(90deg,#8aa4ba 0 55%,#f59e0b 55% 100%)' },
-    { key: 'robotMesh', label: 'robot: solid mesh',     swatch: '#b9c4d0',
-      show: () => havePlan() && !!retarget?.robot_visuals?.length },
-    { key: 'targetTrajectory',   label: 'target TCP',    swatch: '#f472b6', show: havePlan },
-    { key: 'achievedTrajectory', label: 'achieved TCP',  swatch: '#22d3ee', show: havePlan },
-  ];
-  for (const row of LEGEND_ROWS) {
-    const interactive = row.key != null;
-    const el = document.createElement(interactive ? 'button' : 'div');
-    el.className = 'scene-legend-row' + (interactive ? '' : ' static');
-    if (interactive) {
+  // Is the data a row draws from currently available?
+  function rowPresent(src) {
+    switch (src) {
+      case undefined: return true;                 // World: axes + grid
+      case 'geo': return !!geo;
+      case 'board': return !!geo?.board;
+      case 'workspace_bbox': return !!geo?.workspace_bbox;
+      case 'cameras': return !!geo?.cameras;
+      case 'cloud': return !!cmeta;
+      case 'plan': return !!retarget?.ready;
+      case 'mesh': return !!retarget?.ready && !!retarget?.robot_visuals?.length;
+      default: return true;
+    }
+  }
+  function rowSwatch(row) {
+    if (row.swatch === 'triad') return null;       // painted by the .triad class
+    if (row.swatch === 'camKey') return camKeyGradient();
+    if (row.swatch === 'cloud') {
+      return colorMode === 'height'
+        ? 'linear-gradient(90deg,#2b6cff,#57c06a,#ff5a5a)' : '#cfd6df';
+    }
+    return row.swatch;
+  }
+  for (const group of LEGEND_GROUPS) {
+    const head = document.createElement('div');
+    head.className = 'scene-legend-group';
+    head.textContent = group.title;
+    legendEl.appendChild(head);
+    group._head = head;
+    for (const row of group.rows) {
+      const el = document.createElement('button');
+      el.className = 'scene-legend-row';
       el.type = 'button';
       el.title = 'toggle ' + row.label;
       el.addEventListener('click', () => setLayer(row.key, !layers[row.key]));
+      const tick = document.createElement('span');
+      tick.className = 'scene-legend-tick';
+      const sw = document.createElement('span');
+      sw.className = 'scene-legend-sw' + (row.swatch === 'triad' ? ' triad' : '');
+      const label = document.createElement('span');
+      label.className = 'scene-legend-label';
+      label.textContent = row.label;
+      el.append(tick, sw, label);
+      legendEl.appendChild(el);
+      row._el = el; row._sw = sw;
     }
-    const tick = document.createElement('span');
-    tick.className = 'scene-legend-tick';
-    const sw = document.createElement('span');
-    sw.className = 'scene-legend-sw' + (row.swatch === 'triad' ? ' triad' : '');
-    const label = document.createElement('span');
-    label.className = 'scene-legend-label';
-    label.textContent = row.label;
-    el.append(tick, sw, label);
-    legendEl.appendChild(el);
-    row._el = el; row._sw = sw;
   }
   function updateLegend() {
     let anyVisible = false;
-    for (const row of LEGEND_ROWS) {
-      const present = !row.show || row.show();
-      row._el.hidden = !present;
-      if (!present) continue;
-      anyVisible = true;
-      const on = row.key == null || !!layers[row.key];
-      row._el.classList.toggle('off', !on);
-      if (row.key != null) row._el.setAttribute('aria-pressed', String(on));
-      if (row.swatch !== 'triad') {
-        row._sw.style.background = typeof row.swatch === 'function' ? row.swatch() : row.swatch;
+    for (const group of LEGEND_GROUPS) {
+      let groupVisible = false;
+      for (const row of group.rows) {
+        const present = rowPresent(row.src);
+        row._el.hidden = !present;
+        if (!present) continue;
+        groupVisible = true;
+        const on = !!layers[row.key];
+        row._el.classList.toggle('off', !on);
+        row._el.setAttribute('aria-pressed', String(on));
+        if (row.swatch !== 'triad') row._sw.style.background = rowSwatch(row);
       }
+      group._head.hidden = !groupVisible;
+      anyVisible = anyVisible || groupVisible;
     }
     legendEl.hidden = !anyVisible;
   }
@@ -406,6 +451,8 @@ export function create(canvasEl, {
   }
 
   function applyLayerVisibility() {
+    worldAxes.visible = layers.axes;
+    grid.visible = layers.grid;
     cloud.visible = layers.cloud;
     trajLine.visible = layers.trajectory;
     fusedBones.visible = fusedJoints.visible = layers.fused;
@@ -414,7 +461,6 @@ export function create(canvasEl, {
     bboxGroup.visible = layers.bbox;
     frustaGroup.visible = layers.frusta;
     palmTriad.visible = layers.palm && palmTriad.userData.have;
-    gripDot.visible = layers.palm && gripDot.userData.have;
     handBones.visible = layers.handFit;
     handJoints.visible = layers.handFit;
     const robotOn = layers.robot && !!retarget?.ready;
@@ -896,7 +942,7 @@ export function create(canvasEl, {
     if (layers.handFit) updateHandFit(fg?.hand_capsules);
     else handBones.count = handJoints.count = 0;
 
-    // palm triad + gripper marker from the summary geometry
+    // palm frame triad, from the summary geometry
     const T = geo?.wrist_traj, R = geo?.palm_rot;
     const fi = Number.isInteger(fg?.frame) ? fg.frame : frame;
     const origin = T?.[fi], rotation = R?.[fi];
@@ -905,17 +951,12 @@ export function create(canvasEl, {
       && Array.isArray(rotation) && rotation.length === 9 && rotation.every(Number.isFinite)
       && fg?.frame_valid !== false
     );
-    palmTriad.userData.have = gripDot.userData.have = have;
+    palmTriad.userData.have = have;
     if (have) {
       const o = origin, m = rotation;
       palmTriad.position.set(o[0], o[1], o[2]);
       palmTriad.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
         m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, 0, 0, 0, 1));
-      gripDot.position.set(o[0], o[1], o[2] + 0.03);
-      const opening = THREE.MathUtils.clamp(Number(fg?.gripper ?? 1), 0, 1);
-      // Continuous red (closed) → green (open), matching the normalised
-      // command instead of collapsing it back to a boolean in the viewer.
-      gripDot.material.color.setRGB(1 - 0.71 * opening, 0.44 + 0.43 * opening, 0.44);
     }
     updateRobotFrame(fi);
     applyLayerVisibility();
