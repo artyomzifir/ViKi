@@ -51,6 +51,8 @@ def test_pipeline_smoke(tmp_path):
     with np.load(cln) as d:
         assert {"positions", "rotations", "valid", "omega", "gripper"} <= set(d.files)
         n_frames = len(d["positions"])
+        assert d["gripper"].dtype == np.float32
+        assert np.all((d["gripper"] >= 0.0) & (d["gripper"] <= 1.0))
     assert n_frames > 0
 
     # retarget: the real PINK solve needs a network git-clone of the robot

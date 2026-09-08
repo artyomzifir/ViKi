@@ -7,13 +7,15 @@ its parameters are code-owned and must not silently change when
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 from viki.contracts import HAND_LM_COUNT
 
 
 CLEAN_LANDMARKS_V1 = "clean-triangulated-landmarks-v1"
 STABLE_FUSED_HAND_V1 = "stable-fused-hand-v1"
+STABLE_FUSED_HAND_V2 = "stable-fused-hand-v2"
+DEFAULT_PERCEPTION_PROFILE = STABLE_FUSED_HAND_V2
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,19 @@ _PROFILES = {
         },
     ),
 }
+
+# V1 remains byte-for-byte immutable for protected baselines. V2 changes only
+# the gripper representation: continuous normalised opening replaces the old
+# hysteretic bool while the hand/pose geometry path stays comparable.
+_PROFILES[STABLE_FUSED_HAND_V2] = replace(
+    _PROFILES[STABLE_FUSED_HAND_V1],
+    name=STABLE_FUSED_HAND_V2,
+    description=(
+        "Stable perception v2: the v1 fused + articulated hand geometry with "
+        "continuous, temporally filtered gripper opening."
+    ),
+    gripper="linear",
+)
 
 
 def get_profile(name: str | None) -> PerceptionProfile | None:

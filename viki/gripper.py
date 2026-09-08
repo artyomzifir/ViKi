@@ -3,14 +3,14 @@ viki.gripper
 ------------
 Gripper-state estimation from a fused hand skeleton.
 
-``Gripper`` is the abstraction; ``BinaryGripper`` is the only implementation —
-the simplest useful one: an open/closed decision from the thumb–index fingertip
-gap, normalised by palm length, with hysteresis to stop it chattering at the
-threshold (paper §3.4, eq. 3).
+``Gripper`` is the abstraction. ``LinearGripper`` is the production default:
+it maps the thumb–index fingertip gap, normalised by palm length, to a continuous
+opening in ``[0, 1]`` and low-pass filters it over time. ``BinaryGripper`` is
+retained only for protected V1 baselines and old artifacts.
 
-A continuous or force-modulated gripper would be a new ``Gripper`` subclass;
-the seam does not change. ``retarget`` / ``export`` only forward the estimated
-state — they do not re-derive it.
+``retarget`` applies the selected physical tool's velocity limit and maps this
+semantic opening to its URDF joint. ``export`` forwards the profiled opening; it
+does not re-derive it.
 """
 
 from __future__ import annotations
@@ -23,6 +23,21 @@ import numpy as np
 from viki.contracts import LM, GripperState
 
 _MIN_LEN = 1e-6
+
+
+def _pinch_ratio(hand_points: Mapping[LM, np.ndarray]) -> float | None:
+    """Thumb/index distance divided by wrist/middle-MCP palm length."""
+    thumb = hand_points.get(LM.THUMB_TIP)
+    index = hand_points.get(LM.INDEX_TIP)
+    wrist = hand_points.get(LM.WRIST)
+    middle = hand_points.get(LM.MIDDLE_MCP)
+    values = [thumb, index, wrist, middle]
+    if any(value is None or not np.all(np.isfinite(value)) for value in values):
+        return None
+    palm = float(np.linalg.norm(np.asarray(wrist) - np.asarray(middle)))
+    if palm < _MIN_LEN:
+        return None
+    return float(np.linalg.norm(np.asarray(thumb) - np.asarray(index))) / palm
 
 
 class Gripper(ABC):
@@ -92,23 +107,10 @@ class BinaryGripper(Gripper):
         hand_points: Mapping[LM, np.ndarray],
         prev: GripperState | None,
     ) -> GripperState:
-        thumb = hand_points.get(LM.THUMB_TIP)
-        index = hand_points.get(LM.INDEX_TIP)
-        wrist = hand_points.get(LM.WRIST)
-        middle = hand_points.get(LM.MIDDLE_MCP)
-
-        vals = [thumb, index, wrist, middle]
-        if any(v is None or not np.all(np.isfinite(v)) for v in vals):
-            # Nothing to measure — hold the previous decision.
+        d = _pinch_ratio(hand_points)
+        if d is None:
             held = prev.closed if prev is not None else False
             return GripperState(closed=held, width=0.0 if held else 1.0, confidence=0.0)
-
-        palm = float(np.linalg.norm(np.asarray(wrist) - np.asarray(middle)))
-        if palm < _MIN_LEN:
-            held = prev.closed if prev is not None else False
-            return GripperState(closed=held, width=0.0 if held else 1.0, confidence=0.0)
-
-        d = float(np.linalg.norm(np.asarray(thumb) - np.asarray(index))) / palm
 
         was_closed = prev.closed if prev is not None else False
         if was_closed:
@@ -124,10 +126,63 @@ class BinaryGripper(Gripper):
         return np.asarray([1.0 if state.closed else 0.0], dtype=np.float32)
 
 
-_GRIPPERS: dict[str, type[Gripper]] = {"binary": BinaryGripper}
+class LinearGripper(Gripper):
+    """Continuous normalised opening estimated from the human pinch distance.
+
+    ``closed_ratio`` maps to 0 (closed), ``open_ratio`` maps to 1 (fully open).
+    Values between them interpolate linearly. An exponential filter suppresses
+    landmark jitter; the physical velocity limit is applied later by retarget.
+    """
+
+    name = "linear"
+    command_names = ("opening",)
+
+    def __init__(
+        self,
+        closed_ratio: float = 0.35,
+        open_ratio: float = 1.20,
+        smoothing_alpha: float = 0.35,
+    ) -> None:
+        if not 0.0 <= closed_ratio < open_ratio:
+            raise ValueError("need 0 <= closed_ratio < open_ratio")
+        if not 0.0 < smoothing_alpha <= 1.0:
+            raise ValueError("smoothing_alpha must be in (0, 1]")
+        self._closed = float(closed_ratio)
+        self._open = float(open_ratio)
+        self._alpha = float(smoothing_alpha)
+
+    def estimate(
+        self,
+        hand_points: Mapping[LM, np.ndarray],
+        prev: GripperState | None,
+    ) -> GripperState:
+        ratio = _pinch_ratio(hand_points)
+        if ratio is None:
+            if prev is not None:
+                return GripperState(prev.closed, prev.width, 0.0)
+            return GripperState(closed=False, width=1.0, confidence=0.0)
+        target = float(np.clip(
+            (ratio - self._closed) / (self._open - self._closed), 0.0, 1.0
+        ))
+        opening = (
+            target
+            if prev is None
+            else prev.width + self._alpha * (target - prev.width)
+        )
+        opening = float(np.clip(opening, 0.0, 1.0))
+        return GripperState(closed=opening <= 0.05, width=opening, confidence=1.0)
+
+    def command(self, state: GripperState) -> np.ndarray:
+        return np.asarray([np.clip(state.width, 0.0, 1.0)], dtype=np.float32)
 
 
-def load_gripper(name: str = "binary", **kwargs) -> Gripper:
+_GRIPPERS: dict[str, type[Gripper]] = {
+    "binary": BinaryGripper,
+    "linear": LinearGripper,
+}
+
+
+def load_gripper(name: str = "linear", **kwargs) -> Gripper:
     """Instantiate a gripper by name (``cfg.GRIPPER``)."""
     try:
         cls = _GRIPPERS[name]

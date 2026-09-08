@@ -496,7 +496,7 @@ CLN_KEYS: tuple[str, ...] = (
     "rotations",  # (T, 3, 3)
     "valid",  # (T,)
     "omega",  # (T,)  — per-frame confidence weight ω_t (paper §3.5 eq. 5)
-    "gripper",  # (T,)  bool
+    "gripper",  # (T,) float32 — normalised opening: 0 closed, 1 fully open
     "coordinate_frame",
     "raw_points",
     "smoothed_points",

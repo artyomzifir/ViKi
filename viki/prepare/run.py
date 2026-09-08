@@ -115,11 +115,11 @@ def _pose_and_gripper(
     from viki.gripper import load_gripper
 
     gripper_model = load_gripper(gripper_name)
-    gripper = np.zeros(T, dtype=bool)
+    gripper = np.zeros(T, dtype=np.float32)
     previous = None
     for t, mapping in enumerate(mappings):
         previous = gripper_model.estimate(mapping, previous)
-        gripper[t] = previous.closed
+        gripper[t] = previous.width
     return positions, rotations, rpy, valid, gripper
 
 
@@ -168,7 +168,7 @@ def _cln_payload(
     profile_name: str = "",
     pose_source: str = "landmarks",
     confidence_alpha: float = 1.0,
-    gripper_name: str = "binary",
+    gripper_name: str = "linear",
     coordinate_frame: str = "viki_world_or_camera",
 ) -> dict[str, object]:
     """Build a viewer/retarget-compatible artifact for any prepare boundary."""
@@ -238,7 +238,7 @@ class PreparationPipeline:
         self.profile_name = ""
         self.pose_source = "landmarks"
         self.confidence_alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
-        self.gripper_name = str(getattr(config, "GRIPPER", "binary"))
+        self.gripper_name = str(getattr(config, "GRIPPER", "linear"))
         self.coordinate_frame = str(getattr(
             config, "SKELETON_COORDINATE_FRAME", "viki_world_or_camera",
         ))

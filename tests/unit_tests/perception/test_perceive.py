@@ -97,11 +97,11 @@ def test_perceive_end_to_end(tmp_path, monkeypatch):
 
 
 def test_perceive_opts_from_dict_defaults():
-    from viki.perception.profiles import STABLE_FUSED_HAND_V1
+    from viki.perception.profiles import STABLE_FUSED_HAND_V2
 
     o = PerceiveOpts.from_dict({})
     assert o.model and isinstance(o.track_lm, list) and len(o.track_lm) >= 6
-    assert o.profile == STABLE_FUSED_HAND_V1
+    assert o.profile == STABLE_FUSED_HAND_V2
     assert PerceiveOpts.from_dict({"profile": None}).profile is None
     # legacy 'backend' key still maps to model
     assert PerceiveOpts.from_dict({"backend": "rtmpose-m-hand5"}).model == "rtmpose-m-hand5"
@@ -273,4 +273,20 @@ def test_stable_profile_routes_clean_to_fused_and_articulated_to_hand_fit(
     assert "articulated_hand_fit" not in get_profile(CLEAN_LANDMARKS_V1).manifest()
     assert get_profile(STABLE_FUSED_HAND_V1).manifest()["articulated_hand_fit"] == (
         "articulated-landmarks-v1"
+    )
+
+
+def test_stable_v2_changes_gripper_without_mutating_v1_contract():
+    from viki.perception.profiles import (
+        DEFAULT_PERCEPTION_PROFILE,
+        STABLE_FUSED_HAND_V1,
+        STABLE_FUSED_HAND_V2,
+        get_profile,
+    )
+
+    assert DEFAULT_PERCEPTION_PROFILE == STABLE_FUSED_HAND_V2
+    assert get_profile(STABLE_FUSED_HAND_V1).gripper == "binary"
+    assert get_profile(STABLE_FUSED_HAND_V2).gripper == "linear"
+    assert get_profile(STABLE_FUSED_HAND_V2).articulated_hand_fit == (
+        get_profile(STABLE_FUSED_HAND_V1).articulated_hand_fit
     )

@@ -188,7 +188,7 @@ def _cmd_viz(a) -> None:
 def _cmd_run(a) -> None:
     from viki.episode import stage_done
     from viki.perception.extract import extract_episode
-    from viki.perception.profiles import STABLE_FUSED_HAND_V1
+    from viki.perception.profiles import DEFAULT_PERCEPTION_PROFILE
     from viki.prepare.run import prepare_episode
     from viki.replay import replay_episode
     from viki.retarget.run import retarget_episode
@@ -196,7 +196,7 @@ def _cmd_run(a) -> None:
     ep = _episode(a.episode)
     steps = [
         ("extract", lambda: extract_episode(ep, backend=a.backend)),
-        ("prepare", lambda: prepare_episode(ep, profile=STABLE_FUSED_HAND_V1)),
+        ("prepare", lambda: prepare_episode(ep, profile=DEFAULT_PERCEPTION_PROFILE)),
         ("retarget", lambda: retarget_episode(ep, robot=a.robot)),
         ("replay", lambda: replay_episode(ep, driver=a.driver)),
     ]
@@ -213,7 +213,12 @@ def _cmd_run(a) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    from viki.perception.profiles import CLEAN_LANDMARKS_V1, STABLE_FUSED_HAND_V1
+    from viki.perception.profiles import (
+        CLEAN_LANDMARKS_V1,
+        DEFAULT_PERCEPTION_PROFILE,
+        STABLE_FUSED_HAND_V1,
+        STABLE_FUSED_HAND_V2,
+    )
 
     p = argparse.ArgumentParser(prog="viki", description=__doc__.splitlines()[3])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -242,8 +247,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pper.add_argument("episode")
     pper.add_argument(
         "--profile",
-        choices=[STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
-        default=STABLE_FUSED_HAND_V1,
+        choices=[STABLE_FUSED_HAND_V2, STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
+        default=DEFAULT_PERCEPTION_PROFILE,
     )
     pper.add_argument("--hand", default="right", choices=["left", "right"])
     pper.add_argument("--build-cloud", action="store_true")
@@ -266,7 +271,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pgf.add_argument(
         "--source-profile",
         default=CLEAN_LANDMARKS_V1,
-        choices=[CLEAN_LANDMARKS_V1, STABLE_FUSED_HAND_V1],
+        choices=[CLEAN_LANDMARKS_V1, STABLE_FUSED_HAND_V2, STABLE_FUSED_HAND_V1],
         help="protected baseline used as immutable input",
     )
     pgf.add_argument(
@@ -284,8 +289,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--polyorder", type=int, default=2)
     pp.add_argument(
         "--profile",
-        choices=[STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
-        default=STABLE_FUSED_HAND_V1,
+        choices=[STABLE_FUSED_HAND_V2, STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
+        default=DEFAULT_PERCEPTION_PROFILE,
         help="locked reproducible recipe (overrides fusion/gap/SG/hand-fit config)",
     )
     pp.set_defaults(func=_cmd_prepare)
