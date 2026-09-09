@@ -40,6 +40,10 @@ def replay_episode(
 
     with load_archive(ep.plan_h5) as plan:
         q_plan = np.asarray(plan["q"], dtype=np.float64)
+        q_approach = np.asarray(
+            plan["q_approach"] if "q_approach" in plan else np.empty((0, q_plan.shape[1])),
+            dtype=np.float64,
+        )
         dt = float(plan["dt"])
         robot = str(plan["robot"])
         command = np.asarray(plan["gripper_command"], dtype=np.float64)
@@ -61,22 +65,42 @@ def replay_episode(
     gripper = 1.0 - command[:, 0] if legacy_closed else command[:, 0]
     if not np.isfinite(gripper).all() or np.any(gripper < 0.0) or np.any(gripper > 1.0):
         raise ValueError("gripper command must be a normalised opening in [0, 1]")
+    if q_approach.ndim != 2 or q_approach.shape[1:] != q_plan.shape[1:]:
+        raise ValueError("q_approach must have the same joint dimension as q")
+    approach_gripper = np.full(
+        len(q_approach),
+        gripper[0] if len(gripper) else 1.0,
+        dtype=np.float64,
+    )
+    q_execute = np.concatenate((q_approach, q_plan), axis=0)
+    gripper_execute = np.concatenate((approach_gripper, gripper), axis=0)
 
     drv = load_driver(driver)
     try:
-        log = drv.execute(q_plan, gripper, dt)
+        execution_log = drv.execute(q_execute, gripper_execute, dt)
     finally:
         drv.close()
+
+    if len(execution_log.q_attained) != len(q_execute):
+        raise RuntimeError("replay driver returned a trajectory with the wrong length")
+    approach_frames = len(q_approach)
+    q_attained = np.asarray(execution_log.q_attained)[approach_frames:]
+    gripper_attained = np.asarray(execution_log.gripper_attained)[approach_frames:]
+    controller_residual = np.asarray(execution_log.controller_residual)[approach_frames:]
 
     if max_resolves:
         logger.warning("replay re-solve loop is not implemented (paper §3.8, Fig. 3.1)")
 
-    v = screen(log.q_attained, log.controller_residual, robot)
+    # Screen the complete executed motion, including the transition from home.
+    v = screen(execution_log.q_attained, execution_log.controller_residual, robot)
 
     archive = {
-        "q_attained": log.q_attained,
-        "gripper_attained": log.gripper_attained,
-        "controller_residual": log.controller_residual,
+        # Keep replay.h5 aligned one-to-one with the demonstrated frames used by
+        # export. The approach was executed and screened above, but has no human
+        # observation/annotation counterpart.
+        "q_attained": q_attained,
+        "gripper_attained": gripper_attained,
+        "controller_residual": controller_residual,
         "verdict": v.verdict,
         "rejection_cause": v.cause,
         "resolve_attempts": 0,

@@ -37,21 +37,50 @@ def test_screen_flags_tracking_fault():
     assert v.verdict == "reject" and v.cause == "tracking_fault"
 
 
-def test_replay_episode_writes_replay_h5(tmp_path):
+def test_screen_uses_physical_ur_limits_for_continuous_pinocchio_joint():
+    q = np.zeros((2, 6))
+    q[1, -1] = 2.0 * np.pi + 0.01
+    verdict = screen(
+        q,
+        np.full(2, np.nan),
+        robot_description="ur3_official_description",
+    )
+    assert verdict.verdict == "reject"
+    assert verdict.cause == "joint_limit"
+
+
+def test_replay_episode_executes_approach_but_archives_demo_frames(tmp_path, monkeypatch):
     ep = Episode(root=tmp_path / "ep0")
     ep.raw_dir.mkdir(parents=True)
+    q_approach = np.full((3, 6), -0.25)
     write_hdf5_archive(
         ep.plan_h5,
         {
             "q": np.zeros((15, 6)), "dt": 1 / 30.0,
+            "q_approach": q_approach,
             "robot": "ur3_official_description", "gripper_model": "binary",
             "gripper_command": np.zeros((15, 1), dtype=np.float32),
         },
     )
+    driver = DryRunDriver()
+    executed = {}
+    original_execute = driver.execute
+
+    def record_execute(q, gripper, dt):
+        executed["q"] = np.asarray(q).copy()
+        executed["gripper"] = np.asarray(gripper).copy()
+        return original_execute(q, gripper, dt)
+
+    driver.execute = record_execute
+    monkeypatch.setattr("viki.replay.run.load_driver", lambda _name: driver)
     out = replay_episode(ep, driver="dryrun")
     assert out == str(ep.replay_h5) and ep.replay_h5.exists()
+    assert executed["q"].shape == (18, 6)
+    np.testing.assert_array_equal(executed["q"][:3], q_approach)
+    np.testing.assert_array_equal(executed["gripper"], np.ones(18))
     with load_archive(ep.replay_h5) as arc:
         assert set(arc.files) == set(REPLAY_KEYS)
         assert str(arc["verdict"]) in ("dry-run", "pass", "reject")
+        assert np.asarray(arc["q_attained"]).shape == (15, 6)
         # Legacy binary ``closed=0`` is migrated to continuous fully-open=1.
         np.testing.assert_array_equal(arc["gripper_attained"], np.ones(15))
