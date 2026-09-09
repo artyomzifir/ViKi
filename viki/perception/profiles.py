@@ -46,7 +46,6 @@ class PerceptionProfile:
     pose_source: str
     confidence_calibration: str = "episode_max"
     tracking_confidence: float | None = None
-    strict_handedness: bool = True
     articulated_hand_fit: str | None = None
     triangulation: dict[str, object] = field(default_factory=dict)
 
@@ -69,8 +68,6 @@ class PerceptionProfile:
             payload.pop("confidence_calibration")
         if payload["tracking_confidence"] is None:
             payload.pop("tracking_confidence")
-        if payload["strict_handedness"] is True:
-            payload.pop("strict_handedness")
         return payload
 
 

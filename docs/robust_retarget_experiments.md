@@ -235,6 +235,174 @@ accuracy boost. Stable V2 remains the linear edge-hold control until this
 candidate is tested across several scenes. It prevents 44 unsupported edge
 measurements but does not affect the 93-frame interior asynchronous-pair failure.
 
+## E4 — no-extrapolation rejected on five scenes, 2026-09-09
+
+E3 measured `fused-hand-no-extrap-v1` on one scene and deferred the promotion
+decision pending a multi-scene run. That run is done. Both profiles were
+prepared from the identical extraction and triangulation artifacts of each
+episode, so only the fused fill differs; `pair observed` is therefore equal
+within every scene by construction and confirms the comparison was clean.
+
+`pair observed` counts frames where thumb tip and index tip were both actually
+triangulated. `pair finite` counts frames where the target could be formed at
+all, including fabricated values.
+
+| Scene | pair observed | pair finite | valid | omega > 0 | gap p95 | gap max | frames > 250 mm | pinch 2nd-diff RMS |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| move-shipok | 490 / 897 | 897 → 853 | 858 → 821 | 774 → 767 | 156.7 → 162.4 mm | 256.7 → 256.7 mm | 9 → 9 | 1.0 → 1.0 mm |
+| cup_grab | 249 / 898 | 898 → 898 | 884 → 836 | 632 → 614 | 171.2 → 171.2 mm | 221.8 → 221.8 mm | 0 → 0 | 1.9 → 1.9 mm |
+| block-push | 489 / 897 | 897 → 896 | 884 → 879 | 845 → 840 | 132.2 → 132.2 mm | 142.9 → 142.9 mm | 0 → 0 | 2.2 → 2.2 mm |
+| pyramid | 403 / 898 | 898 → 891 | 871 → 869 | 801 → 799 | 148.7 → 148.9 mm | 228.6 → 228.6 mm | 0 → 0 | 1.8 → 1.7 mm |
+| pick_up_u | 556 / 898 | 898 → 898 | 889 → 877 | 781 → 771 | 122.3 → 122.3 mm | 130.4 → 130.4 mm | 0 → 0 | 2.0 → 2.0 mm |
+
+**Decision: reject `fused-hand-no-extrap-v1`; `stable-fused-hand-v2` remains the
+default.**
+
+Every geometry metric is identical on every scene: maximum thumb-index
+separation, p95, the count of frames above 250 mm, and pinch-centre smoothness
+do not move. The candidate's stated purpose was epistemic — never represent an
+unbracketed value as a measurement — and it does achieve that. It does not
+improve any measured quantity, and it consistently removes valid frames: −37,
+−48, −5, −2 and −12 across the five scenes. On this evidence it is cost without
+measured benefit, so it is not promoted.
+
+Two observations are recorded rather than acted on here:
+
+- On `cup_grab` the thumb-index pair stays finite in all 898 frames while
+  `valid` drops by 48. The removed edges therefore belong to other landmarks,
+  whose NaN edges then fail the geometric plausibility filter. Suppressing edge
+  extrapolation has a side effect on frames whose target pair was never
+  affected. If the no-extrapolation idea is revisited, it should be applied per
+  landmark group rather than to the whole fused array.
+- `move-shipok` is the hardest of the five scenes, and the only one with any
+  frame above 250 mm. E0–E3 were all calibrated on it. Conclusions drawn there
+  should not be assumed to transfer; this run is the first check of that, and
+  it did not transfer.
+
+### What the numbers actually point at
+
+The `pair observed` column is the finding that outlives this experiment:
+
+| Scene | frames with both tips triangulated |
+|---|---:|
+| cup_grab | 249 / 898 (27.7%) |
+| pyramid | 403 / 898 (44.9%) |
+| block-push | 489 / 897 (54.5%) |
+| move-shipok | 490 / 897 (54.6%) |
+| pick_up_u | 556 / 898 (61.9%) |
+
+Between 28% and 62% of frames carry a directly observed thumb-index pair. In the
+remainder, both the translation target and the gripper opening are fabricated by
+interpolation regardless of which of the five profiles is selected. Every
+experiment so far — cubic to linear, edge hold to no extrapolation, and the
+pending gap-cap work — argues about how to fill that hole. None of them reduces
+it.
+
+Coverage was never examined by the batch-solver audit either: that review was
+scoped to `viki/retarget/`, and its confidence-related points (`interpolated_mask`
+unread, episode-normalised `omega`, the 0.05 confidence floor) concern how
+fabricated data is weighted downstream, not how much real data is acquired
+upstream.
+
+The acquisition-side levers that already exist in code and are set by no profile:
+`tracking_confidence` and `strict_handedness`, both plumbed from
+`PerceptionProfile` through `perceive_episode` and `extract_episode` into the
+MediaPipe backend. `interp_max_gap` also remains 0 (unlimited) in all five
+profiles. The next experiment should move coverage, not interpolation.
+
+## E5 — handedness gating removed, 2026-09-09
+
+E4 showed that every fill strategy argues over a hole covering 28–62% of frames.
+This experiment attacks the hole itself.
+
+### What the gate did
+
+`MediaPipeHandBackend._extract` asked the detector for a hand whose label
+matched the episode's declared side and, on a mismatch, returned `None` — the
+whole detection, all 21 landmarks and their depth samples, for a frame whose
+geometry was fine. The rejection was symmetric: asking for `left` discarded a
+hand labelled `Right` the same way.
+
+MediaPipe infers handedness from the appearance of the hand in one 2-D image,
+so a hand seen palm-on and the same hand seen back-on are mirror images. In a
+two-camera rig the two views legitimately disagree. Measured by running the
+detector directly over the recordings:
+
+| Scene / camera | no hand | labelled as the declared hand | labelled as the other hand | median score of the mislabel |
+|---|---:|---:|---:|---:|
+| cup_grab k0 | 13 (1.4%) | 884 (98.4%) | 1 (0.1%) | — |
+| cup_grab k1 | 104 (11.6%) | 688 (76.6%) | **106 (11.8%)** | **0.967** |
+| move-shipok k1 | 0 | 849 (94.6%) | 48 (5.4%) | 0.614 |
+| pyramid k1 | 36 (4.0%) | 842 (93.8%) | 20 (2.2%) | 0.735 |
+
+On `cup_grab` the second camera is confidently wrong on 11.8% of frames for the
+same physical right hand that the first camera labels correctly 98.4% of the
+time. That is not detector noise; it is a viewpoint-dependent classification of
+a property we already know.
+
+The anatomical side is a recording parameter: one hand per episode, declared by
+the operator and stored in `meta["hand"]`. Re-deriving it per camera per frame
+and then discarding evidence when the guess disagrees is unsound. The gate and
+its `strict_handedness` knob were removed rather than made configurable, and the
+graph still runs with `num_hands=1`, so the returned hand is used as-is.
+
+The handedness score was also the only "confidence" the detection path produced,
+broadcast identically to all 21 landmarks (`lm_score_per_pt=False`, measured
+constant at 0.872 and 0.762 on two episodes). It measured certainty about a
+label, never landmark quality, so it is no longer propagated; triangulation
+geometry owns rejection.
+
+### Effect on acquisition
+
+Predicted from the mislabel counts and confirmed exactly:
+
+| Scene | kinect_1 detections before | after |
+|---|---:|---:|
+| cup_grab | 76.6% | **88.4%** |
+| move-shipok | 94.6% | **100.0%** |
+
+### Effect on the pipeline, five scenes
+
+Same profile (`stable-fused-hand-v2`), same episodes, extraction re-run. The
+strict artifacts are archived at
+`intermediates/archive/stable-fused-hand-v2-strict-handedness/`.
+
+| Scene | observed landmarks | both tips observed | frames with IK evidence | gap p95 | gap max | frames > 250 mm |
+|---|---:|---:|---:|---:|---:|---:|
+| cup_grab | 8 963 → 9 556 (+593) | 249 → 266 | 632 → 698 | 171.2 → 162.7 mm | 221.8 → 218.4 mm | 0 → 0 |
+| pyramid | 13 848 → 14 058 (+210) | 403 → 410 | 801 → 818 | 148.7 → 139.4 mm | 228.6 → 228.6 mm | 0 → 0 |
+| block-push | 13 968 → 14 277 (+309) | 489 → 495 | 845 → 874 | 132.2 → 132.3 mm | 142.9 → 142.9 mm | 0 → 0 |
+| move-shipok | 13 002 → 13 636 (+634) | 490 → 517 | 774 → 820 | 156.7 → 156.8 mm | 256.7 → 256.7 mm | 9 → 9 |
+| pick_up_u | 13 556 → 14 012 (+456) | 556 → 574 | 781 → 817 | 122.3 → 122.5 mm | 130.4 → 130.4 mm | 0 → 0 |
+
+**Decision: keep. The gate is removed permanently.**
+
+Directly observed landmarks rise on every scene (+2.3% to +6.6%) and the number
+of frames carrying positive solver evidence rises on every scene (+17 to +66).
+No geometry metric degrades: maximum thumb-index separation and the count of
+frames above 250 mm are unchanged everywhere, and the p95 improves on the two
+scenes with the worst mislabelling. Unlike E1–E3, this adds measurements rather
+than redistributing the consequences of missing ones.
+
+Two effects are recorded rather than smoothed over:
+
+- On `cup_grab` the geometric plausibility filter passes 31 fewer frames
+  (884 → 853) while evidence-backed frames rise by 66. The share of valid frames
+  that are actually evidence-backed goes 71% → 82% there, and rises on all five
+  scenes (92→94, 96→99, 90→95, 88→92). Recovered frames come from the harder
+  viewpoint, so a few reconstruct implausibly and are correctly dropped; what
+  survives is better supported than before.
+- `omega` is still normalised by the episode maximum, so changing the
+  observation set rescales every weight and the `omega > 0` counts are not
+  perfectly comparable between runs. The unnormalised observed-landmark count is
+  the metric to trust here. This is the open audit point on confidence
+  calibration, unchanged by this experiment.
+
+Not addressed: with `num_hands=1` the detector returns its most confident hand.
+If a second hand entered frame, the pipeline would now silently track whichever
+one the detector preferred. The single-hand recording protocol is the assumption
+that makes this safe, and it is now load-bearing rather than advisory.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change

@@ -103,7 +103,6 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
         depth_radius_px=profile.depth_radius_px if profile is not None else None,
         save_observations=(profile.save_observations if profile is not None else None),
         tracking_confidence=(profile.tracking_confidence if profile is not None else None),
-        strict_handedness=(profile.strict_handedness if profile is not None else True),
         profile=opts.profile,
         flip=opts.flip,
         report=report,

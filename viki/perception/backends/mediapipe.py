@@ -26,7 +26,6 @@ _MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
-_LABEL = {"right": "Right", "left": "Left"}
 _MIN_GRAPH_CONFIDENCE = 1e-6
 
 
@@ -59,7 +58,6 @@ class MediaPipeHandBackend(HandPoseBackend):
         model_entry: dict | None = None,  # registry row; MediaPipe has one model
         min_confidence: float = 0.5,
         tracking_confidence: float | None = None,
-        strict_handedness: bool = True,
         **_ignored,
     ) -> None:
         if mode not in ("image", "video"):
@@ -79,7 +77,6 @@ class MediaPipeHandBackend(HandPoseBackend):
         tracking_confidence = _graph_confidence(
             min_confidence if tracking_confidence is None else tracking_confidence
         )
-        self._strict_handedness = bool(strict_handedness)
         opts = vision.HandLandmarkerOptions(
             base_options=python.BaseOptions(
                 model_asset_path=model_path or _ensure_model(models_dir)
@@ -108,7 +105,7 @@ class MediaPipeHandBackend(HandPoseBackend):
 
         if raw is None or not raw.hand_landmarks:
             return None
-        return self._extract(raw, frame, hand)
+        return self._extract(raw, frame)
 
     def close(self) -> None:
         task = getattr(self, "_task", None)
@@ -116,28 +113,30 @@ class MediaPipeHandBackend(HandPoseBackend):
             task.close()
             self._task = None
 
-    def _extract(self, raw, frame: PreparedFrame, hand: Hand) -> HandDetection | None:
-        target = _LABEL[hand]
-        match_idx = match_score = None
-        for i, handedness in enumerate(raw.handedness):
-            if handedness[0].category_name == target:
-                match_idx = i
-                match_score = float(handedness[0].score)
-                break
-        if match_idx is None:
-            if self._strict_handedness or not raw.hand_landmarks:
-                return None
-            # The graph is configured for one hand. A left/right label flicker
-            # must not punch a hole in a single-hand trajectory; handedness
-            # confidence is not landmark confidence, so geometry owns the
-            # downstream score in this relaxed mode.
-            match_idx = 0
-            match_score = 1.0
-        elif not self._strict_handedness:
-            match_score = 1.0
+    def _extract(self, raw, frame: PreparedFrame) -> HandDetection | None:
+        # Handedness is deliberately not consulted. MediaPipe infers left/right
+        # from the hand's appearance in one 2-D image, so the same physical hand
+        # is labelled differently depending on which side a camera sees it from:
+        # measured on cup_grab, kinect_0 reported "Right" in 98.4% of frames
+        # while kinect_1 reported "Left" in 11.8% of them with a median score of
+        # 0.967 — confidently, and for the same right hand. Rejecting on that
+        # label threw away the whole detection (all 21 landmarks) for a frame
+        # whose geometry was fine.
+        #
+        # ViKi records one hand per episode and the operator declares which one
+        # (`meta["hand"]`, the Record tab's Hand selector), so the anatomical
+        # side is a known recording parameter, not something to re-derive per
+        # camera per frame. The graph runs with num_hands=1, so whatever came
+        # back is the hand we asked for.
+        if not raw.hand_landmarks:
+            return None
+        # The handedness score measures certainty about a label we no longer
+        # use; it is not landmark quality and must not masquerade as one.
+        # Triangulation geometry owns rejection from here on.
+        match_score = 1.0
 
         h, w = frame.rgb.shape[:2]
-        lms = raw.hand_landmarks[match_idx]
+        lms = raw.hand_landmarks[0]
         points: dict[LM, np.ndarray] = {}
         z = np.zeros(HAND_LM_COUNT, dtype=np.float32)
         for i in range(HAND_LM_COUNT):

@@ -313,7 +313,6 @@ def test_stable_profiles_version_gripper_and_confidence_without_mutating_v1():
     assert get_profile(STABLE_FUSED_HAND_V3).detector_model == "mediapipe"
     assert get_profile(STABLE_FUSED_HAND_V3).min_confidence == 0.5
     assert get_profile(STABLE_FUSED_HAND_V3).tracking_confidence is None
-    assert get_profile(STABLE_FUSED_HAND_V3).strict_handedness is True
     assert get_profile(STABLE_FUSED_HAND_V3).triangulation["min_score"] == 0.3
     assert get_profile(STABLE_FUSED_HAND_V2).articulated_hand_fit == (
         get_profile(STABLE_FUSED_HAND_V1).articulated_hand_fit
@@ -325,7 +324,6 @@ def test_stable_profiles_version_gripper_and_confidence_without_mutating_v1():
     assert "fused_extrapolate_edges" not in get_profile(STABLE_FUSED_HAND_V2).manifest()
     assert get_profile(FUSED_HAND_NO_EXTRAP_V1).manifest()["fused_extrapolate_edges"] is False
     assert "tracking_confidence" not in get_profile(STABLE_FUSED_HAND_V2).manifest()
-    assert "strict_handedness" not in get_profile(STABLE_FUSED_HAND_V2).manifest()
     assert get_profile(STABLE_FUSED_HAND_V3).manifest()["confidence_calibration"] == (
         "absolute"
     )

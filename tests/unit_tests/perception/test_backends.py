@@ -79,24 +79,31 @@ def test_mediapipe_zero_threshold_has_a_native_safe_floor():
     assert _graph_confidence(0.5) == 0.5
 
 
-def test_mediapipe_relaxed_handedness_keeps_the_only_hand():
+def test_mediapipe_ignores_the_handedness_label():
+    """A mislabelled hand must still be used.
+
+    MediaPipe infers left/right from one 2-D view, so two cameras looking at
+    the same physical hand from opposite sides disagree. The episode declares
+    which hand was recorded, so the label carries no information we need and
+    must never discard a detection.
+    """
     from viki.perception.backends.mediapipe import MediaPipeHandBackend
 
     landmarks = [
         SimpleNamespace(x=0.5, y=0.5, z=0.0) for _ in range(HAND_LM_COUNT)
     ]
-    raw = SimpleNamespace(
-        hand_landmarks=[landmarks],
-        handedness=[[SimpleNamespace(category_name="Left", score=0.51)]],
-    )
+    backend = MediaPipeHandBackend.__new__(MediaPipeHandBackend)
 
-    strict = MediaPipeHandBackend.__new__(MediaPipeHandBackend)
-    strict._strict_handedness = True
-    assert strict._extract(raw, _frame(), "right") is None
+    for label, score in (("Left", 0.51), ("Left", 0.97), ("Right", 0.99)):
+        raw = SimpleNamespace(
+            hand_landmarks=[landmarks],
+            handedness=[[SimpleNamespace(category_name=label, score=score)]],
+        )
+        detection = backend._extract(raw, _frame())
+        assert detection is not None, f"{label}@{score} was discarded"
+        assert len(detection.points) == HAND_LM_COUNT
+        # The label's certainty is not landmark quality; geometry owns rejection.
+        assert detection.confidence == 1.0
 
-    relaxed = MediaPipeHandBackend.__new__(MediaPipeHandBackend)
-    relaxed._strict_handedness = False
-    detection = relaxed._extract(raw, _frame(), "right")
-    assert detection is not None
-    assert len(detection.points) == HAND_LM_COUNT
-    assert detection.confidence == 1.0
+    empty = SimpleNamespace(hand_landmarks=[], handedness=[])
+    assert backend._extract(empty, _frame()) is None
