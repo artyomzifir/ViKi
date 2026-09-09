@@ -231,6 +231,8 @@ def _build_parser() -> argparse.ArgumentParser:
         CLEAN_LANDMARKS_V1,
         DEFAULT_PERCEPTION_PROFILE,
         FUSED_HAND_NO_EXTRAP_V1,
+        FUSED_HAND_REPROJ8_V1,
+        FUSED_HAND_REPROJ16_V1,
         STABLE_FUSED_HAND_V1,
         STABLE_FUSED_HAND_V2,
         STABLE_FUSED_HAND_V3,
@@ -265,6 +267,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=[
             FUSED_HAND_NO_EXTRAP_V1,
+            FUSED_HAND_REPROJ8_V1,
+            FUSED_HAND_REPROJ16_V1,
             STABLE_FUSED_HAND_V3,
             STABLE_FUSED_HAND_V2,
             STABLE_FUSED_HAND_V1,
@@ -319,6 +323,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=[
             FUSED_HAND_NO_EXTRAP_V1,
+            FUSED_HAND_REPROJ8_V1,
+            FUSED_HAND_REPROJ16_V1,
             STABLE_FUSED_HAND_V3,
             STABLE_FUSED_HAND_V2,
             STABLE_FUSED_HAND_V1,

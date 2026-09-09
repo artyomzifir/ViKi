@@ -17,6 +17,8 @@ STABLE_FUSED_HAND_V1 = "stable-fused-hand-v1"
 STABLE_FUSED_HAND_V2 = "stable-fused-hand-v2"
 FUSED_HAND_NO_EXTRAP_V1 = "fused-hand-no-extrap-v1"
 STABLE_FUSED_HAND_V3 = "stable-fused-hand-v3"
+FUSED_HAND_REPROJ8_V1 = "fused-hand-reproj8-v1"
+FUSED_HAND_REPROJ16_V1 = "fused-hand-reproj16-v1"
 # Keep the absolute-confidence V3 available for controlled A/B runs, but use
 # the already validated V2 recipe as the product baseline until V3 is shown to
 # improve fixed-episode metrics without reducing usable observations.
@@ -196,6 +198,36 @@ _PROFILES[STABLE_FUSED_HAND_V3] = replace(
     detector_model="mediapipe",
     min_confidence=0.5,
     confidence_calibration="absolute",
+)
+
+
+def _with_reproj_px(base: PerceptionProfile, name: str, px: float) -> PerceptionProfile:
+    """V2 with a different reprojection inlier radius, nothing else changed."""
+    return replace(
+        base,
+        name=name,
+        description=(
+            f"V2 geometry with the triangulation reprojection inlier radius at "
+            f"{px:g} px instead of 4 px: a wider agreement gate, a matching "
+            f"robust-loss scale, and a quality term that grades over the same "
+            f"widened range."
+        ),
+        triangulation={**base.triangulation, "reproj_inlier_px": px},
+    )
+
+
+# E6 measured that every rejection of an acquired joint is this one gate, and
+# that the rejected population is smooth and pressed against it (median 5.8-8.0
+# px = 11-18 mm of ray separation, nothing above 100 px). These two candidates
+# widen only that radius. `reproj_inlier_px` is the inlier gate, the `f_scale`
+# of the robust refinement loss, and the denominator of the quality falloff, so
+# one number moves the accept threshold and the confidence ramp together and no
+# joint is admitted at a weight the old recipe would not have expressed.
+_PROFILES[FUSED_HAND_REPROJ8_V1] = _with_reproj_px(
+    _PROFILES[STABLE_FUSED_HAND_V2], FUSED_HAND_REPROJ8_V1, 8.0,
+)
+_PROFILES[FUSED_HAND_REPROJ16_V1] = _with_reproj_px(
+    _PROFILES[STABLE_FUSED_HAND_V2], FUSED_HAND_REPROJ16_V1, 16.0,
 )
 
 

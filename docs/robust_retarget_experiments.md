@@ -487,6 +487,77 @@ it relaxes the gate and the robust loss consistently, with no code change.
 **No decision is taken here.** The candidate and its acceptance gates are stated
 under "Next controlled experiment".
 
+## E7 — widening the reprojection gate, pre-registered 2026-09-09
+
+**Registered before the run**, per rule 7. E6 established the mechanism; this is
+the change it implies, with its acceptance gates fixed in advance.
+
+### Change
+
+One number, in the profile, no code change:
+`triangulation.reproj_inlier_px` 4 px → **8 px** (`fused-hand-reproj8-v1`) and
+→ **16 px** (`fused-hand-reproj16-v1`). Everything else is V2 verbatim.
+
+That number is used in exactly three places, and moving it moves all three
+consistently:
+
+| use | at 4 px | at 16 px |
+|---|---|---|
+| inlier gate, `e <= reproj_inlier_px` | accept ≤ 4 px | accept ≤ 16 px |
+| `f_scale` of the `soft_l1` refinement loss | robust past 4 px | robust past 16 px |
+| `quality` falloff, `1 - err/(2·reproj_inlier_px)` | zero at 8 px | zero at 32 px |
+
+So a joint is never admitted at a confidence the recipe could not already
+express: the gate and the confidence ramp widen together. Two doses rather than
+one, so the result is a response curve — if 16 px is too far, 8 px says whether
+the direction was right.
+
+### Hypothesis
+
+Rejected joints are not hallucinations (E6: not one rejection above 100 px in
+~23,000; median 5.8–8.0 px ≈ 11–18 mm of ray separation). They are the same
+finger seen slightly differently by two detectors. Deleting them and filling the
+hole by interpolation substitutes a value that E0–E2 measured wrong by up to
+256.7 mm. Admitting them at a weight proportional to their agreement should
+therefore raise the observed fraction without degrading geometry.
+
+### The counter-hypothesis this must rule out
+
+Widening `f_scale` makes `soft_l1` nearly quadratic across the whole working
+range, so a genuinely bad view is no longer down-weighted during refinement and
+can drag the refined point. If that dominates, the trajectory gets noisier and
+hand geometry stops closing. Gates 2–4 are there to catch exactly this, and a
+failure on them is a reason to reject 16 px, or both doses, not to reinterpret
+them.
+
+### Acceptance gates
+
+Measured against the protected `stable-fused-hand-v2` artifact on the same five
+episodes (`move-shipok`, `cup_grab`, `block-push`, `pyramid`, `pick_up_u`).
+
+1. **Coverage must rise.** `pair_observed` — frames where thumb tip *and* index
+   tip were both triangulated, not filled — strictly increases on **all five**
+   scenes. This is the point of the change; no improvement anywhere means reject.
+2. **No new fabricated explosions.** `gap_over250` (thumb-index separation above
+   250 mm) does not increase on any scene, and `gap_max` does not increase.
+3. **No new jitter.** `pinch_d2_rms`, the RMS second difference of the
+   thumb-index midpoint, rises by no more than **10%** on any scene. This is the
+   primary detector for the counter-hypothesis.
+4. **Hand geometry must not stretch.** Bone-length dispersion on *observed*
+   frames — median across the 20 hand bones of the robust coefficient of
+   variation, and the p95 absolute deviation in mm — does not degrade by more
+   than **10%** on any scene. An admitted bad joint shows up here as a bone that
+   changes length.
+5. **Upstream untouched.** `frames` and per-camera detection counts are
+   identical to V2; only triangulation may differ.
+
+A dose is promoted only if it passes all five. If 8 px passes and 16 px fails,
+8 px is the answer and the falloff-range coupling is the reason. If both pass,
+the one with the better coverage/jitter trade is promoted and the other is kept
+as a locked candidate.
+
+**Result: recorded below once the run completes.**
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
