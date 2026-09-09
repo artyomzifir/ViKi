@@ -37,4 +37,4 @@ cli.py        `viki record|extract|prepare|retarget|replay|label|export|run`
 - There is **no live pipeline**: record scenes, then extract/prepare/retarget offline.
 
 Modules tagged `[stub]` are contract-complete but not implemented; each cites the
-thesis section it must satisfy (`paper/src/ch3_methodology.tex`).
+thesis section it must satisfy (`paper/thesis/ch3_methodology.tex`).

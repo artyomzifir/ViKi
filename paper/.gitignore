@@ -1,0 +1,13 @@
+# XeLaTeX build intermediates. The compiled PDFs stay tracked (they are the
+# deliverable and match the sources page-for-page); `make` just regenerates them.
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
