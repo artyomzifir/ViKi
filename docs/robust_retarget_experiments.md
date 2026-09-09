@@ -768,6 +768,93 @@ while tracking a worse trajectory. The comparison must therefore split the
 position error by evidence class, per rule 4, and the headline RMSE must not be
 read on its own.
 
+## E9 — episode-max confidence makes a bad recording look as certain as a good one
+
+Second defect found while wiring perception to retarget. Audit point 9 was on the
+open list as a suspicion; this measures it.
+
+### The mechanism
+
+Under `confidence_calibration == "episode_max"` — V1, V2, the no-extrap candidate
+and both E7 reproj candidates, i.e. everything except V3 —
+`viki/prepare/run.py::_confidence_arrays` normalises the per-joint triangulation
+quality by the episode's own maximum:
+
+```python
+scale = float(np.max(evidence)) if evidence.size else 1.0
+landmark_confidence = np.clip(evidence / (scale or 1.0), 0.0, 1.0)
+```
+
+Every episode is therefore rescaled so its best joint scores exactly 1.0,
+whatever that joint's absolute quality was.
+
+### Measured on the five protected V2 baselines
+
+| scene | max | mean over observed | p05 | p50 | observed LM % |
+|---|---:|---:|---:|---:|---:|
+| move-shipok | 1.0000 | 0.7985 | 0.618 | 0.809 | 72.4 |
+| cup_grab | 1.0000 | 0.7980 | 0.604 | 0.808 | 50.7 |
+| block-push | 1.0000 | 0.8014 | 0.605 | 0.816 | 75.8 |
+| pyramid | 1.0000 | 0.8134 | 0.621 | 0.826 | 74.5 |
+| pick_up_u | 1.0000 | 0.8202 | 0.621 | 0.839 | 74.3 |
+
+The five means span 2.2 percentage points. But E6 measured these episodes and
+they are not comparable: cup_grab has 50.7% of landmarks observed against
+pick_up_u's 74.3%, a rejected-reprojection median of 8.0 px against 5.9, a
+ray-ray separation median of 17.8 mm against 12.2, and it is the only scene with
+12.4% of joint-slots below two views. It is by every geometric measure the worst
+of the five — and it reports a mean confidence of 0.798 against move-shipok's
+0.799.
+
+The normalisation has erased the difference it exists to express.
+
+### Why it matters here specifically
+
+`omega` derives from these values and becomes the IK data weight. So the weight
+a frame receives depends on how good the *best* frame of its own episode
+happened to be. Within one episode the ordering is preserved and the weights are
+meaningful. Across episodes they are not — and a ViKi dataset is many episodes
+concatenated, which is the entire product. A frame from a poor recording can
+outweigh a frame from a good one purely because its episode had no better frame
+to be divided by.
+
+Note also the perverse direction: the worse an episode's best joint, the larger
+the multiplier applied to every joint in it. Degrading a recording raises its
+reported confidence.
+
+### The fix already exists, on the same unused profile as E8's
+
+The `absolute` branch takes `triangulate_joint`'s quality directly — it is
+already defined on [0, 1] and already comparable between episodes — and its
+docstring says so. It runs only under `stable-fused-hand-v3`.
+
+So both defects recorded today, E8 and E9, are fixed in `stable-fused-hand-v3`
+and live in `stable-fused-hand-v2`, which is the default. V3 has never been run
+on any scene, has no protected artifact anywhere, and was described in
+`profiles.py` as awaiting evidence that it "improves fixed-episode metrics
+without reducing usable observations". That framing now looks like the wrong
+test: V3's value is not better fixed-episode metrics, it is weights that mean
+the same thing in every episode and that stop crediting fabricated palms.
+
+### Two open items resolved while looking
+
+- **Audit 10 — the IK confidence floor — is correctly implemented, not a
+  defect.** `solver.py` applies
+  `np.where(omega > 0.0, np.maximum(omega, options.confidence_floor), 0.0)`, so
+  the 0.05 floor lifts only weights that are already positive and never promotes
+  a zero-weight fabricated row into data. The earlier note claiming otherwise was
+  wrong.
+- **Audit 2 — Huber mixing metres and radians — is a tuning choice, not a
+  dimensional error.** `_pose_error` returns
+  `[sqrt(w_pos)·Δp, sqrt(w_ori)·rotvec]`, so the norm the Huber sees is a
+  properly weighted one and the weights are the unit conversion. With
+  `position=1.0` and `orientation=0.01` the exchange rate is 1 rad ≈ 0.1 m, i.e.
+  57° of palm rotation costs as much as 100 mm of position error. That is worth
+  revisiting for a gripper task, but it is a parameter, not a bug.
+- **Audit 8 — `interpolated_mask` still has no consumer.** Written in
+  `prepare/run.py` and declared in `contracts.py`; nothing reads it. Harmless,
+  and it is the array a pair-aware evidence stage would need, so it should stay.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
