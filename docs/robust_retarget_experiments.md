@@ -855,6 +855,84 @@ the same thing in every episode and that stop crediting fabricated palms.
   `prepare/run.py` and declared in `contracts.py`; nothing reads it. Harmless,
   and it is the array a pair-aware evidence stage would need, so it should stay.
 
+### Correction, same day — E9's causal claim was wrong
+
+E9 above observed that mean confidence is 0.798–0.820 on five episodes of very
+different geometric quality, and concluded that the episode-max division had
+erased the difference. Running `stable-fused-hand-v3`, which takes quality
+directly and performs no division, refutes that:
+
+| scene | v2 max | v3 max | v2 mean (observed) | v3 mean (observed) |
+|---|---:|---:|---:|---:|
+| move-shipok | 1.00000 | 0.99961 | 0.79853 | 0.79821 |
+| cup_grab | 1.00000 | 0.99943 | 0.79799 | 0.79753 |
+| block-push | 1.00000 | 0.99966 | 0.80143 | 0.80116 |
+| pyramid | 1.00000 | 0.99973 | 0.81336 | 0.81314 |
+| pick_up_u | 1.00000 | 0.99972 | 0.82017 | 0.81994 |
+
+Every episode's best joint already scores 0.9994–0.9997, so dividing by it moves
+confidence by about 0.04%. **The normalisation is a no-op on this data.** It did
+not erase the difference; the difference was never there to erase.
+
+The structural hazard E9 describes is still real — if an episode's best joint
+were genuinely poor, every joint in it would be inflated, and nothing in the code
+prevents that. But it does not fire on these five recordings, and no claim about
+their measured confidence can be attributed to it.
+
+**What is actually true, and is the more useful finding:** `quality` carries
+almost no cross-episode information, for a reason that has nothing to do with
+calibration. The hard reprojection gate has already deleted every joint that
+would have scored low, so the survivors are uniformly good by construction —
+cup_grab's surviving joints are as clean as move-shipok's. Episode quality shows
+up in **how many** joints survive, not in how good the survivors look. Confidence
+is high everywhere because the evidence that would have been low was thrown away
+before it could be measured. This is the same survivorship that E6 documented
+from the rejection side, seen from the acceptance side.
+
+That also means `landmark_confidence` must not be compared between profiles with
+different `reproj_inlier_px`: the quality falloff is `1 − err/(2·reproj_inlier_px)`,
+so the same 3 px residual scores 0.63 at a 4 px threshold and 0.91 at 16 px. The
+rise from 0.799 to 0.914 between v2 and the 16 px candidate is a change of ruler,
+not of measured quality. This coupling was flagged when E7 was registered; it is
+recorded here because the number is now on the page and would otherwise be
+misread.
+
+### Consequence for v3
+
+`stable-fused-hand-v2.1` and `stable-fused-hand-v3` produce the same weighted
+frame set on all five scenes (450/450, 275/275, 396/396, 448/448, 323/323) and
+total evidence agreeing to three digits (356.3 vs 356.1, 223.5 vs 223.4, and so
+on). **v3's only distinguishing factor is inert here.** Its entire practical
+effect is the palm gate, which v2.1 now carries on its own.
+
+So v3 is not junk, but it is redundant: it is v2.1 plus a recalibration that
+changes nothing measurable on this data. If a new default is promoted it should
+be promoted from v2.1, which changes one thing, not from v3, which changes two
+and can only be told apart from v2.1 on an episode whose best joint is bad.
+
+Separating the two factors was what made this visible. Bundled, the palm gate's
+effect would have been credited to the recalibration.
+
+### What the palm gate costs
+
+Not free, and the cost must be stated before the retarget comparison reads on it:
+
+| scene | frames with weight, v2 → v2.1 | total evidence, v2 → v2.1 |
+|---|---|---|
+| move-shipok | 820 → 450 (−45%) | 524.1 → 356.3 (−32%) |
+| cup_grab | 698 → 275 (−61%) | 391.8 → 223.5 (−43%) |
+| block-push | 874 → 396 (−55%) | 571.4 → 318.0 (−44%) |
+| pyramid | 818 → 448 (−45%) | 543.9 → 358.8 (−34%) |
+| pick_up_u | 817 → 323 (−60%) | 480.8 → 261.9 (−46%) |
+
+v2.1 removes a fabrication, and it removes a lot of data-term support with it.
+Whether the IK is better for it is exactly what the retarget grid is running to
+find out — and it is why the widened reprojection gate matters: it is the only
+lever measured so far that raises the number of *honest* weighted frames rather
+than lowering the dishonest ones. On move-shipok the 16 px candidate reaches 870
+weighted frames with zero incomplete palms, against v2's 820 with 370 incomplete
+and v2.1's 450.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
