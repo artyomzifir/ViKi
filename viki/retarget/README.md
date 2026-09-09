@@ -88,9 +88,12 @@ the append, passive-joint, solver, archive, API and viewer paths are shared.
 `solver.solve_trajectory` optimises the full `q[0:T]` trajectory. Every
 Gauss–Newton iteration builds one sparse QP with:
 
-- confidence-weighted Huber SE(3) tracking;
+- confidence-weighted Huber SE(3) tracking. `RETARGET_HUBER_DELTA` is measured
+  in the weighted six-dimensional residual norm, so position and orientation
+  outliers are intentionally robustified as one bad pose observation;
 - velocity, acceleration and neutral-posture regularisation;
-- Levenberg–Marquardt damping;
+- fixed Tikhonov damping of each Gauss–Newton QP (the retained configuration
+  key is `RETARGET_LM_DAMPING`; this is not adaptive Levenberg–Marquardt);
 - hard joint and velocity limits;
 - a hard calibration-floor half-space (`z >= 0`) for the lowest support point
   of every movable URDF collision body (arm, adapter and gripper), plus both
@@ -108,12 +111,21 @@ the sparse trajectory problem.
 
 ## Output and scene
 
-`plan.h5` schema v7 contains arm-only `q`, the base position/RPY, target position anchor and
+`plan.h5` schema v8 contains arm-only `q`, the base position/RPY, target position anchor and
 adapter parameters, the generic `(T,D)` continuous
 `gripper_command`, normalised/metre opening, physical master-joint position,
 desired and achieved TCP poses, errors, joint derivatives, solver/config
 metadata, and URDF-derived body origins plus parent edges for every frame. The
-metrics include the minimum floor clearance. The
+metrics include a per-term objective breakdown and exact joint, velocity,
+floor and collision margins over the approach plus demonstration.
+
+For paper comparisons, `RETARGET_SEQUENTIAL_BASELINE` (or the matching UI/CLI
+option) additionally runs causal frame-wise IK with warm starts, followed by a
+7/2 Savitzky–Golay filter over `q`. It uses the same targets, model, gripper and
+weights. Its trajectory, per-frame errors, objective breakdown and post-filter
+constraint margins are archived, but it is never sent to replay; post-hoc
+smoothing is allowed to expose exactly the feasibility failures being measured.
+The Retarget scene shows this optional path in violet. The
 Retarget tab uses that geometry in the shared Three.js scene and colours the
 tool separately. Rig-space cloud/input layers receive the display anchor;
 calibration-space desired TCP, achieved TCP, arm and gripper do not receive it a
