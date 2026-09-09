@@ -67,6 +67,8 @@ def test_prepare_fuses_from_triangulation(tmp_path, monkeypatch):
         xyz[t, :, 2] = 0.60
     xyz[:, int(LM.PINKY_TIP)] = np.nan
     quality[:, int(LM.PINKY_TIP)] = 0.0
+    xyz[n // 2, int(LM.INDEX_TIP)] = np.nan
+    quality[n // 2, int(LM.INDEX_TIP)] = 0.0
     quality[:, int(LM.WRIST)] = 0.3            # low-confidence but present
     np.savez(
         ep.raw_dir / "joints3d.npz", schema=np.int32(1), timestamps=grid,
@@ -89,6 +91,11 @@ def test_prepare_fuses_from_triangulation(tmp_path, monkeypatch):
         # per-joint confidence tracks triangulation quality
         col = {int(v): k for k, v in enumerate(ids)}
         assert lc[mid, col[int(LM.MIDDLE_MCP)]] > lc[mid, col[int(LM.WRIST)]]
+        assert lc[mid, col[int(LM.MIDDLE_MCP)]] == pytest.approx(0.8)
+        assert lc[mid, col[int(LM.WRIST)]] == pytest.approx(0.3)
+        assert d["interpolated_mask"][mid, col[int(LM.INDEX_TIP)]]
+        assert np.isfinite(sp[mid, col[int(LM.INDEX_TIP)]]).all()
+        assert lc[mid, col[int(LM.INDEX_TIP)]] == 0.0
         assert lc[mid, col[int(LM.PINKY_TIP)]] == 0.0     # gap, not a fake weight
         assert d["perception_fuse_mode"].item() == "triangulate"
         assert d["checkpoint_stage"].item() == "smoothed"
@@ -100,6 +107,13 @@ def test_prepare_fuses_from_triangulation(tmp_path, monkeypatch):
     checkpoints = ep.intermediates_dir / "prepare" / run_name(
         "triangulate", 0, 7, 2
     )
+    assert run_name(
+        "triangulate", 0, 7, 2, fused_interpolation="linear",
+    ) == "triangulate__interp-linear__gap-all__sg-7-2"
+    assert run_name(
+        "triangulate", 0, 7, 2,
+        fused_interpolation="linear", fused_extrapolate_edges=False,
+    ) == "triangulate__interp-linear-no-extrap__gap-all__sg-7-2"
     expected = {
         "00_per_camera_observed.npz", "05_per_camera_filled.npz",
         "10_fused_observed.npz", "20_fused_filled.npz", "30_smoothed.npz",

@@ -18,7 +18,13 @@ const REQUIRED_LM = new Set([0, 5, 9, 17, 4, 8]);   // EE-pose + gripper need th
 const DEFAULT_LM = [...Array(21).keys()];           // track every landmark by default
 const CLEAN_BASELINE = 'clean-triangulated-landmarks-v1';
 const STABLE_PIPELINE_V1 = 'stable-fused-hand-v1';
-const STABLE_PIPELINE = 'stable-fused-hand-v2';
+const STABLE_PIPELINE_V2 = 'stable-fused-hand-v2';
+const NO_EXTRAP_PIPELINE_V1 = 'fused-hand-no-extrap-v1';
+const STABLE_PIPELINE_V3 = 'stable-fused-hand-v3';
+const DEFAULT_PIPELINE = STABLE_PIPELINE_V2;
+// UI-state schema version. Bumped when V2 became the default so an old saved
+// V3 selection cannot silently defeat the deliberate baseline rollback.
+const SESSION_KEY = 'perceive-v3';
 // 21-point hand diagram, palm toward you, fingers up. [x, y] in a 0..100 box.
 const HAND_XY = [
   [50, 94],                                  // 0 wrist
@@ -37,7 +43,7 @@ const HAND_EDGES = [
 ];
 
 const DEFAULT_OPTS = {
-  profile: STABLE_PIPELINE, model: 'mediapipe', hand: 'right', flip: false,
+  profile: DEFAULT_PIPELINE, model: 'mediapipe', hand: 'right', flip: false,
   track_lm: DEFAULT_LM, min_confidence: 0.5, interp_max_gap: 0,
   sg_window: 7, sg_polyorder: 2,
   regen_cloud: false, cloud_stride: 1, cloud_bbox: '', dataset: '',
@@ -46,7 +52,7 @@ const DEFAULT_OPTS = {
 let root = null, ctl = null, models = {}, epList = [], viewedEp = null;
 
 export function mount(view) {
-  const S = { ...DEFAULT_OPTS, ...sessionGet('perceive-v2', {}) };
+  const S = { ...DEFAULT_OPTS, ...sessionGet(SESSION_KEY, {}) };
   root = document.createElement('div');
   root.className = 'perception-tab';
   root.innerHTML = `
@@ -81,7 +87,9 @@ export function mount(view) {
         <div class="calib-sec-title">1 · Model</div>
         <div class="cfg-row"><label>Pipeline</label>
           <select data-role="profile">
-            <option value="${STABLE_PIPELINE}" ${S.profile === STABLE_PIPELINE ? 'selected' : ''}>stable fused + hand fit v2</option>
+            <option value="${STABLE_PIPELINE_V2}" ${S.profile === STABLE_PIPELINE_V2 ? 'selected' : ''}>stable v2 · linear edge hold</option>
+            <option value="${NO_EXTRAP_PIPELINE_V1}" ${S.profile === NO_EXTRAP_PIPELINE_V1 ? 'selected' : ''}>candidate · no edge extrapolation</option>
+            <option value="${STABLE_PIPELINE_V3}" ${S.profile === STABLE_PIPELINE_V3 ? 'selected' : ''}>experimental v3 · absolute confidence</option>
             <option value="${STABLE_PIPELINE_V1}" ${S.profile === STABLE_PIPELINE_V1 ? 'selected' : ''}>stable v1 · binary gripper (legacy)</option>
             <option value="${CLEAN_BASELINE}" ${S.profile === CLEAN_BASELINE ? 'selected' : ''}>clean baseline v1</option>
             <option value="" ${!S.profile ? 'selected' : ''}>custom / config</option>
@@ -190,7 +198,9 @@ function syncModel() {
 
 function syncProfile() {
   const profile = root.querySelector('[data-role="profile"]').value;
-  const locked = [CLEAN_BASELINE, STABLE_PIPELINE, STABLE_PIPELINE_V1].includes(profile);
+  const locked = [CLEAN_BASELINE, STABLE_PIPELINE_V3, STABLE_PIPELINE_V1,
+    NO_EXTRAP_PIPELINE_V1,
+    STABLE_PIPELINE_V2].includes(profile);
   const fixed = {
     model: 'mediapipe', flip: false, minconf: 0.5, gap: 0, sgwin: 7, sgpoly: 2,
   };
@@ -208,8 +218,12 @@ function syncProfile() {
     if (el) el.disabled = locked;
   });
   root.querySelector('[data-role="profile-meta"]').textContent =
-    profile === STABLE_PIPELINE
-      ? 'locked v2: fused + hand fit · continuous gripper opening'
+    profile === STABLE_PIPELINE_V3
+      ? 'experimental v3: validated gates · absolute cross-episode confidence'
+      : profile === NO_EXTRAP_PIPELINE_V1
+        ? 'candidate: v2 linear fill · only between observations · no edge extrapolation'
+      : profile === STABLE_PIPELINE_V2
+        ? 'locked v2 control: linear fill · nearest observation held at edges'
       : profile === STABLE_PIPELINE_V1
         ? 'locked v1: fused + hand fit · legacy binary gripper'
       : profile === CLEAN_BASELINE
@@ -238,7 +252,7 @@ function renderHand(sel) {
 let _trackSel = DEFAULT_LM.slice();
 
 function toggleLm(i) {
-  if ([CLEAN_BASELINE, STABLE_PIPELINE, STABLE_PIPELINE_V1].includes(
+  if ([CLEAN_BASELINE, STABLE_PIPELINE_V3, STABLE_PIPELINE_V1, STABLE_PIPELINE_V2].includes(
     root.querySelector('[data-role="profile"]').value)) return;
   if (REQUIRED_LM.has(i)) return;
   const s = new Set(_trackSel);
@@ -259,7 +273,7 @@ function updateTrackSummary() {
 function persist() {
   if (!root) return;
   const o = opts();
-  sessionSet('perceive-v2', {
+  sessionSet(SESSION_KEY, {
     ...o,
     regen_cloud: o.build_cloud,
     cloud_bbox: root.querySelector('[data-role="cloud-bbox"]').value || '',

@@ -7,6 +7,9 @@ Gap filling for landmark trajectories over time (shape ``(T, L, 3)``).
 ``fill_se3_spline`` natural cubic spline per coordinate, linear fallback when a
                     landmark has < 4 valid samples (fused-trajectory pass)
 
+Both methods can leave leading/trailing gaps untouched; stable V2 enables this
+so an unbracketed value is never represented as a sensor observation.
+
 This is deliberately named after the intended preparation stage, but it is not
 an SE(3) spline: every landmark coordinate is interpolated independently.  The
 distinction matters because long gaps can violate bone geometry, so callers can
@@ -19,10 +22,40 @@ import numpy as np
 
 from viki.dsp import interpolate_nans as fill_linear  # noqa: F401
 
-__all__ = ["fill_linear", "fill_se3_spline"]
+__all__ = ["fill_fused_gaps", "fill_linear", "fill_se3_spline"]
 
 
-def fill_se3_spline(points: np.ndarray, max_gap: int = 0) -> np.ndarray:
+def fill_fused_gaps(
+    points: np.ndarray,
+    *,
+    method: str,
+    max_gap: int = 0,
+    extrapolate_edges: bool = True,
+) -> np.ndarray:
+    """Fill fused landmark gaps with one explicit, recorded method."""
+    if method == "linear":
+        return fill_linear(
+            points,
+            max_gap=max_gap,
+            extrapolate_edges=extrapolate_edges,
+        )
+    if method == "cubic":
+        return fill_se3_spline(
+            points,
+            max_gap=max_gap,
+            extrapolate_edges=extrapolate_edges,
+        )
+    raise ValueError(
+        f"unknown fused interpolation {method!r}; choose 'linear' or 'cubic'"
+    )
+
+
+def fill_se3_spline(
+    points: np.ndarray,
+    max_gap: int = 0,
+    *,
+    extrapolate_edges: bool = True,
+) -> np.ndarray:
     """Fill missing coordinates with a natural cubic spline.
 
     ``max_gap`` has the same contract as :func:`viki.dsp.interpolate_nans`:
@@ -51,6 +84,11 @@ def fill_se3_spline(points: np.ndarray, max_gap: int = 0) -> np.ndarray:
                 series[gap] = np.interp(frames[gap], xv, yv)
             else:
                 series[gap] = yv[0]
+            if not extrapolate_edges:
+                first = int(xv[0])
+                last = int(xv[-1])
+                series[:first] = np.nan
+                series[last + 1:] = np.nan
             if max_gap > 0:
                 start = 0
                 while start < T:

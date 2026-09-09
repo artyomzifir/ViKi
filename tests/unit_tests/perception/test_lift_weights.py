@@ -13,7 +13,7 @@ class _Id:
         return (u, v)
 
 
-def _det(conf=0.9):
+def _det(conf=0.9, lm_score=None):
     pts = {LM(i): np.array([320.0, 240.0], dtype=np.float32) for i in range(HAND_LM_COUNT)}
     return HandDetection(
         points=pts,
@@ -21,6 +21,7 @@ def _det(conf=0.9):
         confidence=conf,
         device_id="cam0",
         timestamp_us=0,
+        lm_score=lm_score,
     )
 
 
@@ -47,6 +48,17 @@ def test_visibility_scales_weight_linearly():
     hi = lift_to_3d(_det(conf=0.9), _frame(), _Id()).weights[LM.WRIST]
     lo = lift_to_3d(_det(conf=0.3), _frame(), _Id()).weights[LM.WRIST]
     assert hi / lo == np.float32(3.0) or abs(hi / lo - 3.0) < 1e-4
+
+
+def test_per_landmark_visibility_overrides_whole_hand_score():
+    scores = np.ones(HAND_LM_COUNT, dtype=np.float32)
+    scores[LM.INDEX_TIP] = 0.2
+    weights = lift_to_3d(
+        _det(conf=0.01, lm_score=scores), _frame(), _Id()
+    ).weights
+
+    # Same pixel/depth geometry: only the detector's per-joint evidence differs.
+    assert abs(weights[LM.WRIST] / weights[LM.INDEX_TIP] - 5.0) < 1e-4
 
 
 def test_range_is_euclidean_not_axial_depth():

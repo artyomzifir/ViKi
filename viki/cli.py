@@ -154,6 +154,7 @@ def _cmd_retarget(a) -> None:
             "adapter_translation_mm": a.adapter_offset_mm,
             "adapter_rpy_deg": a.adapter_rpy_deg,
             "adapter_radius_mm": a.adapter_radius_mm,
+            "sequential_baseline": a.sequential_baseline,
         }.items()
         if value is not None
     }
@@ -229,8 +230,10 @@ def _build_parser() -> argparse.ArgumentParser:
     from viki.perception.profiles import (
         CLEAN_LANDMARKS_V1,
         DEFAULT_PERCEPTION_PROFILE,
+        FUSED_HAND_NO_EXTRAP_V1,
         STABLE_FUSED_HAND_V1,
         STABLE_FUSED_HAND_V2,
+        STABLE_FUSED_HAND_V3,
     )
 
     p = argparse.ArgumentParser(prog="viki", description=__doc__.splitlines()[3])
@@ -260,7 +263,13 @@ def _build_parser() -> argparse.ArgumentParser:
     pper.add_argument("episode")
     pper.add_argument(
         "--profile",
-        choices=[STABLE_FUSED_HAND_V2, STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
+        choices=[
+            FUSED_HAND_NO_EXTRAP_V1,
+            STABLE_FUSED_HAND_V3,
+            STABLE_FUSED_HAND_V2,
+            STABLE_FUSED_HAND_V1,
+            CLEAN_LANDMARKS_V1,
+        ],
         default=DEFAULT_PERCEPTION_PROFILE,
     )
     pper.add_argument("--hand", default="right", choices=["left", "right"])
@@ -284,7 +293,13 @@ def _build_parser() -> argparse.ArgumentParser:
     pgf.add_argument(
         "--source-profile",
         default=CLEAN_LANDMARKS_V1,
-        choices=[CLEAN_LANDMARKS_V1, STABLE_FUSED_HAND_V2, STABLE_FUSED_HAND_V1],
+        choices=[
+            CLEAN_LANDMARKS_V1,
+            FUSED_HAND_NO_EXTRAP_V1,
+            STABLE_FUSED_HAND_V3,
+            STABLE_FUSED_HAND_V2,
+            STABLE_FUSED_HAND_V1,
+        ],
         help="protected baseline used as immutable input",
     )
     pgf.add_argument(
@@ -302,7 +317,13 @@ def _build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--polyorder", type=int, default=2)
     pp.add_argument(
         "--profile",
-        choices=[STABLE_FUSED_HAND_V2, STABLE_FUSED_HAND_V1, CLEAN_LANDMARKS_V1],
+        choices=[
+            FUSED_HAND_NO_EXTRAP_V1,
+            STABLE_FUSED_HAND_V3,
+            STABLE_FUSED_HAND_V2,
+            STABLE_FUSED_HAND_V1,
+            CLEAN_LANDMARKS_V1,
+        ],
         default=DEFAULT_PERCEPTION_PROFILE,
         help="locked reproducible recipe (overrides fusion/gap/SG/hand-fit config)",
     )
@@ -336,6 +357,12 @@ def _build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--adapter-offset-mm", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-rpy-deg", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-radius-mm", type=float, default=None)
+    pt.add_argument(
+        "--sequential-baseline",
+        action="store_true",
+        default=None,
+        help="also archive frame-wise IK + post-hoc smoothing for comparison",
+    )
     pt.set_defaults(func=_cmd_retarget)
 
     prp = sub.add_parser("replay", help="plan.h5 -> replay.h5 (stub stage)")

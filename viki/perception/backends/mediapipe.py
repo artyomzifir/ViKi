@@ -27,6 +27,12 @@ _MODEL_URL = (
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 )
 _LABEL = {"right": "Right", "left": "Left"}
+_MIN_GRAPH_CONFIDENCE = 1e-6
+
+
+def _graph_confidence(value: float) -> float:
+    """Map the public zero/no-gate value to MediaPipe's valid open interval."""
+    return max(float(value), _MIN_GRAPH_CONFIDENCE)
 
 
 def _ensure_model(models_dir: str) -> str:
@@ -52,6 +58,8 @@ class MediaPipeHandBackend(HandPoseBackend):
         model_path: str | None = None,
         model_entry: dict | None = None,  # registry row; MediaPipe has one model
         min_confidence: float = 0.5,
+        tracking_confidence: float | None = None,
+        strict_handedness: bool = True,
         **_ignored,
     ) -> None:
         if mode not in ("image", "video"):
@@ -64,15 +72,23 @@ class MediaPipeHandBackend(HandPoseBackend):
         running_mode = (
             vision.RunningMode.VIDEO if mode == "video" else vision.RunningMode.IMAGE
         )
+        # MediaPipe's native HandAssociationCalculator aborts the entire
+        # process when min_tracking_confidence is exactly zero. Keep a tiny
+        # positive implementation floor while exposing 0 as "no score gate".
+        detection_confidence = _graph_confidence(min_confidence)
+        tracking_confidence = _graph_confidence(
+            min_confidence if tracking_confidence is None else tracking_confidence
+        )
+        self._strict_handedness = bool(strict_handedness)
         opts = vision.HandLandmarkerOptions(
             base_options=python.BaseOptions(
                 model_asset_path=model_path or _ensure_model(models_dir)
             ),
             running_mode=running_mode,
             num_hands=1,
-            min_hand_detection_confidence=min_confidence,
-            min_hand_presence_confidence=min_confidence,
-            min_tracking_confidence=min_confidence,
+            min_hand_detection_confidence=detection_confidence,
+            min_hand_presence_confidence=detection_confidence,
+            min_tracking_confidence=tracking_confidence,
         )
         self._task = vision.HandLandmarker.create_from_options(opts)
 
@@ -100,8 +116,7 @@ class MediaPipeHandBackend(HandPoseBackend):
             task.close()
             self._task = None
 
-    @staticmethod
-    def _extract(raw, frame: PreparedFrame, hand: Hand) -> HandDetection | None:
+    def _extract(self, raw, frame: PreparedFrame, hand: Hand) -> HandDetection | None:
         target = _LABEL[hand]
         match_idx = match_score = None
         for i, handedness in enumerate(raw.handedness):
@@ -110,7 +125,16 @@ class MediaPipeHandBackend(HandPoseBackend):
                 match_score = float(handedness[0].score)
                 break
         if match_idx is None:
-            return None
+            if self._strict_handedness or not raw.hand_landmarks:
+                return None
+            # The graph is configured for one hand. A left/right label flicker
+            # must not punch a hole in a single-hand trajectory; handedness
+            # confidence is not landmark confidence, so geometry owns the
+            # downstream score in this relaxed mode.
+            match_idx = 0
+            match_score = 1.0
+        elif not self._strict_handedness:
+            match_score = 1.0
 
         h, w = frame.rgb.shape[:2]
         lms = raw.hand_landmarks[match_idx]

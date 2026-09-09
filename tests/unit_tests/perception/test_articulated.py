@@ -76,6 +76,46 @@ def test_projection_repairs_zero_confidence_collapse_and_preserves_wrist():
     assert result["projected_metrics"]["quality_gate"]["structural_pass"] is True
 
 
+def test_projection_keeps_model_finite_without_fabricating_edge_measurements():
+    T = 14
+    source = np.stack([
+        _open_hand(np.array([0.004 * t, 0.0, 0.75], np.float32))
+        for t in range(T)
+    ])
+    source[:2] = np.nan
+    source[-2:] = np.nan
+    confidence = np.ones((T, HAND_LM_COUNT), np.float32)
+    confidence[:2] = 0.0
+    confidence[-2:] = 0.0
+    valid = np.ones(T, bool)
+    valid[:2] = False
+    valid[-2:] = False
+
+    result = fit_landmark_trajectory(
+        source,
+        np.arange(HAND_LM_COUNT, dtype=np.int32),
+        confidence,
+        valid,
+        ArticulatedConfig(calibration_frames=4),
+        optimize=False,
+    )
+    fitted = np.asarray(result["projected_points"])
+
+    assert np.isfinite(fitted).all()
+    np.testing.assert_allclose(
+        fitted[:2, int(LM.WRIST)],
+        np.repeat(fitted[2, int(LM.WRIST)][None], 2, axis=0),
+    )
+    np.testing.assert_allclose(
+        fitted[-2:, int(LM.WRIST)],
+        np.repeat(fitted[-3, int(LM.WRIST)][None], 2, axis=0),
+    )
+    np.testing.assert_allclose(
+        fitted[2:-2, int(LM.WRIST)], source[2:-2, int(LM.WRIST)], atol=1e-7,
+    )
+    assert np.isfinite(result["projected_metrics"]["source_joint_jerk_rms_mm"])
+
+
 def test_geometry_confidence_rejects_a_single_giant_tip():
     from viki.perception.articulated import geometry_anchor_confidence
 

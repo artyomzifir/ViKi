@@ -28,9 +28,28 @@ _HAND_EDGES = (
 )
 
 
-def run_name(fusion_mode: str, interp_max_gap: int, window: int, polyorder: int) -> str:
+def run_name(
+    fusion_mode: str,
+    interp_max_gap: int,
+    window: int,
+    polyorder: int,
+    fused_interpolation: str = "cubic",
+    fused_extrapolate_edges: bool = True,
+) -> str:
     gap = "all" if int(interp_max_gap) == 0 else str(int(interp_max_gap))
-    return f"{fusion_mode}__gap-{gap}__sg-{int(window)}-{int(polyorder)}"
+    method = str(fused_interpolation)
+    if method not in {"cubic", "linear"}:
+        raise ValueError(f"unknown fused interpolation {method!r}")
+    # Preserve the historical cubic checkpoint path; name every newer method
+    # explicitly so an A/B run can never overwrite its control.
+    method_name = "" if method == "cubic" else f"interp-{method}"
+    if not fused_extrapolate_edges:
+        method_name = f"{method_name + '-' if method_name else ''}no-extrap"
+    method_part = f"{method_name}__" if method_name else ""
+    return (
+        f"{fusion_mode}__{method_part}gap-{gap}__"
+        f"sg-{int(window)}-{int(polyorder)}"
+    )
 
 
 def atomic_savez(path: Path, arrays: dict[str, object]) -> Path:

@@ -128,28 +128,58 @@ def _confidence_arrays(
     landmark_ids: np.ndarray,
     valid: np.ndarray,
     alpha: float,
+    fusion_mode: str,
+    calibration: str,
+    observed_mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Normalise per-joint evidence and derive the per-frame palm confidence."""
+    """Calibrate per-joint evidence and derive per-frame palm confidence."""
+    evidence = np.nan_to_num(
+        np.asarray(grid_conf, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0,
+    )
+    if calibration == "episode_max":
+        # Frozen V1/V2 behaviour, retained solely for reproducible baselines.
+        scale = float(np.max(evidence)) if evidence.size else 1.0
+        landmark_confidence = np.clip(evidence / (scale or 1.0), 0.0, 1.0)
+    elif calibration == "absolute":
+        if fusion_mode == "triangulate":
+            # triangulate_joint defines quality directly in [0, 1].
+            landmark_confidence = np.clip(evidence, 0.0, 1.0)
+        elif fusion_mode == "xyz_mean":
+            # Legacy camera evidence contains a d^-2 factor and is therefore
+            # positive but unbounded. Use a fixed saturating map rather than an
+            # episode-dependent maximum: w=1 maps to 0.5 in every recording.
+            positive = np.clip(evidence, 0.0, None)
+            landmark_confidence = positive / (1.0 + positive)
+        else:
+            raise ValueError(f"unknown fusion mode {fusion_mode!r}")
+        # A filled coordinate is useful as a finite smoothing seed, not as new
+        # sensor evidence. Downstream target anchors can therefore set the whole
+        # frame's data weight to zero when one of their landmarks was fabricated.
+        mask = np.asarray(observed_mask, dtype=bool)
+        if mask.shape != landmark_confidence.shape:
+            raise ValueError("observed mask must match landmark confidence")
+        landmark_confidence = np.where(mask, landmark_confidence, 0.0)
+    else:
+        raise ValueError(f"unknown confidence calibration {calibration!r}")
     wrist_frame = [int(LM.WRIST), int(LM.INDEX_MCP), int(LM.MIDDLE_MCP), int(LM.PINKY_MCP)]
     columns = [
         np.where(landmark_ids == lm)[0][0]
         for lm in wrist_frame if lm in landmark_ids
     ]
     omega = (
-        grid_conf[:, columns].mean(axis=1)
-        if columns else np.ones(len(grid_conf), dtype=np.float64)
+        landmark_confidence[:, columns].mean(axis=1)
+        if columns else np.ones(len(landmark_confidence), dtype=np.float64)
     )
-    maximum = float(np.nanmax(omega)) if np.isfinite(omega).any() else 1.0
-    if not np.isfinite(maximum) or maximum <= 0.0:
-        maximum = 1.0
-    omega = np.clip(omega / maximum, 0.0, 1.0) ** alpha
+    if calibration == "absolute" and columns:
+        # One scalar weights the complete SE(3) pose. If any landmark that
+        # defines the palm frame was fabricated, treating the remaining three
+        # as a partially observed orientation would overstate what the sensor
+        # actually measured. Smoothness, not the data term, owns that frame.
+        palm_observed = np.asarray(observed_mask, dtype=bool)[:, columns].all(axis=1)
+        omega = np.where(palm_observed, omega, 0.0)
+    omega = np.clip(omega, 0.0, 1.0) ** alpha
     omega = np.where(valid, omega, 0.0).astype(np.float32)
-
-    confidence_max = float(np.nanmax(grid_conf)) if grid_conf.size else 0.0
-    landmark_confidence = np.clip(
-        grid_conf / (confidence_max or 1.0), 0.0, 1.0
-    ).astype(np.float32)
-    return omega, landmark_confidence
+    return omega, landmark_confidence.astype(np.float32)
 
 
 def _cln_payload(
@@ -161,6 +191,8 @@ def _cln_payload(
     grid: np.ndarray,
     grid_conf: np.ndarray,
     fusion_mode: str,
+    fused_interpolation: str,
+    fused_extrapolate_edges: bool,
     checkpoint_stage: str,
     interp_max_gap: int,
     window_length: int,
@@ -168,18 +200,29 @@ def _cln_payload(
     profile_name: str = "",
     pose_source: str = "landmarks",
     confidence_alpha: float = 1.0,
+    confidence_calibration: str = "absolute",
     gripper_name: str = "linear",
     coordinate_frame: str = "viki_world_or_camera",
 ) -> dict[str, object]:
     """Build a viewer/retarget-compatible artifact for any prepare boundary."""
+    observed_mask = np.isfinite(observed_points).all(axis=2)
+    filled_mask = np.isfinite(filled_points).all(axis=2)
     positions, rotations, rpy, valid, gripper = _pose_and_gripper(
         points, landmark_ids, grid, gripper_name
     )
     omega, landmark_confidence = _confidence_arrays(
-        grid_conf, landmark_ids, valid, confidence_alpha,
+        grid_conf,
+        landmark_ids,
+        valid,
+        confidence_alpha,
+        fusion_mode,
+        confidence_calibration,
+        observed_mask,
     )
     params = {
         "fusion_mode": fusion_mode,
+        "fused_interpolation": fused_interpolation,
+        "fused_extrapolate_edges": bool(fused_extrapolate_edges),
         "interp_max_gap": int(interp_max_gap),
         "smoothing": "savgol" if checkpoint_stage in {"smoothed", "hand_fit"} else "none",
         "window_length": int(window_length),
@@ -187,11 +230,10 @@ def _cln_payload(
         "profile": profile_name or None,
         "pose_source": pose_source,
         "confidence_alpha": confidence_alpha,
+        "confidence_calibration": confidence_calibration,
         "gripper": gripper_name,
         "coordinate_frame": coordinate_frame,
     }
-    observed_mask = np.isfinite(observed_points).all(axis=2)
-    filled_mask = np.isfinite(filled_points).all(axis=2)
     payload: dict[str, object] = {
         "positions": positions,
         "rotations": rotations,
@@ -210,6 +252,8 @@ def _cln_payload(
         "landmark_ids": np.asarray(landmark_ids),
         "coordinate_frame": np.asarray(coordinate_frame),
         "perception_fuse_mode": np.asarray(fusion_mode),
+        "fused_interpolation": np.asarray(fused_interpolation),
+        "fused_extrapolate_edges": np.asarray(bool(fused_extrapolate_edges)),
         "checkpoint_stage": np.asarray(checkpoint_stage),
         "checkpoint_params_json": np.asarray(json.dumps(params, sort_keys=True)),
         "pose_source": np.asarray(pose_source),
@@ -235,9 +279,13 @@ class PreparationPipeline:
         self.recs_dir = Path(config.SKELETON_RECS_DIR)
         self.smoothed_dir = Path(config.SKELETON_SMOOTHED_DIR)
         self.fusion_mode = str(getattr(config, "PERCEPTION_FUSE_MODE", "xyz_mean"))
+        # Historical custom/V1 behaviour. Named profiles override this field.
+        self.fused_interpolation = "cubic"
+        self.fused_extrapolate_edges = True
         self.profile_name = ""
         self.pose_source = "landmarks"
         self.confidence_alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
+        self.confidence_calibration = "absolute"
         self.gripper_name = str(getattr(config, "GRIPPER", "linear"))
         self.coordinate_frame = str(getattr(
             config, "SKELETON_COORDINATE_FRAME", "viki_world_or_camera",
@@ -374,6 +422,8 @@ class PreparationPipeline:
 
         checkpoint_params = {
             "fusion_mode": self.fusion_mode,
+            "fused_interpolation": self.fused_interpolation,
+            "fused_extrapolate_edges": self.fused_extrapolate_edges,
             "interp_max_gap": int(self.interp_max_gap),
             "window_length": int(window_length),
             "polyorder": int(polyorder),
@@ -443,12 +493,16 @@ class PreparationPipeline:
 
         observed_fused = np.asarray(raw_fused, np.float32).copy()
 
-        # 2b. Fill remaining gaps in the fused trajectory with a cubic spline
-        #     (paper §3.7) before smoothing.
-        from viki.prepare.interpolate import fill_se3_spline
+        # 2b. Fill remaining fused gaps with the method owned by the profile.
+        # V1/custom retain the historical cubic path; stable V2 uses linear
+        # after the two-finger audit exposed catastrophic cubic extrapolation.
+        from viki.prepare.interpolate import fill_fused_gaps
 
-        filled_fused = fill_se3_spline(
-            observed_fused, max_gap=self.interp_max_gap
+        filled_fused = fill_fused_gaps(
+            observed_fused,
+            method=self.fused_interpolation,
+            max_gap=self.interp_max_gap,
+            extrapolate_edges=self.fused_extrapolate_edges,
         )
 
         # 3. Smooth the fused trajectory.
@@ -481,6 +535,8 @@ class PreparationPipeline:
             grid=grid,
             grid_conf=grid_conf,
             fusion_mode=_mode,
+            fused_interpolation=self.fused_interpolation,
+            fused_extrapolate_edges=self.fused_extrapolate_edges,
             checkpoint_stage="smoothed",
             interp_max_gap=self.interp_max_gap,
             window_length=window_length,
@@ -488,6 +544,7 @@ class PreparationPipeline:
             profile_name=self.profile_name,
             pose_source=self.pose_source,
             confidence_alpha=self.confidence_alpha,
+            confidence_calibration=self.confidence_calibration,
             gripper_name=self.gripper_name,
             coordinate_frame=self.coordinate_frame,
         )
@@ -525,10 +582,13 @@ class PreparationPipeline:
                 points=observed_fused, observed_points=observed_fused,
                 filled_points=filled_fused, landmark_ids=landmark_ids,
                 grid=grid, grid_conf=grid_conf, fusion_mode=_mode,
+                fused_interpolation=self.fused_interpolation,
+                fused_extrapolate_edges=self.fused_extrapolate_edges,
                 checkpoint_stage="observed", interp_max_gap=self.interp_max_gap,
                 window_length=window_length, polyorder=polyorder,
                 profile_name=self.profile_name, pose_source=self.pose_source,
                 confidence_alpha=self.confidence_alpha,
+                confidence_calibration=self.confidence_calibration,
                 gripper_name=self.gripper_name,
                 coordinate_frame=self.coordinate_frame,
             )
@@ -536,10 +596,13 @@ class PreparationPipeline:
                 points=filled_fused, observed_points=observed_fused,
                 filled_points=filled_fused, landmark_ids=landmark_ids,
                 grid=grid, grid_conf=grid_conf, fusion_mode=_mode,
+                fused_interpolation=self.fused_interpolation,
+                fused_extrapolate_edges=self.fused_extrapolate_edges,
                 checkpoint_stage="filled", interp_max_gap=self.interp_max_gap,
                 window_length=window_length, polyorder=polyorder,
                 profile_name=self.profile_name, pose_source=self.pose_source,
                 confidence_alpha=self.confidence_alpha,
+                confidence_calibration=self.confidence_calibration,
                 gripper_name=self.gripper_name,
                 coordinate_frame=self.coordinate_frame,
             )
@@ -558,10 +621,13 @@ class PreparationPipeline:
                 "schema": 1,
                 "fusion_mode_requested": _mode_requested,
                 "fusion_mode_used": _mode,
+                "fused_interpolation": self.fused_interpolation,
+                "fused_extrapolate_edges": self.fused_extrapolate_edges,
                 "interp_max_gap": int(self.interp_max_gap),
                 "window_length": int(window_length),
                 "polyorder": int(polyorder),
                 "profile": self.profile_name or None,
+                "confidence_calibration": self.confidence_calibration,
                 "files": [p.name for p in (
                     self.checkpoints_dir / "00_per_camera_observed.npz",
                     self.checkpoints_dir / "05_per_camera_filled.npz",
@@ -676,7 +742,11 @@ def generate_stage_checkpoints(
         pp.fusion_mode = mode
         if interp_max_gap is not None:
             pp.interp_max_gap = int(interp_max_gap)
-        name = run_name(mode, pp.interp_max_gap, window_length, polyorder)
+        name = run_name(
+            mode, pp.interp_max_gap, window_length, polyorder,
+            fused_interpolation=pp.fused_interpolation,
+            fused_extrapolate_edges=pp.fused_extrapolate_edges,
+        )
         run_dir = ep.intermediates_dir / "prepare" / name
         pp.smoothed_dir = run_dir
         pp.checkpoints_dir = run_dir
@@ -732,9 +802,12 @@ def prepare_episode(
         pp.smoothed_dir = stage_p
         if profile_spec is not None:
             pp.fusion_mode = profile_spec.fusion_mode
+            pp.fused_interpolation = profile_spec.fused_interpolation
+            pp.fused_extrapolate_edges = profile_spec.fused_extrapolate_edges
             pp.profile_name = profile_spec.name
             pp.pose_source = profile_spec.pose_source
             pp.confidence_alpha = profile_spec.confidence_alpha
+            pp.confidence_calibration = profile_spec.confidence_calibration
             pp.gripper_name = profile_spec.gripper
             pp.coordinate_frame = profile_spec.coordinate_frame
         if interp_max_gap is not None:
@@ -742,7 +815,9 @@ def prepare_episode(
         from viki.prepare.checkpoints import run_name
 
         pp.checkpoints_dir = ep.intermediates_dir / "prepare" / run_name(
-            pp.fusion_mode, pp.interp_max_gap, window_length, polyorder
+            pp.fusion_mode, pp.interp_max_gap, window_length, polyorder,
+            fused_interpolation=pp.fused_interpolation,
+            fused_extrapolate_edges=pp.fused_extrapolate_edges,
         )
         _configure_episode_inputs(
             pp,
@@ -824,6 +899,11 @@ def prepare_episode(
         generated = generate_articulated_variants(
             ep, cfg=articulated_cfg, report=report,
         )
+        quality_gate = generated["metrics"]["optimized"]["quality_gate"]
+        if not bool(quality_gate.get("accepted", False)):
+            raise RuntimeError(
+                f"stable articulated overlay failed its quality gate: {quality_gate}"
+            )
         installed = install_articulated_overlay(
             ep, cfg=articulated_cfg, variant="optimized",
         )
@@ -834,7 +914,7 @@ def prepare_episode(
             "recipe": articulated_recipe,
             "variant": "optimized",
             "report": generated["report"],
-            "quality_gate": generated["metrics"]["optimized"]["quality_gate"],
+            "quality_gate": quality_gate,
             "clean_core_unchanged": installed["clean_core_unchanged"],
         }
 

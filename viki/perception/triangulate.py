@@ -8,7 +8,8 @@ uses.
 
 Pipeline per joint, per frame:
 
-1. keep views whose per-landmark score clears ``TRI_MIN_SCORE``;
+1. keep views whose per-landmark score clears the profile's ``min_score``
+   (zero in dense V3; historical profiles retain ``TRI_MIN_SCORE``);
 2. enumerate every camera pair (2-3 cams ⇒ no RANSAC); drop a pair whose rays to
    the candidate subtend less than ``TRI_MIN_RAY_DEG`` (ill-conditioned);
 3. linear DLT on the pair + cheirality (in front of both cameras);
@@ -31,8 +32,10 @@ dropped entirely for invalid samples — one bad silhouette pixel must not move 
 good multi-view point.
 
 **``quality`` is a transparent score, not an inverse covariance.** It is
-``inlier_fraction · reproj_term · ray_angle_term`` and is *not* calibrated
-against ground truth; do not treat it as a variance.
+``inlier_fraction · reproj_term · ray_angle_term``.  Dense V3 additionally
+multiplies by mean detector confidence, turning weak observations into weak
+evidence instead of gaps.  The score is *not* calibrated against ground truth;
+do not treat it as a variance.
 """
 
 from __future__ import annotations
@@ -130,9 +133,12 @@ class TriConfig:
             "geometry_cameras", getattr(config, "TRI_GEOMETRY_CAMERAS", []),
         ) or []
         self.geometry_cameras = list(cams)
+        self.quality_detector_score = bool(
+            values.get("quality_detector_score", False)
+        )
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        out = {
             "min_score": self.min_score,
             "min_ray_deg": self.min_ray_deg,
             "reproj_inlier_px": self.reproj_inlier_px,
@@ -143,6 +149,9 @@ class TriConfig:
             "ray_ref_deg": self.ray_ref_deg,
             "geometry_cameras": self.geometry_cameras,
         }
+        if self.quality_detector_score:
+            out["quality_detector_score"] = True
+        return out
 
 
 def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: TriConfig):
@@ -219,6 +228,10 @@ def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: Tr
         * float(np.clip(1.0 - mean_err / (2 * cfg.reproj_inlier_px), 0.0, 1.0))
         * float(np.clip(ray / cfg.ray_ref_deg, 0.0, 1.0))
     )
+    if cfg.quality_detector_score:
+        quality *= float(np.mean([
+            np.clip(v["score"], 0.0, 1.0) for v in inliers
+        ]))
     return {
         "xyz": X.astype(np.float32),
         "quality": float(quality),

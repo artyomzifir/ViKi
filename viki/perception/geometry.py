@@ -254,9 +254,18 @@ def lift_to_3d(
     #   w = visibility · sensor_validity · d^-2 · max(0, cosθ)
     # d is the Euclidean range from the camera centre to the landmark (not the
     # optical-axis depth z, which under-weights landmarks toward the frame edge).
-    visibility = float(getattr(detection, "confidence", 1.0) or 1.0)
+    per_landmark_score = getattr(detection, "lm_score", None)
+    if per_landmark_score is not None:
+        per_landmark_score = np.asarray(per_landmark_score, dtype=np.float64).reshape(-1)
+        if len(per_landmark_score) != 21:
+            raise ValueError("per-landmark detector score must have 21 entries")
+    hand_score = float(np.clip(getattr(detection, "confidence", 1.0), 0.0, 1.0))
     weights: dict[LM, float] = {}
     for lm, p in points.items():
+        visibility = (
+            float(np.clip(per_landmark_score[int(lm)], 0.0, 1.0))
+            if per_landmark_score is not None else hand_score
+        )
         cam_xyz = raw3d.get(lm)
         measured = cam_xyz is not None
         if measured:

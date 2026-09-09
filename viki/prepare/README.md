@@ -29,15 +29,17 @@ track exists — the object-relative form.
   Optional `landmark_confidence (T,L)`, `T_world_obj` / `T_obj_hand`, and the
   non-destructive `hand_fit_*` trajectory arrays when those stages run.
 
-Every episode prepare run also keeps its material boundaries under
-`intermediates/prepare/<fusion>__gap-<N>__sg-<window>-<polyorder>/`:
+Every episode prepare run also keeps its material boundaries under a
+parameter-named `intermediates/prepare/` directory. Historical cubic runs retain
+`<fusion>__gap-<N>__sg-<window>-<polyorder>`; newer methods include the explicit
+`interp-<method>` component so controls cannot be overwritten.
 
 | checkpoint | exact boundary |
 |---|---|
 | `00_per_camera_observed.npz` | detector/lift output separated by camera |
 | `05_per_camera_filled.npz` | per-camera linear gap fill |
 | `10_fused_observed.npz` | fusion/triangulation output, before fabrication |
-| `20_fused_filled.npz` | fused coordinate-wise cubic gap fill |
+| `20_fused_filled.npz` | fused coordinate-wise profile-selected gap fill |
 | `30_smoothed.npz` | Savitzky–Golay output |
 | `40_hand_fit.npz` | optional capsule trajectory fit |
 
@@ -76,7 +78,11 @@ Full parameters, provenance and the reference hash are documented in
 - object-relative representation and geometry-preserving SE(3) interpolation.
 ## Stable fused + articulated profile
 
-`stable-fused-hand-v1` is the default complete perception route.  It protects
+`stable-fused-hand-v2` is the default complete perception route. It uses linear
+fused-coordinate gap filling with edge hold and has a continuous gripper.
+`fused-hand-no-extrap-v1` is the controlled candidate with the same recipe except
+that leading/trailing gaps remain missing. `stable-fused-hand-v1` retains cubic
+filling and the legacy binary gripper. The stable route protects
 the clean triangulated CLN, then creates non-destructive `40_projected.npz` and
 `50_optimized.npz` variants under
 `intermediates/geometry/articulated-landmarks-v1/` and installs the optimized

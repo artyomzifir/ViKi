@@ -109,6 +109,7 @@ const DEFAULT_LAYERS = {
   cloud: true, perCamera: false, fused: true, trajectory: true,
   palm: true, frusta: true, board: true, bbox: false, handFit: false,
   robot: true, robotMesh: true, targetTrajectory: true, achievedTrajectory: true,
+  sequentialBaseline: true,
 };
 
 // The legend is one grouped list: a block per lifecycle/data-source, its rows
@@ -149,6 +150,7 @@ const LEGEND_GROUPS = [
       { key: 'robotMesh', label: 'solid URDF mesh', swatch: '#b9c4d0', src: 'mesh' },
       { key: 'targetTrajectory', label: 'target TCP', swatch: '#f472b6', src: 'plan' },
       { key: 'achievedTrajectory', label: 'achieved TCP', swatch: '#22d3ee', src: 'plan' },
+      { key: 'sequentialBaseline', label: 'sequential baseline', swatch: '#a78bfa', src: 'plan' },
     ],
   },
   {
@@ -252,7 +254,11 @@ export function create(canvasEl, {
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0x22d3ee })
   );
-  calibrationGroup.add(targetTrajLine, achievedTrajLine);
+  const sequentialTrajLine = new THREE.LineSegments(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({ color: 0xa78bfa })
+  );
+  calibrationGroup.add(targetTrajLine, achievedTrajLine, sequentialTrajLine);
   const targetDot = new THREE.Mesh(
     new THREE.SphereGeometry(0.014, 12, 10),
     new THREE.MeshBasicMaterial({ color: 0xf472b6, wireframe: true })
@@ -486,6 +492,8 @@ export function create(canvasEl, {
     achievedDot.visible = layers.achievedTrajectory && !!retarget?.achieved_trajectory?.length;
     achievedPoseFrame.visible = layers.achievedTrajectory && !!retarget?.ready
       && !!achievedPoseFrame.userData.have;
+    sequentialTrajLine.visible = layers.sequentialBaseline
+      && !!retarget?.sequential_baseline_trajectory?.length;
     updateLegend();
   }
 
@@ -793,6 +801,9 @@ export function create(canvasEl, {
     rebuildRobot();
     setLineTrajectory(targetTrajLine, retarget?.target_trajectory || []);
     setLineTrajectory(achievedTrajLine, retarget?.achieved_trajectory || []);
+    setLineTrajectory(
+      sequentialTrajLine, retarget?.sequential_baseline_trajectory || []
+    );
     updateRobotFrame(frame);
     applyLayerVisibility();
   }

@@ -139,12 +139,18 @@ def smooth_landmark_sequence(
     return out
 
 
-def interpolate_nans(points: np.ndarray, max_gap: int = 0) -> np.ndarray:
+def interpolate_nans(
+    points: np.ndarray,
+    max_gap: int = 0,
+    *,
+    extrapolate_edges: bool = True,
+) -> np.ndarray:
     """Linearly fill NaNs over time for each landmark coordinate. ``(T, L, 3)``.
 
     ``max_gap`` > 0 leaves interior gaps longer than ``max_gap`` frames as NaN
     (so a long occlusion is not papered over with a straight line); ``0`` fills
-    every gap.
+    every gap. When ``extrapolate_edges`` is false, leading and trailing gaps
+    remain NaN because they are not bracketed by observations.
     """
     out = np.asarray(points, dtype=np.float64).copy()
     frames = np.arange(out.shape[0], dtype=np.float64)
@@ -155,10 +161,15 @@ def interpolate_nans(points: np.ndarray, max_gap: int = 0) -> np.ndarray:
             if valid.all() or not valid.any():
                 continue
             gap = ~valid
+            first = int(np.flatnonzero(valid)[0])
+            last = int(np.flatnonzero(valid)[-1])
             if valid.sum() == 1:
                 series[gap] = series[valid][0]
             else:
                 series[gap] = np.interp(frames[gap], frames[valid], series[valid])
+            if not extrapolate_edges:
+                series[:first] = np.nan
+                series[last + 1:] = np.nan
             if max_gap and max_gap > 0:
                 i = 0
                 n = len(series)

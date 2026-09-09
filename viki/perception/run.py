@@ -7,7 +7,7 @@ cross-camera-fused hand skeleton + end-effector pose + gripper state
 the per-frame coloured point cloud for the viewer.
 
 ``perceive_episode`` = ``extract_episode`` (detect → lift → per-camera world
-keypoints) + ``prepare_episode`` (interpolate → fuse → spline → smooth → EE pose
+keypoints) + ``prepare_episode`` (interpolate → fuse → gap-fill → smooth → EE pose
 → gripper) + ``build_cloud``. It takes a ``report`` callback so the background
 queue can show progress.
 """
@@ -102,6 +102,8 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
         min_confidence=opts.min_confidence,
         depth_radius_px=profile.depth_radius_px if profile is not None else None,
         save_observations=(profile.save_observations if profile is not None else None),
+        tracking_confidence=(profile.tracking_confidence if profile is not None else None),
+        strict_handedness=(profile.strict_handedness if profile is not None else True),
         profile=opts.profile,
         flip=opts.flip,
         report=report,

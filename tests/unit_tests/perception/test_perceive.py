@@ -151,6 +151,8 @@ def test_clean_baseline_profile_locks_pipeline_and_protects_output(tmp_path, mon
         assert clean["pose_source"].item() == "landmarks"
         assert "hand_fit_positions" not in clean.files
         params = json.loads(clean["checkpoint_params_json"].item())
+        assert params["fused_interpolation"] == "cubic"
+        assert params["fused_extrapolate_edges"] is True
         assert params["interp_max_gap"] == 0
         assert params["window_length"] == 7
         assert params["polyorder"] == 2
@@ -276,17 +278,54 @@ def test_stable_profile_routes_clean_to_fused_and_articulated_to_hand_fit(
     )
 
 
-def test_stable_v2_changes_gripper_without_mutating_v1_contract():
+def test_stable_profiles_version_gripper_and_confidence_without_mutating_v1():
     from viki.perception.profiles import (
         DEFAULT_PERCEPTION_PROFILE,
+        FUSED_HAND_NO_EXTRAP_V1,
         STABLE_FUSED_HAND_V1,
         STABLE_FUSED_HAND_V2,
+        STABLE_FUSED_HAND_V3,
         get_profile,
     )
 
     assert DEFAULT_PERCEPTION_PROFILE == STABLE_FUSED_HAND_V2
     assert get_profile(STABLE_FUSED_HAND_V1).gripper == "binary"
+    assert get_profile(STABLE_FUSED_HAND_V1).fused_interpolation == "cubic"
+    assert get_profile(STABLE_FUSED_HAND_V1).fused_extrapolate_edges is True
     assert get_profile(STABLE_FUSED_HAND_V2).gripper == "linear"
+    assert get_profile(STABLE_FUSED_HAND_V2).fused_interpolation == "linear"
+    assert get_profile(STABLE_FUSED_HAND_V2).fused_extrapolate_edges is True
+    assert get_profile(FUSED_HAND_NO_EXTRAP_V1).fused_interpolation == "linear"
+    assert get_profile(FUSED_HAND_NO_EXTRAP_V1).fused_extrapolate_edges is False
+    assert get_profile(FUSED_HAND_NO_EXTRAP_V1).gripper == "linear"
+    for field_name in get_profile(STABLE_FUSED_HAND_V2).__dataclass_fields__:
+        if field_name not in {"name", "description", "fused_extrapolate_edges"}:
+            assert getattr(get_profile(FUSED_HAND_NO_EXTRAP_V1), field_name) == getattr(
+                get_profile(STABLE_FUSED_HAND_V2), field_name
+            )
+    assert get_profile(STABLE_FUSED_HAND_V2).confidence_calibration == "episode_max"
+    assert get_profile(STABLE_FUSED_HAND_V3).gripper == "linear"
+    assert get_profile(STABLE_FUSED_HAND_V3).fused_interpolation == "linear"
+    assert get_profile(STABLE_FUSED_HAND_V3).fused_extrapolate_edges is True
+    assert get_profile(STABLE_FUSED_HAND_V3).confidence_calibration == "absolute"
+    assert get_profile(STABLE_FUSED_HAND_V2).detector_model == "mediapipe"
+    assert get_profile(STABLE_FUSED_HAND_V2).min_confidence == 0.5
+    assert get_profile(STABLE_FUSED_HAND_V3).detector_model == "mediapipe"
+    assert get_profile(STABLE_FUSED_HAND_V3).min_confidence == 0.5
+    assert get_profile(STABLE_FUSED_HAND_V3).tracking_confidence is None
+    assert get_profile(STABLE_FUSED_HAND_V3).strict_handedness is True
+    assert get_profile(STABLE_FUSED_HAND_V3).triangulation["min_score"] == 0.3
     assert get_profile(STABLE_FUSED_HAND_V2).articulated_hand_fit == (
         get_profile(STABLE_FUSED_HAND_V1).articulated_hand_fit
+    )
+    assert "confidence_calibration" not in get_profile(STABLE_FUSED_HAND_V2).manifest()
+    assert "fused_interpolation" not in get_profile(STABLE_FUSED_HAND_V1).manifest()
+    assert "fused_extrapolate_edges" not in get_profile(STABLE_FUSED_HAND_V1).manifest()
+    assert get_profile(STABLE_FUSED_HAND_V2).manifest()["fused_interpolation"] == "linear"
+    assert "fused_extrapolate_edges" not in get_profile(STABLE_FUSED_HAND_V2).manifest()
+    assert get_profile(FUSED_HAND_NO_EXTRAP_V1).manifest()["fused_extrapolate_edges"] is False
+    assert "tracking_confidence" not in get_profile(STABLE_FUSED_HAND_V2).manifest()
+    assert "strict_handedness" not in get_profile(STABLE_FUSED_HAND_V2).manifest()
+    assert get_profile(STABLE_FUSED_HAND_V3).manifest()["confidence_calibration"] == (
+        "absolute"
     )

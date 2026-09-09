@@ -147,6 +147,8 @@ def extract_episode(
     hand: str = "right",
     track_lm: list[int] | None = None,
     min_confidence: float | None = None,
+    tracking_confidence: float | None = None,
+    strict_handedness: bool = True,
     depth_radius_px: int | None = None,
     save_observations: bool | None = None,
     profile: str | None = None,
@@ -180,6 +182,9 @@ def extract_episode(
     be_kw = {"mode": "video"}
     if min_confidence is not None:
         be_kw["min_confidence"] = float(min_confidence)
+    if tracking_confidence is not None:
+        be_kw["tracking_confidence"] = float(tracking_confidence)
+    be_kw["strict_handedness"] = bool(strict_handedness)
 
     records: list[tuple[str, SkeletonFrame, dict]] = []
     mp4s = sorted(raw.glob("*.mp4"))
@@ -318,15 +323,22 @@ def extract_episode(
 
     write_rec(ep.rec_npz, records)
     if save_obs:
+        sampler_cfg = {
+            "depth_radius_px": obs_radius,
+            "model": model_id,
+            "min_confidence": min_confidence,
+            "profile": profile,
+            "flip": bool(flip),
+        }
+        # Do not mutate historical V1/V2 observation metadata with new default
+        # fields. Experimental split thresholds identify themselves explicitly.
+        if tracking_confidence is not None:
+            sampler_cfg["tracking_confidence"] = float(tracking_confidence)
+        if not strict_handedness:
+            sampler_cfg["strict_handedness"] = False
         _obs.write_observations(
             raw / "observations.npz", obs_rows, obs_cams,
-            {
-                "depth_radius_px": obs_radius,
-                "model": model_id,
-                "min_confidence": min_confidence,
-                "profile": profile,
-                "flip": bool(flip),
-            },
+            sampler_cfg,
         )
     mark_stage(
         ep, "extract", frames=len(records), model=model_id,

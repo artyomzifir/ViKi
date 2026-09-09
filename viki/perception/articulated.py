@@ -179,12 +179,27 @@ def geometry_anchor_confidence(
 def _preserve_wrist(
     hand: hm.CapsuleHand, q_traj: np.ndarray, wrist: np.ndarray,
 ) -> np.ndarray:
-    """Translate each model pose so its wrist equals the clean wrist exactly."""
+    """Anchor the model root to measured wrist samples and bridge missing ones.
+
+    The fused landmark artifact keeps unobserved edges as NaN. The articulated
+    state must remain finite for FK/viewing, so its root alone holds the nearest
+    measured wrist at the edges and linearly bridges internal gaps. These rows
+    retain zero landmark confidence and are not reclassified as observations.
+    """
     out = np.asarray(q_traj, float).copy()
+    wrist = np.asarray(wrist, float)
+    finite = np.isfinite(wrist).all(axis=1)
+    if not finite.any():
+        return out
+    frames = np.arange(len(wrist), dtype=float)
+    measured = frames[finite]
+    model_wrist = np.column_stack([
+        np.interp(frames, measured, wrist[finite, axis])
+        for axis in range(3)
+    ])
     for t in range(len(out)):
-        if np.all(np.isfinite(wrist[t])):
-            current = hm.fk_landmark_positions(hand, out[t], [int(LM.WRIST)])[0]
-            out[t, :3] += wrist[t] - current
+        current = hm.fk_landmark_positions(hand, out[t], [int(LM.WRIST)])[0]
+        out[t, :3] += model_wrist[t] - current
     return out
 
 
@@ -239,7 +254,9 @@ def _motion_metric(points: np.ndarray, order: int) -> float:
     if len(points) <= order:
         return 0.0
     delta = np.diff(np.asarray(points, float), n=order, axis=0)
-    return float(np.sqrt(np.mean(np.sum(delta * delta, axis=2))))
+    squared = np.sum(delta * delta, axis=2)
+    finite = squared[np.isfinite(squared)]
+    return float(np.sqrt(np.mean(finite))) if len(finite) else float("nan")
 
 
 def _variant_metrics(

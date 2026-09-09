@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from viki.prepare.interpolate import fill_linear, fill_se3_spline
+from viki.prepare.interpolate import fill_fused_gaps, fill_linear, fill_se3_spline
 
 
 def _traj(series: np.ndarray) -> np.ndarray:
@@ -52,3 +52,26 @@ def test_max_gap_fills_short_run_but_preserves_long_occlusion():
 def test_fill_linear_still_exported():
     s = np.array([0.0, np.nan, 2.0])
     np.testing.assert_allclose(fill_linear(_traj(s))[:, 0, 0], [0, 1, 2])
+
+
+def test_linear_without_extrapolation_fills_only_bracketed_gap():
+    s = np.array([np.nan, np.nan, 2.0, np.nan, 4.0, np.nan])
+    out = fill_fused_gaps(
+        _traj(s), method="linear", extrapolate_edges=False,
+    )[:, 0, 0]
+
+    assert np.isnan(out[:2]).all()
+    np.testing.assert_allclose(out[2:5], [2.0, 3.0, 4.0])
+    assert np.isnan(out[5])
+
+
+def test_explicit_fused_fill_routes_linear_and_cubic():
+    s = np.array([0.0, 1.0, np.nan, 27.0, 64.0])
+    trajectory = _traj(s)
+    linear = fill_fused_gaps(trajectory, method="linear")[:, 0, 0]
+    cubic = fill_fused_gaps(trajectory, method="cubic")[:, 0, 0]
+
+    assert linear[2] == 14.0
+    assert cubic[2] != linear[2]
+    with np.testing.assert_raises_regex(ValueError, "unknown fused interpolation"):
+        fill_fused_gaps(trajectory, method="nearest")

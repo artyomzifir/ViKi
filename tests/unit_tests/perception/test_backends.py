@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 from viki.contracts import HAND_LM_COUNT, HandDetection, LM, PreparedFrame
 from viki.perception.backends import HandPoseBackend, load_backend
@@ -69,3 +70,33 @@ def test_fake_backend_satisfies_contract():
     assert set(det.points) == {LM(i) for i in range(HAND_LM_COUNT)}
     assert det.lm_z_rel.shape == (HAND_LM_COUNT,)
     assert 0.0 <= det.confidence <= 1.0
+
+
+def test_mediapipe_zero_threshold_has_a_native_safe_floor():
+    from viki.perception.backends.mediapipe import _graph_confidence
+
+    assert 0.0 < _graph_confidence(0.0) < 1e-5
+    assert _graph_confidence(0.5) == 0.5
+
+
+def test_mediapipe_relaxed_handedness_keeps_the_only_hand():
+    from viki.perception.backends.mediapipe import MediaPipeHandBackend
+
+    landmarks = [
+        SimpleNamespace(x=0.5, y=0.5, z=0.0) for _ in range(HAND_LM_COUNT)
+    ]
+    raw = SimpleNamespace(
+        hand_landmarks=[landmarks],
+        handedness=[[SimpleNamespace(category_name="Left", score=0.51)]],
+    )
+
+    strict = MediaPipeHandBackend.__new__(MediaPipeHandBackend)
+    strict._strict_handedness = True
+    assert strict._extract(raw, _frame(), "right") is None
+
+    relaxed = MediaPipeHandBackend.__new__(MediaPipeHandBackend)
+    relaxed._strict_handedness = False
+    detection = relaxed._extract(raw, _frame(), "right")
+    assert detection is not None
+    assert len(detection.points) == HAND_LM_COUNT
+    assert detection.confidence == 1.0

@@ -108,6 +108,24 @@ def test_recovers_a_known_point():
     assert res["quality"] > 0.6
 
 
+def test_dense_profile_keeps_low_score_views_but_downweights_quality():
+    cams = {c: _Cam(c, m) for c, m in THREE.items()}
+    views = _views(THREE, X_TRUE, noise_px=0.2, seed=11)
+    for view in views:
+        view["score"] = 0.1
+
+    # Historical profiles retain the old admission threshold.
+    assert triangulate_joint(views, cams, lm=8, cfg=TriConfig()) is None
+
+    dense = TriConfig({"min_score": 0.0, "quality_detector_score": True})
+    res = triangulate_joint(views, cams, lm=8, cfg=dense)
+    assert res is not None
+    assert np.linalg.norm(res["xyz"] - X_TRUE) < 2e-3
+    assert 0.0 < res["quality"] < 0.11
+    assert dense.as_dict()["quality_detector_score"] is True
+    assert "quality_detector_score" not in TriConfig().as_dict()
+
+
 def test_one_outlier_view_is_rejected_not_blended():
     cams = {c: _Cam(c, m) for c, m in THREE.items()}
     v = _views(THREE, X_TRUE, noise_px=0.3, seed=2, bad="k2")
