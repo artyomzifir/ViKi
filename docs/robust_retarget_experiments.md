@@ -933,6 +933,73 @@ than lowering the dishonest ones. On move-shipok the 16 px candidate reaches 870
 weighted frames with zero incomplete palms, against v2's 820 with 370 incomplete
 and v2.1's 450.
 
+## E10 — the floor constraint rejects whole episodes, and honest perception makes it worse
+
+Found by running the retarget grid: **block-push fails on every profile**, so the
+scene is unusable downstream regardless of perception recipe.
+
+```
+RuntimeError: retarget could not find a floor-feasible trajectory;
+remaining penetration is 0.0 mm   (v2)   2.5 mm (8 px)   4.9 mm (16 px)
+```
+
+### Where the violation comes from
+
+The full target transform chain was replayed without solving — `load_targets` →
+`rig_pose_to_calibration` → `_apply_hand_to_ee` → `calibration_to_robot` — to
+attribute the violation to the targets rather than to the solver. Target TCP
+height in the robot frame, floor at z = 0:
+
+| scene | profile | frames z<0 | of those, weighted | min z | median z |
+|---|---|---:|---:|---:|---:|
+| block-push | v2 / v2.1 / v3 | 24 | 13 / 12 / 12 | −12.9 mm | 36.1 mm |
+| | 8 px | 41 | 38 | −12.8 mm | 36.6 mm |
+| | 16 px | 93 | 58 | −12.8 mm | 36.6 mm |
+| move-shipok | all five | 0 | 0 | +122.8…128.9 mm | 211 mm |
+| pick_up_u | all five | 0 | 0 | +9.7…9.9 mm | 189 mm |
+
+The **depth** of the violation is the same for every recipe — about 12.9 mm. Only
+the **count** changes: 24 frames under v2, 93 under the 16 px candidate. The hand
+genuinely passes ~13 mm below the calibrated board plane while pushing a block
+across the table, and better perception simply reveals more of the frames where
+it does.
+
+### Three separate problems, in order of importance
+
+**1. The constraint is tighter than the calibration that defines it.** The floor
+is the board plane at exactly z ≥ 0, and the violation is 12.9 mm. The board
+solve's own accuracy on this dataset was measured at about 14 mm (a table landing
+at world Z ≈ +0.014 m). So the trajectory is rejected for a penetration smaller
+than the uncertainty in where the floor is. That comparison uses a plane error
+measured on a *different* episode and should be re-measured on block-push before
+being relied on, but the order of magnitude is the point.
+
+**2. It is all-or-nothing.** 13 to 58 offending frames abort a 897-frame episode
+with an exception. There is no per-frame reporting, no clamp, no option to drop
+the offending frames and keep the rest. An operator gets a scene that simply
+cannot be processed and a message that names one number.
+
+**3. It punishes honest perception.** v2 fabricated its way past the constraint:
+its interpolation smoothed the hand's lowest excursions upward, leaving 24
+below-floor frames of which only 13 carried weight. The 16 px candidate exposes
+93 and 58. The pipeline is therefore *more* likely to fail the better perception
+gets — the exact inversion of what a quality gate should do, and the same shape
+as E8, where fabricated data flattered the IK weighting.
+
+### Also: the error message hides sub-0.05 mm penetrations
+
+`solver.py` rejects at `min_floor < -1e-7` m (0.0001 mm) but formats the message
+with `.1f` in millimetres, so everything from 0.0001 mm to 0.05 mm prints as
+"remaining penetration is 0.0 mm". That is what v2 reported, and it reads as a
+contradiction — infeasible by nothing. Cosmetic, one format specifier, but it
+cost time here and would cost an operator more.
+
+### Consequence for the grid
+
+The retarget comparison runs on **four scenes**, not five. block-push is excluded
+for a reason that has nothing to do with the perception profiles under test, and
+excluding it silently would have hidden the most interesting failure in the set.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
