@@ -15,6 +15,7 @@ from viki.contracts import HAND_LM_COUNT
 CLEAN_LANDMARKS_V1 = "clean-triangulated-landmarks-v1"
 STABLE_FUSED_HAND_V1 = "stable-fused-hand-v1"
 STABLE_FUSED_HAND_V2 = "stable-fused-hand-v2"
+STABLE_FUSED_HAND_V2_1 = "stable-fused-hand-v2.1"
 FUSED_HAND_NO_EXTRAP_V1 = "fused-hand-no-extrap-v1"
 STABLE_FUSED_HAND_V3 = "stable-fused-hand-v3"
 FUSED_HAND_REPROJ8_V1 = "fused-hand-reproj8-v1"
@@ -47,6 +48,12 @@ class PerceptionProfile:
     hand_fit: bool
     pose_source: str
     confidence_calibration: str = "episode_max"
+    # How the four palm landmarks combine into the single scalar that weights
+    # the whole SE(3) pose in the IK data term. "mean" is the historical V1/V2
+    # behaviour and lets a partially observed palm carry weight in proportion to
+    # how many of its four landmarks were real (E8). "all_observed" zeroes the
+    # frame unless every one of them was triangulated.
+    palm_evidence: str = "mean"
     tracking_confidence: float | None = None
     articulated_hand_fit: str | None = None
     triangulation: dict[str, object] = field(default_factory=dict)
@@ -68,6 +75,10 @@ class PerceptionProfile:
         # V1/V2 manifests predate this field and remain byte-for-byte immutable.
         if payload["confidence_calibration"] == "episode_max":
             payload.pop("confidence_calibration")
+        # V1/V2 manifests predate the palm-evidence knob and stay byte-for-byte
+        # immutable; "mean" is exactly what they always did.
+        if payload["palm_evidence"] == "mean":
+            payload.pop("palm_evidence")
         if payload["tracking_confidence"] is None:
             payload.pop("tracking_confidence")
         return payload
@@ -198,6 +209,25 @@ _PROFILES[STABLE_FUSED_HAND_V3] = replace(
     detector_model="mediapipe",
     min_confidence=0.5,
     confidence_calibration="absolute",
+    # V3 always did this; it used to ride on the calibration flag rather than
+    # being nameable, which is why E8 and E9 could not be told apart.
+    palm_evidence="all_observed",
+)
+
+# V2.1 is the minimal correctness step on top of the shipped default: it keeps
+# V2's episode-relative confidence and changes only how the palm frame earns its
+# weight. E8 measured that under V2 a palm with one real landmark out of four
+# still pulls the IK at ~0.20, so 45-61% of the frames driving the solver on
+# every scene have an incompletely observed palm. This profile exists so that
+# fix can be measured on its own, rather than bundled with V3's recalibration.
+_PROFILES[STABLE_FUSED_HAND_V2_1] = replace(
+    _PROFILES[STABLE_FUSED_HAND_V2],
+    name=STABLE_FUSED_HAND_V2_1,
+    description=(
+        "Stable perception v2.1: v2 exactly, except that a frame whose palm "
+        "frame was not fully triangulated carries no IK data weight."
+    ),
+    palm_evidence="all_observed",
 )
 
 

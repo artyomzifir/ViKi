@@ -131,6 +131,7 @@ def _confidence_arrays(
     fusion_mode: str,
     calibration: str,
     observed_mask: np.ndarray,
+    palm_evidence: str = "mean",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Calibrate per-joint evidence and derive per-frame palm confidence."""
     evidence = np.nan_to_num(
@@ -170,11 +171,17 @@ def _confidence_arrays(
         landmark_confidence[:, columns].mean(axis=1)
         if columns else np.ones(len(landmark_confidence), dtype=np.float64)
     )
-    if calibration == "absolute" and columns:
+    if palm_evidence not in ("mean", "all_observed"):
+        raise ValueError(f"unknown palm evidence mode {palm_evidence!r}")
+    if palm_evidence == "all_observed" and columns:
         # One scalar weights the complete SE(3) pose. If any landmark that
         # defines the palm frame was fabricated, treating the remaining three
         # as a partially observed orientation would overstate what the sensor
         # actually measured. Smoothness, not the data term, owns that frame.
+        #
+        # Without this, the mean over the four columns is non-zero whenever any
+        # one of them is: E8 measured a palm with a single real landmark still
+        # weighting the IK at ~0.20 on every scene.
         palm_observed = np.asarray(observed_mask, dtype=bool)[:, columns].all(axis=1)
         omega = np.where(palm_observed, omega, 0.0)
     omega = np.clip(omega, 0.0, 1.0) ** alpha
@@ -201,6 +208,7 @@ def _cln_payload(
     pose_source: str = "landmarks",
     confidence_alpha: float = 1.0,
     confidence_calibration: str = "absolute",
+    palm_evidence: str = "all_observed",
     gripper_name: str = "linear",
     coordinate_frame: str = "viki_world_or_camera",
 ) -> dict[str, object]:
@@ -218,6 +226,7 @@ def _cln_payload(
         fusion_mode,
         confidence_calibration,
         observed_mask,
+        palm_evidence,
     )
     params = {
         "fusion_mode": fusion_mode,
@@ -231,6 +240,7 @@ def _cln_payload(
         "pose_source": pose_source,
         "confidence_alpha": confidence_alpha,
         "confidence_calibration": confidence_calibration,
+        "palm_evidence": palm_evidence,
         "gripper": gripper_name,
         "coordinate_frame": coordinate_frame,
     }
@@ -286,6 +296,7 @@ class PreparationPipeline:
         self.pose_source = "landmarks"
         self.confidence_alpha = float(getattr(config, "PERCEPTION_CONF_ALPHA", 1.0))
         self.confidence_calibration = "absolute"
+        self.palm_evidence = "all_observed"
         self.gripper_name = str(getattr(config, "GRIPPER", "linear"))
         self.coordinate_frame = str(getattr(
             config, "SKELETON_COORDINATE_FRAME", "viki_world_or_camera",
@@ -545,6 +556,7 @@ class PreparationPipeline:
             pose_source=self.pose_source,
             confidence_alpha=self.confidence_alpha,
             confidence_calibration=self.confidence_calibration,
+            palm_evidence=self.palm_evidence,
             gripper_name=self.gripper_name,
             coordinate_frame=self.coordinate_frame,
         )
@@ -589,6 +601,7 @@ class PreparationPipeline:
                 profile_name=self.profile_name, pose_source=self.pose_source,
                 confidence_alpha=self.confidence_alpha,
                 confidence_calibration=self.confidence_calibration,
+                palm_evidence=self.palm_evidence,
                 gripper_name=self.gripper_name,
                 coordinate_frame=self.coordinate_frame,
             )
@@ -603,6 +616,7 @@ class PreparationPipeline:
                 profile_name=self.profile_name, pose_source=self.pose_source,
                 confidence_alpha=self.confidence_alpha,
                 confidence_calibration=self.confidence_calibration,
+                palm_evidence=self.palm_evidence,
                 gripper_name=self.gripper_name,
                 coordinate_frame=self.coordinate_frame,
             )
@@ -628,6 +642,7 @@ class PreparationPipeline:
                 "polyorder": int(polyorder),
                 "profile": self.profile_name or None,
                 "confidence_calibration": self.confidence_calibration,
+                "palm_evidence": self.palm_evidence,
                 "files": [p.name for p in (
                     self.checkpoints_dir / "00_per_camera_observed.npz",
                     self.checkpoints_dir / "05_per_camera_filled.npz",
@@ -808,6 +823,7 @@ def prepare_episode(
             pp.pose_source = profile_spec.pose_source
             pp.confidence_alpha = profile_spec.confidence_alpha
             pp.confidence_calibration = profile_spec.confidence_calibration
+            pp.palm_evidence = profile_spec.palm_evidence
             pp.gripper_name = profile_spec.gripper
             pp.coordinate_frame = profile_spec.coordinate_frame
         if interp_max_gap is not None:
