@@ -556,7 +556,114 @@ A dose is promoted only if it passes all five. If 8 px passes and 16 px fails,
 the one with the better coverage/jitter trade is promoted and the other is kept
 as a locked candidate.
 
-**Result: recorded below once the run completes.**
+### Result
+
+All ten runs completed (two doses × five scenes). Compared against each scene's
+protected `stable-fused-hand-v2` artifact.
+
+| scene | profile | pair_obs | obs LM % | gap_max | gap>250 | d2_rms | bone_cv |
+|---|---|---:|---:|---:|---:|---:|---:|
+| move-shipok | v2 (4 px) | 517 | 72.4 | 256.7 | 9 | 0.98 | 6.64 |
+| | 8 px | 696 | 91.2 | 256.9 | 9 | 1.05 | 7.11 |
+| | 16 px | 783 | 95.8 | 166.4 | **0** | 1.15 | 7.37 |
+| cup_grab | v2 (4 px) | 266 | 50.7 | 218.4 | 0 | 2.13 | 8.76 |
+| | 8 px | 469 | 69.1 | 126.8 | 0 | 2.46 | 10.80 |
+| | 16 px | 655 | 82.5 | 126.7 | 0 | 2.80 | 12.02 |
+| block-push | v2 (4 px) | 495 | 75.8 | 142.9 | 0 | 2.23 | 6.19 |
+| | 8 px | 730 | 93.5 | 135.8 | 0 | 2.48 | 6.55 |
+| | 16 px | 855 | 99.4 | 135.8 | 0 | 2.66 | 6.96 |
+| pyramid | v2 (4 px) | 410 | 74.6 | 228.6 | 0 | 1.76 | 9.99 |
+| | 8 px | 616 | 90.1 | 193.0 | 0 | 2.13 | 10.16 |
+| | 16 px | 839 | 95.5 | 122.7 | 0 | 2.46 | 9.86 |
+| pick_up_u | v2 (4 px) | 574 | 74.3 | 130.4 | 0 | 2.02 | 7.62 |
+| | 8 px | 769 | 89.6 | 130.3 | 0 | 2.39 | 9.47 |
+| | 16 px | 834 | 93.6 | 130.3 | 0 | 2.53 | 9.19 |
+
+Against the gates as registered:
+
+| gate | 8 px | 16 px |
+|---|---|---|
+| 1 coverage rises on all five | **pass** (+195…+235) | **pass** (+260…+429) |
+| 2 no new fabricated explosions | **fail** — move-shipok `gap_max` +0.19 mm | **pass**, and move-shipok 9 → 0 |
+| 3 jitter ≤ +10% | **fail** on 4/5 (up to +21.0%) | **fail** on 5/5 (up to +39.5%) |
+| 4 bone dispersion ≤ +10% | **fail** on 2/5 (up to +24.3%) | **fail** on 4/5 (up to +37.2%) |
+| 5 upstream unchanged | pass | pass |
+
+**Neither dose is promoted.** Rule 7 is not satisfied and the profiles stay
+locked candidates.
+
+### Gates 3 and 4 were specified wrong
+
+This is a defect in the experiment, not a finding about the change.
+
+`d2_rms` and `bone_cv` were each computed over whatever frames the recipe
+produced. At 4 px only 50–76% of landmarks are triangulated and the remainder is
+interpolation, which is smoother than any measurement by construction. Raising
+coverage replaces an invented smooth curve with real data, so both statistics
+must rise even if every recruited joint is perfect. As written, gates 3 and 4
+cannot separate "more real noise" from "worse geometry" — which is precisely the
+distinction they were introduced to make.
+
+### E7b — the same artifacts, conditioned on population
+
+Re-measured over the existing outputs, no re-run. `common` restricts both
+recipes to the frames/landmarks **both** observed; `new` measures only the joints
+the candidate added.
+
+| scene | dose | jitter on common | bone_cv on common | bone_cv of new joints | v2's own bone_cv | new LM % |
+|---|---|---|---|---:|---:|---:|
+| move-shipok | 8 px | 1.04 → 1.05 (+1.5%) | 6.64 → 6.41 (−3.5%) | **6.01** | 6.64 | 18.8 |
+| | 16 px | 1.04 → 1.08 (+4.0%) | 6.64 → 6.53 (−1.7%) | 7.02 | 6.64 | 23.4 |
+| cup_grab | 8 px | 2.26 → 2.21 (−2.2%) | 8.76 → 9.18 (+4.8%) | **14.09** | 8.76 | 18.4 |
+| | 16 px | 2.26 → 2.35 (+3.9%) | 8.76 → 9.36 (+6.8%) | **17.78** | 8.76 | 31.8 |
+| block-push | 8 px | 2.13 → 2.26 (+6.0%) | 6.19 → 6.48 (+4.6%) | 6.17 | 6.19 | 17.7 |
+| | 16 px | 2.13 → 2.36 (+10.4%) | 6.19 → 6.56 (+5.8%) | 7.93 | 6.19 | 23.6 |
+| pyramid | 8 px | 1.60 → 1.69 (+5.6%) | 9.99 → 9.92 (−0.7%) | **7.81** | 9.99 | 15.5 |
+| | 16 px | 1.60 → 1.72 (+7.3%) | 9.99 → 10.17 (+1.8%) | **7.57** | 9.99 | 20.9 |
+| pick_up_u | 8 px | 1.74 → 1.83 (+5.2%) | 7.62 → 7.54 (−1.0%) | 9.98 | 7.62 | 15.3 |
+| | 16 px | 1.74 → 1.89 (+8.1%) | 7.62 → 7.56 (−0.8%) | 9.90 | 7.62 | 19.3 |
+
+Two things follow.
+
+**The widened gate does not disturb the joints V2 already had.** On the common
+population jitter moves by −2.2% to +10.4% and bone dispersion by −3.5% to
++6.8%; several scenes improve. The +21…+39% figures under gate 3 were the
+coverage confound, not the counter-hypothesis. The counter-hypothesis — a
+non-robust `f_scale` letting a bad view drag the refined point — is not
+supported at 8 px and is visible only as block-push's +10.4% at 16 px.
+
+**Recruit quality is scene-dependent, and that is the real result.** Judged by
+its own bone-length consistency, the joints 8 px adds are *better than V2's own
+joints* on move-shipok (6.01 vs 6.64) and pyramid (7.81 vs 9.99), equal on
+block-push (6.17 vs 6.19), mediocre on pick_up_u (9.98 vs 7.62) and clearly
+worse on cup_grab (14.09 vs 8.76). 16 px degrades the recruits on three of five.
+
+Caveat that must be kept attached to those numbers: recruited joints are by
+definition the harder ones, so some dispersion increase is expected and a fair
+comparison against V2's easier population is not available. That makes
+move-shipok and pyramid — where the harder subpopulation is *more* consistent
+than V2's easier one — the strong evidence, and pick_up_u's +31% the weak
+evidence.
+
+cup_grab being the failure is consistent with E6, which already singled it out:
+the only scene with 12.4% of joint-slots below two views, the worst rejected
+reprojection median (8.0 px vs 5.8 elsewhere) and the largest ray separation
+(17.8 mm median vs 11–12 mm). Its camera geometry is the poorest of the five, so
+widening the agreement gate there admits genuinely disagreeing views.
+
+### Status and what a promotion would require
+
+8 px is a promising candidate; 16 px is not supported. But re-adjudicating this
+run under the conditioned metrics is exactly what rule 7 forbids — the gates
+must precede the run. So 8 px is **not** promoted here.
+
+A promotion run must register, in advance: jitter and bone dispersion on the
+**common** population (≤ +10%), recruit bone dispersion no worse than 1.25× the
+recipe's own on at least four of five scenes, coverage strictly up on all five,
+and `gap>250` non-increasing — evaluated on scenes not used to form this
+hypothesis. cup_grab suggests the threshold may need to depend on the episode's
+measured camera geometry rather than being a constant, which is a larger change
+than one number and should not be smuggled into this one.
 
 ## Next controlled experiment
 
