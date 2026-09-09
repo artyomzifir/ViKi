@@ -665,6 +665,109 @@ hypothesis. cup_grab suggests the threshold may need to depend on the episode's
 measured camera geometry rather than being a constant, which is a larger change
 than one number and should not be smuggled into this one.
 
+## E8 — the default profile gives fabricated palm poses a real IK weight
+
+Found while wiring perception profiles to retarget. This is a defect in the
+shipped default, not a candidate under test, so it is recorded before the
+retarget comparison it was found during.
+
+### What omega is supposed to be
+
+`omega` is the per-frame scalar that weights the whole SE(3) pose in the IK data
+term. It is built in `viki/prepare/run.py::_confidence_arrays` as the **mean of
+the landmark confidences of the four landmarks that define the palm frame**
+(wrist, index MCP, middle MCP, pinky MCP).
+
+`landmark_confidence` is correctly zero on any landmark that was not
+triangulated — verified on move-shipok V2: 5,201 fabricated cells, **all
+exactly 0.0**, against mean 0.799 on the 13,636 observed ones. The filling stage
+does not invent confidence.
+
+### The defect
+
+A mean over four numbers is not zero when only some of them are. A frame whose
+palm was one-quarter observed and three-quarters interpolated therefore gets
+roughly a quarter of full weight, and pulls the solver toward a pose whose
+orientation was mostly invented.
+
+Measured on the five protected V2 baselines — frames that pull the IK
+(`omega > 0`), grouped by how many of the four palm landmarks were actually
+triangulated, with the mean omega each group receives:
+
+| scene | 4/4 | 3/4 | 2/4 | 1/4 | 0/4 |
+|---|---|---|---|---|---|
+| move-shipok | 450 @ 0.79 | 181 @ 0.57 | 134 @ 0.39 | 55 @ 0.20 | 0 |
+| cup_grab | 275 @ 0.81 | 152 @ 0.58 | 144 @ 0.38 | 127 @ 0.20 | 0 |
+| block-push | 396 @ 0.80 | 347 @ 0.61 | 93 @ 0.39 | 38 @ 0.18 | 0 |
+| pyramid | 448 @ 0.80 | 235 @ 0.60 | 100 @ 0.38 | 35 @ 0.18 | 0 |
+| pick_up_u | 323 @ 0.81 | 230 @ 0.59 | 172 @ 0.38 | 92 @ 0.20 | 0 |
+
+So on every scene **45–61% of the frames that drive the IK have an incompletely
+observed palm**, and 131–271 frames per scene are driven by a palm frame with
+only one or two real landmarks out of four. A palm *orientation* fitted through
+one measured point and three interpolated ones is not a partial measurement —
+it is a fabrication that the weight presents as 20% of a measurement.
+
+This also contradicts a comment in `viki/retarget/run.py::load_targets`, which
+states that confidence stays exactly zero so that "no fabricated target row
+contributes to the objective". That holds only for rows where the whole frame is
+invalid, not for partially observed palms.
+
+### The fix already exists, attached to the wrong profile
+
+`_confidence_arrays` has the guard, and its comment states the reasoning:
+
+```python
+if calibration == "absolute" and columns:
+    # One scalar weights the complete SE(3) pose. If any landmark that
+    # defines the palm frame was fabricated, treating the remaining three
+    # as a partially observed orientation would overstate what the sensor
+    # actually measured. Smoothness, not the data term, owns that frame.
+    palm_observed = np.asarray(observed_mask, dtype=bool)[:, columns].all(axis=1)
+    omega = np.where(palm_observed, omega, 0.0)
+```
+
+It runs only under `confidence_calibration == "absolute"`, which is
+`stable-fused-hand-v3` alone. The `episode_max` branch — V1, V2, the no-extrap
+candidate and both E7 reproj candidates — skips both this and the
+`observed_mask` gate on `landmark_confidence` above it. The default profile is
+`stable-fused-hand-v2`, so **the product ships the unguarded path** and the
+guarded one is on a profile that has never been measured on any scene.
+
+Whether that was deliberate (V1/V2 manifests are immutable) or an oversight, the
+consequence is the same and is a fact about the default, not about a candidate.
+
+### Interaction with E7
+
+The widened reprojection gate removes most of this contamination as a side
+effect, by leaving almost nothing to fabricate. Frames with `omega > 0` and an
+incompletely observed palm, V2 (4 px) → `fused-hand-reproj16-v1`:
+
+| scene | V2 | 16 px |
+|---|---|---|
+| move-shipok | 370 | **0** |
+| cup_grab | 423 | 62 |
+| block-push | 478 | **0** |
+| pyramid | 370 | 6 |
+| pick_up_u | 494 | 6 |
+
+This is an argument for the widened gate that does not depend on E7's jitter or
+bone-dispersion gates at all, and it is about the IK objective rather than about
+trajectory smoothness. It is also independent of the omega fix: one removes the
+fabrication, the other stops mis-weighting whatever fabrication remains. They
+compose, and cup_grab needs both.
+
+### Not yet answered
+
+Whether any of this changes the IK solution measurably. The retarget comparison
+across the fifteen (scene, profile) pairs was running when this was recorded;
+its result goes below. Note in advance that `position_rmse_mm` is measured
+against the target trajectory, which *includes* the fabricated rows — so a
+recipe that fabricates more has a smoother target and can score a *better* RMSE
+while tracking a worse trajectory. The comparison must therefore split the
+position error by evidence class, per rule 4, and the headline RMSE must not be
+read on its own.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
