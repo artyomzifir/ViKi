@@ -403,6 +403,90 @@ If a second hand entered frame, the pipeline would now silently track whichever
 one the detector preferred. The single-hand recording protocol is the assumption
 that makes this safe, and it is now load-bearing rather than advisory.
 
+## E6 — why joints are rejected, five scenes, 2026-09-09 (measurement only)
+
+E5 raised acquisition. This is a read-only census of what happens to a joint
+that *was* acquired by both cameras: `triangulate_joint`'s accept/reject logic
+was replayed per frame per landmark without writing anything.
+
+### Rejection causes
+
+| Scene | solved | < 2 views | cheirality | ray angle | rays disagree |
+|---|---:|---:|---:|---:|---:|
+| cup_grab | 50.8% | 12.4% | **0%** | **0%** | 36.8% |
+| move-shipok | 72.4% | 3.0% | **0%** | **0%** | 24.6% |
+| block-push | 75.8% | 0.0% | **0%** | **0%** | 24.2% |
+| pyramid | 74.5% | 4.0% | **0%** | **0%** | 21.4% |
+| pick_up_u | 74.3% | 5.8% | **0%** | **0%** | 19.9% |
+
+The cheirality and minimum-ray-angle gates never fire on any of the five
+episodes. Every rejection of an acquired joint comes from one place: the DLT
+point reprojects beyond `TRI_REPROJ_INLIER_PX = 4`, so the hypothesis collects
+fewer than two inliers and the joint is deleted.
+
+### How badly do the rays actually disagree
+
+| Scene | reproj med | 4–8 px | 8–16 px | 16–40 px | 40–100 px | > 100 px | reproj max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| cup_grab | 8.0 px | 50.2% | 36.8% | 12.9% | 0.1% | **0%** | 52 px |
+| move-shipok | 5.8 px | 76.4% | 18.8% | 4.7% | 0.2% | **0%** | 42 px |
+| block-push | 5.8 px | 73.2% | 24.4% | 2.4% | 0% | **0%** | 24 px |
+| pyramid | 5.8 px | 72.5% | 25.1% | 2.4% | 0% | **0%** | 36 px |
+| pick_up_u | 5.9 px | 76.8% | 20.3% | 2.7% | 0.1% | **0%** | 49 px |
+
+The same population expressed physically — the shortest distance between the two
+lines of sight:
+
+| Scene | median | p90 | p99 | max | tips median | tips p90 |
+|---|---:|---:|---:|---:|---:|---:|
+| cup_grab | 17.8 mm | 40.2 | 65.0 | 103 | 20.2 mm | 45.3 |
+| move-shipok | 11.4 mm | 23.4 | 55.8 | 76 | 12.8 mm | 39.8 |
+| block-push | 12.5 mm | 24.9 | 42.1 | 56 | 14.9 mm | 31.6 |
+| pyramid | 11.1 mm | 22.8 | 40.7 | 71 | 12.8 mm | 25.4 |
+| pick_up_u | 12.2 mm | 22.0 | 44.6 | 122 | 13.2 mm | 28.0 |
+
+### What this settles
+
+The design question before this measurement was whether a rejected joint is a
+noisy measurement (worth keeping at low weight) or a hallucination by one camera
+(worth deleting). If occluded fingertips were being invented, the rejected
+population would be bimodal with a tail at hundreds of pixels and tens of
+centimetres.
+
+It is not. Across roughly 23,000 rejections on five episodes there is **not one**
+above 100 px, and 0.0–0.2% above 40 px. The distribution is smooth and pressed
+against the gate: the median rejected joint misses by 5.8–8.0 px, which is
+11–18 mm of ray separation — about one finger width, the distance between a
+fingernail and a finger pad. Two detectors placing the same tip slightly
+differently on the same finger, not one of them inventing it.
+
+Meanwhile E0–E2 measured what replaces a deleted joint: coordinate-wise
+interpolation, with a thumb-index error up to 25,219 mm before the linear
+promotion and still 256.7 mm after it. The pipeline is discarding 11–18 mm
+measurements and substituting values that can be wrong by 256 mm.
+
+### The gate contradicts the weighting function it feeds
+
+```python
+quality = inlier_frac
+        * clip(1 - mean_err / (2 * cfg.reproj_inlier_px), 0, 1)
+        * clip(ray / cfg.ray_ref_deg, 0, 1)
+```
+
+The reprojection term is written to grade linearly to zero at **twice** the
+inlier gate. With the gate at 4 px it is designed to express confidence for
+errors up to 8 px — but nothing above 4 px ever reaches it. Half of the
+designed grading range is unreachable by construction.
+
+So the graded-confidence mechanism this experiment was going to add already
+exists; a threshold is preventing it from operating over its own range.
+`TRI_REPROJ_INLIER_PX` is already a per-profile knob (`profile.triangulation`)
+and already doubles as the `f_scale` of the robust refinement loss, so widening
+it relaxes the gate and the robust loss consistently, with no code change.
+
+**No decision is taken here.** The candidate and its acceptance gates are stated
+under "Next controlled experiment".
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
