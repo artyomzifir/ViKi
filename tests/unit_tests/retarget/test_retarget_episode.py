@@ -44,20 +44,24 @@ def test_retarget_episode_real_ik(tmp_path):
     ep = new_episode(tmp_path)
     _synthetic_cln(ep)
 
-    from viki.retarget.run import retarget_episode
+    from viki.retarget.run import _load_robot_description, retarget_episode
 
     try:
-        retarget_episode(ep, robot="ur3", options={
-            "max_iterations": 3,
-            "collision_enabled": True,
-            "collision_pairs": 2,
-            "approach_sec": 0.2,
-            "w_orientation": 0.0,
-            "base_position": [0.7, 0.0, 0.0],
-            "base_rpy_deg": [0.0, 0.0, 180.0],
-        })
-    except Exception as exc:  # noqa: BLE001 - offline / model fetch failure
+        _load_robot_description("ur3_official_description")
+    except Exception as exc:  # noqa: BLE001 - offline model fetch failure only
         pytest.skip(f"robot description unavailable: {exc}")
+    # Solver, assembly and archive failures must fail the test rather than being
+    # misreported as an unavailable optional model.
+    retarget_episode(ep, robot="ur3", options={
+        "max_iterations": 3,
+        "collision_enabled": True,
+        "collision_pairs": 2,
+        "approach_sec": 0.2,
+        "w_orientation": 0.0,
+        "sequential_baseline": True,
+        "base_position": [0.7, 0.0, 0.0],
+        "base_rpy_deg": [0.0, 0.0, 180.0],
+    })
 
     assert ep.plan_h5.exists() and stage_done(ep, "retarget")
     with load_archive(ep.plan_h5) as plan:
@@ -77,13 +81,33 @@ def test_retarget_episode_real_ik(tmp_path):
         assert str(plan["gripper_command_names_json"]) == '["opening"]'
         np.testing.assert_allclose(np.asarray(plan["gripper_command"])[:, 0], opening)
         assert "gripper" in str(plan["point_groups_json"])
-        assert int(plan["schema_version"]) == 7
+        assert int(plan["schema_version"]) == 8
         np.testing.assert_allclose(plan["base_position_calibration"], [0.7, 0.0, 0.0])
         np.testing.assert_allclose(plan["base_rpy_deg_calibration"], [0.0, 0.0, 180.0])
         assert str(plan["target_position_anchor"]) == "pinch_center"
         assert str(plan["adapter_kind"]) == "user_cylinder"
         metrics = json.loads(str(plan["metrics_json"]))
         assert metrics["min_floor_margin_mm"] >= -1e-6
+        assert metrics["min_collision_margin"] >= -1e-7
+        assert metrics["min_joint_limit_margin_rad"] >= -1e-7
+        assert metrics["min_velocity_limit_margin_rad_s"] >= -1e-7
+        assert metrics["approach_duration_sec"] >= 0.2
+        assert metrics["objective"] == pytest.approx(
+            metrics["objective_terms"]["total"]
+        )
+        baseline_q = np.asarray(plan["sequential_baseline_q"])
+        assert baseline_q.shape == q.shape and np.isfinite(baseline_q).all()
+        assert np.asarray(
+            plan["sequential_baseline_achieved_position_calibration"]
+        ).shape == (len(q), 3)
+        baseline = metrics["sequential_baseline"]
+        assert baseline["method"] == "causal_frame_ik_then_savgol"
+        assert baseline["objective"] == pytest.approx(
+            baseline["objective_terms"]["total"]
+        )
+        assert set(baseline["constraint_margins"]) == {
+            "joint", "velocity", "floor", "collision",
+        }
 
 
 @pytest.mark.slow

@@ -14,6 +14,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 from scipy import sparse
+from scipy.signal import savgol_filter
 from scipy.spatial.transform import Rotation
 
 from viki.retarget.cost import (
@@ -31,8 +32,12 @@ class Kinematics(Protocol):
     q_reference: np.ndarray
 
     def pose(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]: ...
+    def pose_jacobian(
+        self, q: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ...
     def integrate(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray: ...
     def collision_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]: ...
+    def collision_margins(self, q: np.ndarray) -> np.ndarray: ...
     def floor_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]: ...
 
 
@@ -172,8 +177,70 @@ class BatchResult:
     iterations: int
     converged: bool
     objective: float
+    objective_terms: dict[str, float]
+    objective_history: tuple[dict[str, float], ...]
     min_collision_margin: float
     min_floor_margin: float
+
+
+@dataclass(frozen=True)
+class SequentialBaselineResult:
+    """Frame-wise IK followed by the conventional post-hoc SG smoothing."""
+
+    q: np.ndarray
+    achieved_position: np.ndarray
+    achieved_rotation: np.ndarray
+    position_error_m: np.ndarray
+    orientation_error_rad: np.ndarray
+    objective_terms: dict[str, float]
+    constraint_margins: dict[str, float]
+    total_iterations: int
+    solved_frames: int
+    held_frames: int
+
+
+def _objective_terms(
+    kinematics: Kinematics,
+    q: np.ndarray,
+    target_positions: np.ndarray,
+    target_rotations: np.ndarray,
+    omega: np.ndarray,
+    weights: BatchWeights,
+    options: BatchOptions,
+    d1: sparse.csr_matrix,
+    d2: sparse.csr_matrix,
+    q_ref: np.ndarray,
+) -> dict[str, float]:
+    """Evaluate every energy term at one internally consistent trajectory."""
+    errors = np.empty((len(q), 6), dtype=np.float64)
+    for frame, configuration in enumerate(q):
+        _set_frame(kinematics, frame)
+        position, rotation = kinematics.pose(configuration)
+        errors[frame] = _pose_error(
+            position,
+            rotation,
+            target_positions[frame],
+            target_rotations[frame],
+            weights,
+        )
+    q_flat = np.asarray(q, dtype=np.float64).reshape(-1)
+    terms = {
+        "data": float(
+            np.sum(
+                omega
+                * huber_loss(np.linalg.norm(errors, axis=1), options.huber_delta)
+            )
+        ),
+        "velocity": float(weights.velocity * np.dot(d1 @ q_flat, d1 @ q_flat)),
+        "acceleration": float(
+            weights.acceleration * np.dot(d2 @ q_flat, d2 @ q_flat)
+        ),
+        "posture": float(
+            weights.posture * np.dot(q_flat - q_ref, q_flat - q_ref)
+        ),
+    }
+    terms["total"] = float(sum(terms.values()))
+    return terms
 
 
 def _floor_linearization(
@@ -199,13 +266,84 @@ def _minimum_floor_margin(kinematics: Kinematics, q: np.ndarray) -> float:
 
 
 def _trajectory_min_floor_margin(
-    kinematics: Kinematics, trajectory: np.ndarray
+    kinematics: Kinematics,
+    trajectory: np.ndarray,
+    frame_indices: np.ndarray | None = None,
 ) -> float:
     minimum = np.inf
     for frame, configuration in enumerate(trajectory):
-        _set_frame(kinematics, frame)
+        passive_frame = frame if frame_indices is None else int(frame_indices[frame])
+        _set_frame(kinematics, passive_frame)
         minimum = min(minimum, _minimum_floor_margin(kinematics, configuration))
     return minimum
+
+
+def _collision_linearization(
+    kinematics: Kinematics, q: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    linearize = getattr(kinematics, "collision_linearization", None)
+    if linearize is None:
+        return np.empty(0), np.empty((0, int(kinematics.nq)))
+    margin, jacobian = linearize(q)
+    return (
+        np.asarray(margin, dtype=np.float64).reshape(-1),
+        np.asarray(jacobian, dtype=np.float64),
+    )
+
+
+def _minimum_collision_margin(kinematics: Kinematics, q: np.ndarray) -> float:
+    margins = getattr(kinematics, "collision_margins", None)
+    values = margins(q) if margins is not None else _collision_linearization(kinematics, q)[0]
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    return float(np.min(values)) if len(values) else np.inf
+
+
+def _trajectory_min_collision_margin(
+    kinematics: Kinematics,
+    trajectory: np.ndarray,
+    frame_indices: np.ndarray | None = None,
+) -> float:
+    minimum = np.inf
+    for frame, configuration in enumerate(trajectory):
+        passive_frame = frame if frame_indices is None else int(frame_indices[frame])
+        _set_frame(kinematics, passive_frame)
+        minimum = min(minimum, _minimum_collision_margin(kinematics, configuration))
+    return minimum
+
+
+def trajectory_constraint_margins(
+    kinematics: Kinematics,
+    trajectory: np.ndarray,
+    dt: float,
+    *,
+    frame_indices: np.ndarray | None = None,
+) -> dict[str, float]:
+    """Evaluate exact joint, velocity, floor and collision margins."""
+    q = np.asarray(trajectory, dtype=np.float64)
+    if q.ndim != 2 or q.shape[1] != int(kinematics.nq) or len(q) == 0:
+        raise ValueError("trajectory must be a non-empty (T, nq) array")
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise ValueError("dt must be positive")
+    if frame_indices is not None and np.asarray(frame_indices).shape != (len(q),):
+        raise ValueError("frame_indices must have one entry per trajectory frame")
+    q_min = np.asarray(kinematics.q_min, dtype=np.float64)
+    q_max = np.asarray(kinematics.q_max, dtype=np.float64)
+    joint_margin = float(np.min(np.minimum(q - q_min, q_max - q)))
+    if len(q) > 1:
+        velocity_margin = float(np.min(
+            np.asarray(kinematics.velocity_limit, dtype=np.float64)
+            - np.abs(np.diff(q, axis=0) / dt)
+        ))
+    else:
+        velocity_margin = np.inf
+    return {
+        "joint": joint_margin,
+        "velocity": velocity_margin,
+        "floor": _trajectory_min_floor_margin(kinematics, q, frame_indices),
+        "collision": _trajectory_min_collision_margin(
+            kinematics, q, frame_indices
+        ),
+    }
 
 
 def _pose_error(
@@ -225,6 +363,29 @@ def _pose_error(
     return np.concatenate((pos, ori))
 
 
+def _skew(vector: np.ndarray) -> np.ndarray:
+    x, y, z = np.asarray(vector, dtype=np.float64)
+    return np.array([
+        [0.0, -z, y],
+        [z, 0.0, -x],
+        [-y, x, 0.0],
+    ])
+
+
+def _so3_left_jacobian_inverse(rotvec: np.ndarray) -> np.ndarray:
+    """Map a left SO(3) perturbation to a log-coordinate perturbation."""
+    phi = np.asarray(rotvec, dtype=np.float64)
+    theta = float(np.linalg.norm(phi))
+    cross = _skew(phi)
+    if theta < 1e-5:
+        coefficient = 1.0 / 12.0 + theta * theta / 720.0
+    else:
+        coefficient = (
+            1.0 - 0.5 * theta / np.tan(0.5 * theta)
+        ) / (theta * theta)
+    return np.eye(3) - 0.5 * cross + coefficient * (cross @ cross)
+
+
 def _linearize_pose(
     kinematics: Kinematics,
     q: np.ndarray,
@@ -233,6 +394,36 @@ def _linearize_pose(
     weights: BatchWeights,
     epsilon: float = 1e-6,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    analytical = getattr(kinematics, "pose_jacobian", None)
+    if analytical is not None:
+        position, rotation, position_jacobian, angular_jacobian = analytical(q)
+        position = np.asarray(position, dtype=np.float64)
+        rotation = np.asarray(rotation, dtype=np.float64)
+        position_jacobian = np.asarray(position_jacobian, dtype=np.float64)
+        angular_jacobian = np.asarray(angular_jacobian, dtype=np.float64)
+        expected = (3, int(kinematics.nq))
+        if position_jacobian.shape != expected or angular_jacobian.shape != expected:
+            raise RuntimeError("pose adapter returned an invalid analytical Jacobian")
+        error = _pose_error(
+            position, rotation, target_position, target_rotation, weights
+        )
+        jacobian = np.empty((6, kinematics.nq), dtype=np.float64)
+        jacobian[:3] = np.sqrt(weights.position) * position_jacobian
+        if weights.orientation == 0.0:
+            jacobian[3:] = 0.0
+        else:
+            orientation_error = error[3:] / np.sqrt(weights.orientation)
+            # LOCAL_WORLD_ALIGNED supplies angular velocity in world axes.
+            # Express its left perturbation in target axes before applying the
+            # differential of Log(R_target.T @ R_current).
+            jacobian[3:] = (
+                np.sqrt(weights.orientation)
+                * _so3_left_jacobian_inverse(orientation_error)
+                @ target_rotation.T
+                @ angular_jacobian
+            )
+        return error, jacobian, position, rotation
+
     position, rotation = kinematics.pose(q)
     error = _pose_error(position, rotation, target_position, target_rotation, weights)
     jacobian = np.empty((6, kinematics.nq), dtype=np.float64)
@@ -330,12 +521,33 @@ def solve_trajectory(
         np.asarray(kinematics.velocity_limit, dtype=np.float64), max(0, n_frames - 1)
     )
     omega = np.clip(np.nan_to_num(omega, nan=0.0), 0.0, 1.0)
-    omega = np.maximum(omega, options.confidence_floor)
+    # Missing/invalid frames are deliberately absent from the data term.  The
+    # confidence floor only prevents a *real but weak* observation from becoming
+    # numerically irrelevant; it must not turn an interpolated target into data.
+    omega = np.where(
+        omega > 0.0,
+        np.maximum(omega, options.confidence_floor),
+        0.0,
+    )
 
     converged = False
     objective = np.inf
     min_collision = np.inf
     min_floor = _trajectory_min_floor_margin(kinematics, q)
+    objective_terms = _objective_terms(
+        kinematics,
+        q,
+        positions,
+        rotations,
+        omega,
+        weights,
+        options,
+        d1,
+        d2,
+        q_ref,
+    )
+    objective = objective_terms["total"]
+    objective_history: list[dict[str, float]] = []
     achieved_p = np.empty((n_frames, 3), dtype=np.float64)
     achieved_r = np.empty((n_frames, 3, 3), dtype=np.float64)
     errors = np.empty((n_frames, 6), dtype=np.float64)
@@ -359,7 +571,10 @@ def solve_trajectory(
         data_jac = sparse.diags(data_scale) @ _block_diagonal_jacobian(jacobians)
         data_rhs = data_scale * errors.reshape(-1)
 
-        q_flat = q.reshape(-1)
+        # A copy is intentional. ``q`` is updated in-place below; retaining a
+        # view here used to mix old pose residuals with new regularisation terms
+        # in the reported objective.
+        q_flat = q.reshape(-1).copy()
         matrices = [data_jac]
         rhs = [data_rhs]
         if weights.velocity > 0.0 and d1.shape[0]:
@@ -391,14 +606,13 @@ def solve_trajectory(
             h_parts.extend((velocity_limit - current_velocity, velocity_limit + current_velocity))
 
         min_collision = np.inf
+        collision_rows_present = False
         if options.collision_enabled:
             rows: list[sparse.spmatrix] = []
             bounds: list[np.ndarray] = []
             for t in range(n_frames):
                 _set_frame(kinematics, t)
-                margin, jac = kinematics.collision_linearization(q[t])
-                margin = np.asarray(margin, dtype=np.float64).reshape(-1)
-                jac = np.asarray(jac, dtype=np.float64)
+                margin, jac = _collision_linearization(kinematics, q[t])
                 if jac.shape != (len(margin), nq):
                     raise RuntimeError("collision barrier returned an invalid Jacobian")
                 if len(margin):
@@ -408,6 +622,7 @@ def solve_trajectory(
                     rows.append(sparse.hstack((left, -sparse.csr_matrix(jac), right)))
                     bounds.append(margin)
             if rows:
+                collision_rows_present = True
                 g_parts.append(sparse.vstack(rows, format="csr"))
                 h_parts.append(np.concatenate(bounds))
 
@@ -444,36 +659,76 @@ def solve_trajectory(
             solver=options.qp_solver,
         ).reshape(n_frames, nq)
 
-        # The QP uses a first-order floor approximation. Preserve the exact
-        # non-linear invariant as well by shortening the whole step until all
-        # constrained robot points are back on or above the plane. Scaling a
-        # feasible step also preserves the convex joint/velocity constraints.
-        if floor_rows:
-            current_floor = _trajectory_min_floor_margin(kinematics, q)
-            if current_floor >= -1e-9:
-                scale = 1.0
-                floor_step_found = False
-                while scale > 1e-6:
-                    candidate = np.stack([
-                        kinematics.integrate(q[t], scale * delta[t])
-                        for t in range(n_frames)
-                    ])
-                    if _trajectory_min_floor_margin(kinematics, candidate) >= -1e-9:
-                        floor_step_found = True
-                        break
-                    scale *= 0.5
-                if not floor_step_found:
-                    scale = 0.0
-                delta *= scale
+        # The pose and both barriers are non-linear. Shorten the global step
+        # until the exact robust objective does not increase and already
+        # feasible geometric invariants remain feasible. A shared scale also
+        # preserves the convex inter-frame velocity constraints. An initially
+        # infeasible barrier is left to the QP to repair; once feasible, it can
+        # never regress below zero again.
+        current_floor = (
+            _trajectory_min_floor_margin(kinematics, q) if floor_rows else np.inf
+        )
+        current_collision = (
+            _trajectory_min_collision_margin(kinematics, q)
+            if collision_rows_present else np.inf
+        )
+        preserve_floor = bool(floor_rows) and current_floor >= -1e-9
+        preserve_collision = collision_rows_present and current_collision >= -1e-9
+        preserve_objective = (
+            (not floor_rows or current_floor >= -1e-9)
+            and (not collision_rows_present or current_collision >= -1e-9)
+        )
+        accepted_terms: dict[str, float] | None = None
+        if preserve_floor or preserve_collision or preserve_objective:
+            scale = 1.0
+            feasible_step_found = False
+            while scale > 1e-6:
+                candidate = np.stack([
+                    kinematics.integrate(q[t], scale * delta[t])
+                    for t in range(n_frames)
+                ])
+                floor_ok = (
+                    not preserve_floor
+                    or _trajectory_min_floor_margin(kinematics, candidate) >= -1e-9
+                )
+                collision_ok = (
+                    not preserve_collision
+                    or _trajectory_min_collision_margin(kinematics, candidate) >= -1e-9
+                )
+                candidate_terms = _objective_terms(
+                    kinematics,
+                    candidate,
+                    positions,
+                    rotations,
+                    omega,
+                    weights,
+                    options,
+                    d1,
+                    d2,
+                    q_ref,
+                )
+                objective_ok = (
+                    not preserve_objective
+                    or candidate_terms["total"]
+                    <= objective + max(1e-12, 1e-10 * abs(objective))
+                )
+                if floor_ok and collision_ok and objective_ok:
+                    feasible_step_found = True
+                    accepted_terms = candidate_terms
+                    break
+                scale *= 0.5
+            if not feasible_step_found:
+                scale = 0.0
+            delta *= scale
         for t in range(n_frames):
             q[t] = kinematics.integrate(q[t], delta[t])
         max_step = float(np.max(np.abs(delta)))
-        objective = float(
-            np.sum(omega * huber_loss(np.linalg.norm(errors, axis=1), options.huber_delta))
-            + weights.velocity * np.dot(d1 @ q_flat, d1 @ q_flat)
-            + weights.acceleration * np.dot(d2 @ q_flat, d2 @ q_flat)
-            + weights.posture * np.dot(q_flat - q_ref, q_flat - q_ref)
+        objective_terms = accepted_terms or _objective_terms(
+            kinematics, q, positions, rotations, omega, weights, options,
+            d1, d2, q_ref,
         )
+        objective = objective_terms["total"]
+        objective_history.append(objective_terms.copy())
         if report is not None:
             report(
                 stage="retarget_solve", frame=iteration + 1,
@@ -497,6 +752,15 @@ def solve_trajectory(
             "retarget could not find a floor-feasible trajectory; remaining "
             f"penetration is {-min_floor * 1000.0:.1f} mm"
         )
+    min_collision = (
+        _trajectory_min_collision_margin(kinematics, q)
+        if options.collision_enabled else np.inf
+    )
+    if min_collision < -1e-7:
+        raise RuntimeError(
+            "retarget could not find a collision-feasible trajectory; remaining "
+            f"barrier violation is {-min_collision * 1000.0:.1f} mm"
+        )
     return BatchResult(
         q=q,
         achieved_position=achieved_p,
@@ -506,8 +770,146 @@ def solve_trajectory(
         iterations=iteration + 1,
         converged=converged,
         objective=objective,
+        objective_terms=objective_terms,
+        objective_history=tuple(objective_history),
         min_collision_margin=min_collision,
         min_floor_margin=min_floor,
+    )
+
+
+class _FixedPassiveFrameKinematics:
+    """Present one gripper state as a one-frame kinematics problem."""
+
+    def __init__(self, base: Kinematics, frame: int):
+        self._base = base
+        self._frame = int(frame)
+
+    def set_frame(self, _frame: int) -> None:
+        _set_frame(self._base, self._frame)
+
+    def __getattr__(self, name: str):
+        self.set_frame(0)
+        return getattr(self._base, name)
+
+
+def solve_sequential_baseline(
+    kinematics: Kinematics,
+    target_positions: np.ndarray,
+    target_rotations: np.ndarray,
+    confidence: np.ndarray,
+    dt: float,
+    weights: BatchWeights,
+    options: BatchOptions,
+    *,
+    smoothing_window: int = 7,
+    smoothing_polyorder: int = 2,
+    report: Callable[..., None] | None = None,
+) -> SequentialBaselineResult:
+    """Solve independent causal IK frames, then smooth the joint sequence.
+
+    This is deliberately a comparison baseline, not an executable alternative:
+    post-hoc smoothing can reintroduce velocity, floor or collision violations.
+    Those exact margins are therefore measured and archived instead of hidden.
+    """
+    positions = np.asarray(target_positions, dtype=np.float64)
+    rotations = np.asarray(target_rotations, dtype=np.float64)
+    omega = np.asarray(confidence, dtype=np.float64)
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError("target positions must have shape (T, 3)")
+    n_frames = len(positions)
+    if n_frames == 0 or rotations.shape != (n_frames, 3, 3) or omega.shape != (n_frames,):
+        raise ValueError("target position, rotation and confidence lengths must agree")
+
+    q = np.empty((n_frames, int(kinematics.nq)), dtype=np.float64)
+    previous = np.asarray(kinematics.q_reference, dtype=np.float64).copy()
+    total_iterations = 0
+    solved_frames = 0
+    for frame in range(n_frames):
+        if report is not None:
+            report(stage="retarget_sequential_baseline", frame=frame + 1, total=n_frames)
+        # A causal per-frame method has no observation and no temporal problem
+        # to solve on a missing frame. Holding the last command is the standard
+        # neutral policy; letting the posture prior walk toward q_reference
+        # would manufacture motion and make the comparison artificially bad.
+        if not np.isfinite(omega[frame]) or omega[frame] <= 0.0:
+            q[frame] = previous
+            continue
+        fixed = _FixedPassiveFrameKinematics(kinematics, frame)
+        result = solve_trajectory(
+            fixed,
+            positions[frame : frame + 1],
+            rotations[frame : frame + 1],
+            omega[frame : frame + 1],
+            dt,
+            weights,
+            options,
+            initial_q=previous[None],
+        )
+        previous = result.q[0].copy()
+        q[frame] = previous
+        total_iterations += result.iterations
+        solved_frames += 1
+
+    window = min(int(smoothing_window), n_frames)
+    if window % 2 == 0:
+        window -= 1
+    if window >= 3 and int(smoothing_polyorder) < window:
+        q = savgol_filter(
+            q,
+            window_length=window,
+            polyorder=int(smoothing_polyorder),
+            axis=0,
+            mode="interp",
+        )
+    q = np.minimum(
+        np.maximum(q, np.asarray(kinematics.q_min, dtype=np.float64)),
+        np.asarray(kinematics.q_max, dtype=np.float64),
+    )
+
+    achieved_position = np.empty((n_frames, 3), dtype=np.float64)
+    achieved_rotation = np.empty((n_frames, 3, 3), dtype=np.float64)
+    for frame, configuration in enumerate(q):
+        _set_frame(kinematics, frame)
+        achieved_position[frame], achieved_rotation[frame] = kinematics.pose(configuration)
+    position_error = np.linalg.norm(achieved_position - positions, axis=1)
+    orientation_error = np.asarray([
+        np.linalg.norm(
+            Rotation.from_matrix(rotations[frame].T @ achieved_rotation[frame]).as_rotvec()
+        )
+        for frame in range(n_frames)
+    ])
+
+    effective_omega = np.clip(np.nan_to_num(omega, nan=0.0), 0.0, 1.0)
+    effective_omega = np.where(
+        effective_omega > 0.0,
+        np.maximum(effective_omega, options.confidence_floor),
+        0.0,
+    )
+    d1 = joint_difference_matrix(n_frames, int(kinematics.nq), 1, dt)
+    d2 = joint_difference_matrix(n_frames, int(kinematics.nq), 2, dt)
+    objective_terms = _objective_terms(
+        kinematics,
+        q,
+        positions,
+        rotations,
+        effective_omega,
+        weights,
+        options,
+        d1,
+        d2,
+        np.tile(np.asarray(kinematics.q_reference, dtype=np.float64), n_frames),
+    )
+    return SequentialBaselineResult(
+        q=q,
+        achieved_position=achieved_position,
+        achieved_rotation=achieved_rotation,
+        position_error_m=position_error,
+        orientation_error_rad=orientation_error,
+        objective_terms=objective_terms,
+        constraint_margins=trajectory_constraint_margins(kinematics, q, dt),
+        total_iterations=total_iterations,
+        solved_frames=solved_frames,
+        held_frames=n_frames - solved_frames,
     )
 
 
@@ -548,6 +950,7 @@ class PinocchioKinematics:
         collision_pairs: int,
         collision_min_distance_m: float,
         actuated_joint_names: tuple[str, ...] | None = None,
+        actuated_position_limits: tuple[tuple[float, float], ...] | None = None,
         passive_joint_positions: dict[str, np.ndarray] | None = None,
         gripper_prefix: str = "",
         position_points: tuple[
@@ -653,6 +1056,16 @@ class PinocchioKinematics:
                 self.q_max[output_index] = float(self.model.upperPositionLimit[q_index])
         self.q_min[~np.isfinite(self.q_min) | (self.q_min < -1e10)] = -np.inf
         self.q_max[~np.isfinite(self.q_max) | (self.q_max > 1e10)] = np.inf
+        if actuated_position_limits is not None:
+            limits = np.asarray(actuated_position_limits, dtype=np.float64)
+            if limits.shape != (self.nq, 2):
+                raise ValueError(
+                    f"actuated position limits must have shape {(self.nq, 2)}"
+                )
+            if not np.isfinite(limits).all() or np.any(limits[:, 0] >= limits[:, 1]):
+                raise ValueError("actuated position limits must be finite lower/upper pairs")
+            self.q_min = limits[:, 0].copy()
+            self.q_max = limits[:, 1].copy()
         self.velocity_limit = np.asarray(
             self.model.velocityLimit, dtype=np.float64
         )[self._active_v_indices].copy()
@@ -827,6 +1240,49 @@ class PinocchioKinematics:
             position = np.asarray(pose.translation)
         return np.asarray(position).copy(), np.asarray(pose.rotation).copy()
 
+    def pose_jacobian(
+        self, q: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Pose plus analytical linear/world-angular Jacobians of the task."""
+        configuration = self._configuration(q)
+        self.pin.computeJointJacobians(self.model, self.data, configuration)
+        self.pin.updateFramePlacements(self.model, self.data)
+        pose = self.data.oMf[self.frame_id]
+        orientation_jacobian = np.asarray(self.pin.getFrameJacobian(
+            self.model,
+            self.data,
+            self.frame_id,
+            self.pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
+        ))
+        if self._task_position_points:
+            positions: list[np.ndarray] = []
+            position_jacobians: list[np.ndarray] = []
+            for frame_id, offset in self._task_position_points:
+                placement = self.data.oMf[frame_id]
+                world_offset = np.asarray(placement.rotation) @ offset
+                positions.append(np.asarray(placement.translation) + world_offset)
+                frame_jacobian = np.asarray(self.pin.getFrameJacobian(
+                    self.model,
+                    self.data,
+                    frame_id,
+                    self.pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
+                ))
+                position_jacobians.append(
+                    frame_jacobian[:3] - _skew(world_offset) @ frame_jacobian[3:]
+                )
+            position = np.mean(positions, axis=0)
+            position_jacobian = np.mean(position_jacobians, axis=0)
+        else:
+            position = np.asarray(pose.translation)
+            position_jacobian = orientation_jacobian[:3]
+        active = self._active_v_indices
+        return (
+            np.asarray(position, dtype=np.float64).copy(),
+            np.asarray(pose.rotation, dtype=np.float64).copy(),
+            np.asarray(position_jacobian[:, active], dtype=np.float64).copy(),
+            np.asarray(orientation_jacobian[3:, active], dtype=np.float64).copy(),
+        )
+
     def integrate(self, q: np.ndarray, dq: np.ndarray) -> np.ndarray:
         return np.asarray(q, dtype=np.float64) + np.asarray(dq, dtype=np.float64)
 
@@ -844,16 +1300,29 @@ class PinocchioKinematics:
             dtype=np.float64,
         )
 
-    def collision_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if self.collision_barrier is None:
-            return np.empty(0), np.empty((0, self.nq))
-        configuration = self.Configuration(
+    def _collision_configuration(self, q: np.ndarray):
+        return self.Configuration(
             self.model,
             self.model.createData(),
             self._configuration(q),
             collision_model=self.collision_model,
             collision_data=self.collision_model.createData(),
         )
+
+    def collision_margins(self, q: np.ndarray) -> np.ndarray:
+        if self.collision_barrier is None:
+            return np.empty(0)
+        return np.asarray(
+            self.collision_barrier.compute_barrier(
+                self._collision_configuration(q)
+            ),
+            dtype=np.float64,
+        )
+
+    def collision_linearization(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if self.collision_barrier is None:
+            return np.empty(0), np.empty((0, self.nq))
+        configuration = self._collision_configuration(q)
         jacobian = np.asarray(self.collision_barrier.compute_jacobian(configuration))
         return (
             np.asarray(self.collision_barrier.compute_barrier(configuration)),

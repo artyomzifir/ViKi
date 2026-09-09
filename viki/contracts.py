@@ -509,6 +509,8 @@ CLN_OPTIONAL_KEYS: tuple[str, ...] = (
     "observed_mask",  # (T, L) — joints directly present at the fusion boundary
     "interpolated_mask",  # (T, L) — joints fabricated by the gap-fill stage
     "perception_fuse_mode",  # scalar string — xyz_mean | triangulate
+    "fused_interpolation",  # scalar string — cubic | linear
+    "fused_extrapolate_edges",  # scalar bool — fill outside observed support
     "checkpoint_stage",  # scalar string — observed | filled | smoothed | hand_fit
     "checkpoint_params_json",  # scalar JSON — exact knobs used for this artifact
     "T_world_obj",  # (T, 4, 4)  — object pose track  (stub: absent)
@@ -567,6 +569,12 @@ PLAN_KEYS: tuple[str, ...] = (
     "achieved_rotation_calibration",
     "position_error_m",
     "orientation_error_rad",
+    "sequential_baseline_q",
+    "sequential_baseline_achieved_position_calibration",
+    "sequential_baseline_achieved_rotation_calibration",
+    "sequential_baseline_position_error_m",
+    "sequential_baseline_orientation_error_rad",
+    "sequential_baseline_metrics_json",
     "link_positions_calibration",
     "robot_joint_placements_calibration",
     "robot_visuals_json",

@@ -18,6 +18,8 @@ class RobotConfig:
     ee_frame: str  # Pinocchio frame tracked by the IK
     mount_frame: str  # flange/tool frame where a gripper model is appended
     joint_names: tuple[str, ...]
+    home_q: tuple[float, ...]  # known floor-safe approach start
+    position_limits: tuple[tuple[float, float], ...] | None = None
 
 
 _UR = (
@@ -29,15 +31,25 @@ _UR = (
     "wrist_3_joint",
 )
 _IIWA = tuple(f"iiwa_joint_{i}" for i in range(1, 8))
+_UR_HOME = (0.0, -1.5707963267948966, 0.0, -1.5707963267948966, 0.0, 0.0)
+_IIWA_HOME = (0.0, 0.7853981633974483, 0.0, -1.5707963267948966, 0.0, 0.7853981633974483, 0.0)
+_UR_LIMITS = (
+    (-6.283185307179586, 6.283185307179586),
+    (-6.283185307179586, 6.283185307179586),
+    (-3.141592653589793, 3.141592653589793),
+    (-6.283185307179586, 6.283185307179586),
+    (-6.283185307179586, 6.283185307179586),
+    (-6.283185307179586, 6.283185307179586),
+)
 
 ROBOT_CONFIGS: dict[str, RobotConfig] = {
-    "ur3": RobotConfig("ur3_official_description", "wrist_3_link", "tool0", _UR),
-    "ur5": RobotConfig("ur5_official_description", "wrist_3_link", "tool0", _UR),
-    "ur10": RobotConfig("ur10_official_description", "wrist_3_link", "tool0", _UR),
-    "ur5e": RobotConfig("ur5e_description", "wrist_3_link", "tool0", _UR),
-    "ur10e": RobotConfig("ur10e_description", "wrist_3_link", "tool0", _UR),
+    "ur3": RobotConfig("ur3_official_description", "wrist_3_link", "tool0", _UR, _UR_HOME, _UR_LIMITS),
+    "ur5": RobotConfig("ur5_official_description", "wrist_3_link", "tool0", _UR, _UR_HOME, _UR_LIMITS),
+    "ur10": RobotConfig("ur10_official_description", "wrist_3_link", "tool0", _UR, _UR_HOME, _UR_LIMITS),
+    "ur5e": RobotConfig("ur5e_description", "wrist_3_link", "tool0", _UR, _UR_HOME, _UR_LIMITS),
+    "ur10e": RobotConfig("ur10e_description", "wrist_3_link", "tool0", _UR, _UR_HOME, _UR_LIMITS),
     "iiwa14": RobotConfig(
-        "iiwa14_description", "iiwa_link_ee", "iiwa_link_ee", _IIWA
+        "iiwa14_description", "iiwa_link_ee", "iiwa_link_ee", _IIWA, _IIWA_HOME
     ),
 }
 

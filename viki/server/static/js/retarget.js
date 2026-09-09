@@ -111,7 +111,7 @@ export function mount(view) {
         ${field('w-posture', 'posture λᵣ', S.wPosture ?? 0.0001, 0.0001, 0)}
         ${field('huber-delta', 'Huber δ', S.huberDelta ?? 0.05, 0.005, 0.0001)}
         ${field('confidence-floor', 'confidence floor', S.confidenceFloor ?? 0.05, 0.01, 0)}
-        ${field('lm-damping', 'LM damping', S.lmDamping ?? 0.00001, 0.00001, 0.0000001)}
+        ${field('lm-damping', 'GN Tikhonov damping', S.lmDamping ?? 0.00001, 0.00001, 0.0000001)}
       </section>
 
       <section class="calib-sec">
@@ -123,6 +123,9 @@ export function mount(view) {
         ${field('max-iterations', 'GN iterations', S.maxIterations ?? 40, 1, 1)}
         ${field('max-step', 'trust step, rad', S.maxStepRad ?? 0.2, 0.05, 0.01)}
         ${field('approach-sec', 'approach, s', S.approachSec ?? 2, 0.5, 0)}
+        <div class="cfg-row"><label>Sequential baseline</label><input type="checkbox"
+          data-role="sequential-baseline" ${S.sequentialBaseline ? 'checked' : ''}></div>
+        <div class="hint">Optional paper comparison: causal frame-wise IK, then Savitzky–Golay smoothing. It is measured, never replayed.</div>
         <div class="hint">collision-geometry floor z ≥ 0 · joint limits · velocity limits · OSQP · sparse whole-trajectory QP</div>
       </section>
 
@@ -132,7 +135,8 @@ export function mount(view) {
   ctl = scene3d.create(root.querySelector('[data-role="canvas"]'), {
     api, log,
     layers: { cloud: true, trajectory: true, targetTrajectory: true,
-      achievedTrajectory: true, robot: true, fused: false, palm: false,
+      achievedTrajectory: true, sequentialBaseline: true,
+      robot: true, fused: false, palm: false,
       ...sessionGet('retargetLayers', {}) },
   });
   ctl.onFrame((frameNo, count) => {
@@ -257,6 +261,7 @@ function options() {
     collision_pairs: number('collision-pairs'),
     collision_min_distance_m: number('collision-distance'),
     approach_sec: number('approach-sec'),
+    sequential_baseline: root.querySelector('[data-role="sequential-baseline"]').checked,
   };
 }
 
@@ -276,6 +281,7 @@ function persist() {
     maxIterations: o.max_iterations, maxStepRad: o.max_step_rad,
     collisionEnabled: o.collision_enabled, collisionPairs: o.collision_pairs,
     collisionMinDistanceM: o.collision_min_distance_m, approachSec: o.approach_sec,
+    sequentialBaseline: o.sequential_baseline,
     dataset: root.querySelector('[data-role="dataset"]').value,
   });
 }
@@ -332,12 +338,17 @@ function renderMetrics(data) {
   const anchor = data.target_position_anchor === 'pinch_center' ? 'thumb–index midpoint' : 'wrist';
   const floor = Math.max(0, Number(m.min_floor_margin_mm));
   const floorText = Number.isFinite(floor) ? `floor clearance ${floor.toFixed(1)} mm` : 'floor constraint unavailable';
+  const baseline = m.sequential_baseline;
+  const baselineText = baseline
+    ? `sequential baseline ${Number(baseline.position_rmse_mm).toFixed(1)} mm · objective ${Number(baseline.objective).toPrecision(4)}`
+    : 'sequential baseline not requested';
   box.innerHTML = `<b>${data.robot_key} + ${data.gripper_model} · ${data.solver_status}</b>
     <span>target ${anchor} → jaw-panel midpoint · adapter ${adapter.toFixed(1)} mm</span>
     <span>position RMSE ${Number(m.position_rmse_mm).toFixed(1)} mm</span>
     <span>${orientation}</span>
     <span data-role="frame-error">${frameErrorText(data, ctl?.frame || 0)}</span>
     <span>${floorText}</span>
+    <span>${baselineText}</span>
     <span>velocity max ${Number(m.max_joint_velocity_rad_s).toFixed(2)} rad/s</span>`;
 }
 

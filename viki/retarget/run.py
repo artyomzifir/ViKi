@@ -47,7 +47,9 @@ from viki.retarget.solver import (
     BatchOptions,
     BatchWeights,
     PinocchioKinematics,
+    solve_sequential_baseline,
     solve_trajectory,
+    trajectory_constraint_margins,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,7 @@ class RetargetConfig:
     approach_sec: float
     collision_pairs: int
     collision_min_distance_m: float
+    sequential_baseline: bool
     weights: BatchWeights
     solver: BatchOptions
 
@@ -215,6 +218,14 @@ def config_from_options(
                 0.02,
             )
         ),
+        sequential_baseline=bool(
+            _setting(
+                values,
+                "sequential_baseline",
+                "RETARGET_SEQUENTIAL_BASELINE",
+                False,
+            )
+        ),
         weights=weights,
         solver=solver,
     )
@@ -355,9 +366,10 @@ def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
     if any(len(value) != n for value in (positions, rotations, valid, confidence, gripper)):
         raise ValueError("cln target arrays have different frame counts")
     # Some historical CLNs retain finite detector/fusion garbage in frames
-    # explicitly marked invalid. Finite-ness alone is therefore not evidence:
-    # remove those samples before interpolation so endpoint fill uses the first
-    # or last valid pose instead of metre-scale outliers.
+    # explicitly marked invalid. Finite-ness alone is therefore not evidence.
+    # The interpolation below supplies only a finite linearisation placeholder:
+    # confidence stays exactly zero, so no fabricated target row contributes to
+    # the objective and the trajectory regularisers bridge the gap themselves.
     positions = positions.copy()
     positions[~valid] = np.nan
     return RetargetTargets(
@@ -458,6 +470,34 @@ def _approach(
     return start[None, :] + phase**3 * c3 + phase**4 * c4 + phase**5 * c5
 
 
+def _velocity_limited_approach(
+    reference: np.ndarray,
+    trajectory: np.ndarray,
+    minimum_seconds: float,
+    dt: float,
+    velocity_limit: np.ndarray,
+) -> np.ndarray:
+    """Stretch the approach until every discrete joint velocity is feasible."""
+    if minimum_seconds <= 0.0:
+        return _approach(reference, trajectory, minimum_seconds, dt)
+    duration = float(minimum_seconds)
+    limit = np.asarray(velocity_limit, dtype=np.float64)
+    finite_limit = np.isfinite(limit) & (limit > 0.0)
+    for _attempt in range(8):
+        approach = _approach(reference, trajectory, duration, dt)
+        full = np.concatenate((approach, np.asarray(trajectory, dtype=np.float64)), axis=0)
+        if len(full) < 2 or not finite_limit.any():
+            return approach
+        speed = np.abs(np.diff(full, axis=0) / dt)
+        ratio = float(np.max(speed[:, finite_limit] / limit[finite_limit]))
+        if ratio <= 1.0 + 1e-9:
+            return approach
+        duration *= max(1.1, 1.02 * ratio)
+    raise RuntimeError(
+        "could not construct an approach within the robot velocity limits"
+    )
+
+
 def _config_json(cfg: RetargetConfig) -> str:
     payload = asdict(cfg)
     payload["adapter"]["kind"] = cfg.adapter.kind
@@ -514,6 +554,7 @@ def retarget_episode(
         collision_pairs=cfg.collision_pairs,
         collision_min_distance_m=cfg.collision_min_distance_m,
         actuated_joint_names=robot_cfg.joint_names,
+        actuated_position_limits=robot_cfg.position_limits,
         passive_joint_positions={
             assembly.drive_joint: gripper_joint_position,
         },
@@ -535,12 +576,36 @@ def retarget_episode(
         cfg.solver,
         report=report,
     )
+    sequential = None
+    if cfg.sequential_baseline:
+        if log is not None:
+            log("comparison baseline: causal frame-wise IK + Savitzky-Golay smoothing")
+        sequential = solve_sequential_baseline(
+            kinematics,
+            target_robot_p,
+            target_robot_r,
+            targets.confidence,
+            dt,
+            cfg.weights,
+            cfg.solver,
+            report=report,
+        )
     achieved_calib = robot_to_calibration(
         result.achieved_position, cfg.base_position, cfg.base_rpy_deg
     )
     achieved_calib_r = robot_rotation_to_calibration(
         result.achieved_rotation, cfg.base_rpy_deg
     )
+    if sequential is not None:
+        sequential_achieved_calib = robot_to_calibration(
+            sequential.achieved_position, cfg.base_position, cfg.base_rpy_deg
+        )
+        sequential_achieved_calib_r = robot_rotation_to_calibration(
+            sequential.achieved_rotation, cfg.base_rpy_deg
+        )
+    else:
+        sequential_achieved_calib = np.empty((0, 3), dtype=np.float64)
+        sequential_achieved_calib_r = np.empty((0, 3, 3), dtype=np.float64)
     link_positions = []
     joint_placements = []
     for frame, q in enumerate(result.q):
@@ -564,10 +629,40 @@ def retarget_episode(
     )
     velocity = np.gradient(result.q, dt, axis=0) if len(result.q) > 1 else np.zeros_like(result.q)
     acceleration = np.gradient(velocity, dt, axis=0) if len(result.q) > 2 else np.zeros_like(result.q)
-    q_approach = _approach(
-        kinematics.q_reference, result.q, cfg.approach_sec, dt
+    home_q = np.asarray(robot_cfg.home_q, dtype=np.float64)
+    if home_q.shape != (kinematics.nq,):
+        raise RuntimeError(
+            f"robot home configuration has shape {home_q.shape}, "
+            f"expected {(kinematics.nq,)}"
+        )
+    q_approach = _velocity_limited_approach(
+        home_q,
+        result.q,
+        cfg.approach_sec,
+        dt,
+        kinematics.velocity_limit,
     )
     full_q = np.concatenate((q_approach, result.q), axis=0)
+    passive_frames = np.concatenate((
+        np.zeros(len(q_approach), dtype=np.int64),
+        np.arange(len(result.q), dtype=np.int64),
+    ))
+    full_margins = trajectory_constraint_margins(
+        kinematics,
+        full_q,
+        dt,
+        frame_indices=passive_frames,
+    )
+    violated = {
+        name: margin
+        for name, margin in full_margins.items()
+        if margin < -1e-7
+    }
+    if violated:
+        detail = ", ".join(
+            f"{name}={margin:.6g}" for name, margin in violated.items()
+        )
+        raise RuntimeError(f"approach + retarget trajectory is infeasible: {detail}")
     full_velocity = (
         np.gradient(full_q, dt, axis=0) if len(full_q) > 1 else np.zeros_like(full_q)
     )
@@ -586,18 +681,72 @@ def retarget_episode(
         "iterations": result.iterations,
         "converged": result.converged,
         "objective": result.objective,
+        "objective_terms": result.objective_terms,
+        "objective_history": list(result.objective_history),
         "min_collision_margin": (
-            result.min_collision_margin if np.isfinite(result.min_collision_margin) else None
+            full_margins["collision"]
+            if np.isfinite(full_margins["collision"]) else None
         ),
         "min_floor_margin_mm": (
-            result.min_floor_margin * 1000.0
-            if np.isfinite(result.min_floor_margin) else None
+            full_margins["floor"] * 1000.0
+            if np.isfinite(full_margins["floor"]) else None
+        ),
+        "min_joint_limit_margin_rad": (
+            full_margins["joint"]
+            if np.isfinite(full_margins["joint"]) else None
+        ),
+        "min_velocity_limit_margin_rad_s": (
+            full_margins["velocity"]
+            if np.isfinite(full_margins["velocity"]) else None
         ),
         "target_position_anchor": targets.position_anchor,
         "adapter_length_mm": cfg.adapter.length_m * 1000.0,
+        "approach_duration_sec": len(q_approach) * dt,
     }
+    if sequential is not None:
+        sequential_velocity = (
+            np.diff(sequential.q, axis=0) / dt
+            if len(sequential.q) > 1 else np.zeros_like(sequential.q)
+        )
+        sequential_acceleration = (
+            np.diff(sequential_velocity, axis=0) / dt
+            if len(sequential_velocity) > 1 else np.zeros_like(sequential_velocity)
+        )
+        sequential_window = min(7, len(sequential.q))
+        if sequential_window % 2 == 0:
+            sequential_window -= 1
+        sequential_metrics = {
+            "method": "causal_frame_ik_then_savgol",
+            "savgol_window": sequential_window,
+            "savgol_polyorder": 2,
+            "position_rmse_mm": float(
+                np.sqrt(np.mean(sequential.position_error_m ** 2)) * 1000.0
+            ),
+            "position_p95_mm": float(
+                np.percentile(sequential.position_error_m, 95) * 1000.0
+            ),
+            "orientation_rmse_deg": float(
+                np.rad2deg(np.sqrt(np.mean(sequential.orientation_error_rad ** 2)))
+            ),
+            "max_joint_velocity_rad_s": float(np.max(np.abs(sequential_velocity))),
+            "max_joint_acceleration_rad_s2": float(
+                np.max(np.abs(sequential_acceleration))
+            ),
+            "total_frame_iterations": sequential.total_iterations,
+            "solved_frames": sequential.solved_frames,
+            "held_frames": sequential.held_frames,
+            "objective": sequential.objective_terms["total"],
+            "objective_terms": sequential.objective_terms,
+            "constraint_margins": {
+                key: (float(value) if np.isfinite(value) else None)
+                for key, value in sequential.constraint_margins.items()
+            },
+        }
+    else:
+        sequential_metrics = None
+    metrics["sequential_baseline"] = sequential_metrics
     plan = {
-        "schema_version": 7,
+        "schema_version": 8,
         "coordinate_frame": CALIBRATION_FRAME,
         "timestamps": targets.timestamps,
         "fps": targets.fps,
@@ -643,6 +792,27 @@ def retarget_episode(
         "achieved_rotation_calibration": achieved_calib_r.astype(np.float32),
         "position_error_m": result.position_error_m.astype(np.float32),
         "orientation_error_rad": result.orientation_error_rad.astype(np.float32),
+        "sequential_baseline_q": (
+            sequential.q.astype(np.float32)
+            if sequential is not None else np.empty((0, kinematics.nq), np.float32)
+        ),
+        "sequential_baseline_achieved_position_calibration": (
+            sequential_achieved_calib.astype(np.float32)
+        ),
+        "sequential_baseline_achieved_rotation_calibration": (
+            sequential_achieved_calib_r.astype(np.float32)
+        ),
+        "sequential_baseline_position_error_m": (
+            sequential.position_error_m.astype(np.float32)
+            if sequential is not None else np.empty(0, np.float32)
+        ),
+        "sequential_baseline_orientation_error_rad": (
+            sequential.orientation_error_rad.astype(np.float32)
+            if sequential is not None else np.empty(0, np.float32)
+        ),
+        "sequential_baseline_metrics_json": json.dumps(
+            sequential_metrics or {}, sort_keys=True
+        ),
         "link_positions_calibration": link_positions.astype(np.float32),
         "robot_joint_placements_calibration": joint_placements.astype(np.float32),
         "robot_visuals_json": json.dumps(robot_visuals),
@@ -652,7 +822,7 @@ def retarget_episode(
         "source_pose": targets.pose_source,
     }
     assert set(plan) == set(PLAN_KEYS)
-    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v7")
+    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v8")
     mark_stage(
         ep,
         "retarget",

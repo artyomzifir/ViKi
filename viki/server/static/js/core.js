@@ -138,6 +138,7 @@ export async function initializeFrontendConfig(config) {
       collisionPairs: config.RETARGET_COLLISION_PAIRS ?? 8,
       collisionMinDistanceM: config.RETARGET_COLLISION_MIN_DISTANCE_M ?? 0.02,
       approachSec: config.RETARGET_APPROACH_SEC ?? 2,
+      sequentialBaseline: config.RETARGET_SEQUENTIAL_BASELINE ?? false,
       poseSource: config.PERCEPTION_HAND_POSE_SOURCE ?? 'landmarks',
     },
   };

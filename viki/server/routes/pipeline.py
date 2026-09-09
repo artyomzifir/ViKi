@@ -644,6 +644,34 @@ async def retarget_scene(ep_id: str):
                 "orientation_error_rad": np.asarray(
                     plan["orientation_error_rad"], dtype=np.float32
                 ).tolist(),
+                "sequential_baseline_trajectory": (
+                    np.asarray(
+                        plan["sequential_baseline_achieved_position_calibration"],
+                        dtype=np.float32,
+                    ).tolist()
+                    if "sequential_baseline_achieved_position_calibration" in plan
+                    else []
+                ),
+                "sequential_baseline_rotation": (
+                    np.asarray(
+                        plan["sequential_baseline_achieved_rotation_calibration"],
+                        dtype=np.float32,
+                    ).tolist()
+                    if "sequential_baseline_achieved_rotation_calibration" in plan
+                    else []
+                ),
+                "sequential_baseline_position_error_m": (
+                    np.asarray(
+                        plan["sequential_baseline_position_error_m"], dtype=np.float32
+                    ).tolist()
+                    if "sequential_baseline_position_error_m" in plan else []
+                ),
+                "sequential_baseline_orientation_error_rad": (
+                    np.asarray(
+                        plan["sequential_baseline_orientation_error_rad"], dtype=np.float32
+                    ).tolist()
+                    if "sequential_baseline_orientation_error_rad" in plan else []
+                ),
                 "gripper_closed": np.asarray(plan["gripper_closed"], dtype=bool).tolist(),
                 "gripper_opening": (
                     np.asarray(plan["gripper_opening"], dtype=np.float32).tolist()

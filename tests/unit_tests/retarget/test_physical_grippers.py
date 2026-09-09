@@ -71,7 +71,12 @@ def test_robotiq_is_attached_at_tool0_and_moves_as_passive_geometry():
     from viki.retarget.adapters import CylinderGripperAdapter
     from viki.retarget.run import _load_robot_description
     from viki.retarget.robots import normalize_robot
-    from viki.retarget.solver import PinocchioKinematics
+    from viki.retarget.solver import (
+        BatchWeights,
+        PinocchioKinematics,
+        _linearize_pose,
+        _pose_error,
+    )
 
     robot_cfg = normalize_robot("ur3")
     gripper_cfg = normalize_gripper("robotiq_2f85")
@@ -93,6 +98,7 @@ def test_robotiq_is_attached_at_tool0_and_moves_as_passive_geometry():
         collision_pairs=0,
         collision_min_distance_m=0.0,
         actuated_joint_names=robot_cfg.joint_names,
+        actuated_position_limits=robot_cfg.position_limits,
         passive_joint_positions={assembly.drive_joint: joint_position},
         gripper_prefix=assembly.gripper_prefix,
         position_points=assembly.position_points,
@@ -104,6 +110,10 @@ def test_robotiq_is_attached_at_tool0_and_moves_as_passive_geometry():
     assert kinematics.nq == 6
     assert kinematics.model.nv == 7
     assert kinematics.joint_names == list(robot_cfg.joint_names)
+    assert np.isfinite(kinematics.q_min).all()
+    assert np.isfinite(kinematics.q_max).all()
+    assert kinematics.q_min[-1] == pytest.approx(-2.0 * np.pi)
+    assert kinematics.q_max[-1] == pytest.approx(2.0 * np.pi)
     assert assembly.tcp_frame.endswith("grasp_center")
     assert assembly.orientation_frame.endswith("robotiq_arg2f_tcp")
 
@@ -160,6 +170,41 @@ def test_robotiq_is_attached_at_tool0_and_moves_as_passive_geometry():
             kinematics.floor_margins(floor_q + step) - margin
         ) / eps
         np.testing.assert_allclose(jacobian[:, joint], finite_difference, atol=2e-6)
+
+    # The main tracking path uses one analytical frame/point Jacobian rather
+    # than nq additional FK evaluations.  Check both the jaw-panel midpoint
+    # position and the orientation log residual against finite differences.
+    target_position = np.array([0.2, -0.1, 0.3])
+    target_rotation = np.array([
+        [0.93629336, -0.31299183, -0.15934508],
+        [0.28962948, 0.94470249, -0.15379200],
+        [0.19866933, 0.09784340, 0.97517033],
+    ])
+    weights = BatchWeights(position=1.3, orientation=0.4)
+    pose_error, pose_jacobian, _, _ = _linearize_pose(
+        kinematics,
+        floor_q,
+        target_position,
+        target_rotation,
+        weights,
+    )
+    for joint in range(kinematics.nq):
+        step = np.zeros(kinematics.nq)
+        step[joint] = eps
+        next_position, next_rotation = kinematics.pose(floor_q + step)
+        finite_difference = (
+            _pose_error(
+                next_position,
+                next_rotation,
+                target_position,
+                target_rotation,
+                weights,
+            )
+            - pose_error
+        ) / eps
+        np.testing.assert_allclose(
+            pose_jacobian[:, joint], finite_difference, atol=2e-6
+        )
 
     # A tilted robot base makes calibration z=0 an oblique plane in robot
     # coordinates. Its analytical point Jacobian must remain exact.
