@@ -972,9 +972,14 @@ def prepare_episode(
         installed = install_articulated_overlay(
             ep, cfg=articulated_cfg, variant="optimized",
         )
-        # Refresh the recorded comparison after additive overlay installation:
-        # core still matches, while byte equality is now correctly false.
-        baseline = protect_baseline(ep, profile_spec, ep.cln_npz)
+        # The overlay is additive, so the protected baseline may receive it:
+        # every core array stays bit-identical and only hand_fit_* is added.
+        # Without this the baseline would permanently lack an output its own
+        # profile declares, and anything measured off it would silently use a
+        # different pose source than production.
+        baseline = protect_baseline(
+            ep, profile_spec, ep.cln_npz, additive_refresh=True,
+        )
         articulated = {
             "recipe": articulated_recipe,
             "variant": "optimized",

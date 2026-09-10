@@ -1461,6 +1461,67 @@ editable only on the custom path — a named profile owns its own gate and shows
 it read-only. Supplying it forces `joints3d.npz` to be rebuilt, since otherwise
 a changed gate would silently do nothing against a fresh-looking artifact.
 
+## Infrastructure — three ways an experiment could read the wrong thing, closed
+
+Not experiments. Defects in the machinery the experiments run on, all three
+found because they had already produced wrong measurements in this notebook.
+
+### 1. Protected baselines lacked 21 of their profile's declared outputs
+
+`protect_baseline` writes only `if not target.exists()`. `prepare_episode`
+called it *before* `install_articulated_overlay` and again after, with the
+comment "Refresh the recorded comparison after additive overlay installation" —
+but the second call could never write. Every protected baseline was frozen in
+its pre-overlay state.
+
+The scale was larger than the hand fit alone. A freshly protected V4 baseline
+now holds 45 arrays against V2's 24; the 21 missing ones are the whole
+articulated stage: 9 `hand_fit_*` and 12 `geometry_*`, **including
+`geometry_support_mask`** — the per-frame flag for "this pose was solved rather
+than filled", which is the split every honest comparison in E14 depends on and
+which had to be fetched from the active artifact instead.
+
+Consequence, and it is not hypothetical: retarget is configured with
+`pose_source: "hand_fit"`, so production follows the articulated fit while every
+experiment run off a baseline silently followed landmark poses. E4 through E11
+compared the intermediate.
+
+**Fix.** `protect_baseline(..., additive_refresh=True)` is accepted only when
+every array in `_CORE_ARRAYS` is bit-identical *and* the new artifact is a
+strict superset. Immutability is preserved where it means something — the
+measurement cannot change — while an output the profile declares can land. The
+manifest keeps `additive_refresh` with the superseded hash and the added keys,
+so the substitution is auditable rather than silent.
+
+### 2. The pose-source fallback was silent
+
+`cln_pose_keys` falls back to landmark poses when `hand_fit` is requested but
+absent. The fallback is deliberate and correct — it keeps old episodes
+readable — but it applies to the single field that defines the IK target, and a
+silent substitution there is indistinguishable from success. `load_targets` now
+warns explicitly that it is retargeting landmark poses and that any comparison
+against a production run is comparing a different quantity.
+
+### 3. Manifests recorded no code revision
+
+Rule 3 asks for it. Without it two artifacts with an identical profile and
+identical inputs can differ because the code changed between them, and on
+2026-09-09 the V2 artifact did exactly that, twice, while `protect_baseline`
+stayed quiet — it guards the profile definition, not the code.
+
+Manifests now carry `code_sha256`, a hash of the `viki` source tree. Not a
+commit id: the repository is not mounted into the container, and a commit would
+not describe a working tree with uncommitted edits, which is the state most
+experiments actually run in.
+
+### Existing baselines
+
+They keep their recorded content until their profile is prepared again, at which
+point the refresh adds the missing outputs with the core arrays verified
+unchanged and the supersede recorded. Nothing in this notebook is invalidated:
+E13 and E14 were measured on snapshots of the active artifact precisely because
+the baselines were incomplete.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change

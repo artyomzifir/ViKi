@@ -273,8 +273,26 @@ def test_stable_profile_routes_clean_to_fused_and_articulated_to_hand_fit(
         "hand_fit": "hand_fit_capsules",
     }
     assert stage["baseline"]["matches_active_core"] is True
-    assert stage["baseline"]["matches_active_bytes"] is False
+    # The articulated overlay is an output this profile declares, and it is
+    # produced after the landmark trajectory has been protected. The baseline
+    # takes it by additive refresh, so it now matches the active artifact
+    # exactly - previously it was frozen without it, and anything measured off
+    # the baseline silently used landmark poses while production used the fit.
+    assert stage["baseline"]["matches_active_bytes"] is True
     assert stage["articulated"]["quality_gate"]["accepted"] is True
+
+    baseline_path = (
+        ep.intermediates_dir / "baselines" / STABLE_FUSED_HAND_V1 / "cln.npz"
+    )
+    with np.load(baseline_path, allow_pickle=False) as protected:
+        assert "hand_fit_positions" in protected.files
+        assert "hand_fit_rotations" in protected.files
+    refreshed = json.loads(
+        (baseline_path.parent / "manifest.json").read_text()
+    )["additive_refresh"]
+    # The refresh is auditable: what it added, and what it superseded.
+    assert "hand_fit_positions" in refreshed["added_keys"]
+    assert refreshed["previous_artifact_sha256"]
 
     # Adding the composed profile must not mutate the historical clean-profile
     # manifest used by already protected baselines.

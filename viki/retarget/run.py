@@ -337,6 +337,18 @@ def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
             raise KeyError(f"{path} is missing cln keys: {', '.join(missing)}")
         require_rig_frame(data["coordinate_frame"])
         p_key, r_key = cln_pose_keys(data.files, cfg.pose_source)
+        # The fallback in cln_pose_keys is deliberate - it keeps old episodes
+        # readable - but it is the single field that defines the IK target, and
+        # a silent substitution here is indistinguishable from success. Say so.
+        if str(cfg.pose_source).strip().lower() == "hand_fit" and not p_key.startswith(
+            "hand_fit"
+        ):
+            logger.warning(
+                "%s requests pose_source=hand_fit but carries no hand_fit_* arrays; "
+                "retargeting LANDMARK poses instead. Anything compared against a "
+                "production run is comparing a different quantity.",
+                path,
+            )
         timestamps = np.asarray(data["timestamps"]).copy()
         positions = np.asarray(data[p_key], dtype=np.float64)
         rotations = np.asarray(data[r_key], dtype=np.float64)
