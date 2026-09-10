@@ -165,7 +165,63 @@ both representations are exported but not that the object model and its frame
 convention must be too, without which the object-relative form is unusable
 downstream.
 
-## 5. Where this points
+## 6. The grasp anchor is not a constant, and it can be measured
+
+Follow-up on a second scene, which corrected a conclusion from §3.
+
+The rigidity figure reported above — σ = 8 mm — used the **centroid of the
+visible object points** against `hand_fit_positions`, the wrist. Both halves of
+that are wrong, and it only looked good because move-shipok happens to carry the
+object almost without rotating it.
+
+On pick_up_u the same measure gives σ = (48, 32, 40) mm and a maximum deviation
+of 120 mm. Decomposing it: the *distance* |object − wrist| itself varies with
+σ = 34 mm, and the direction in the hand frame scatters by 29.7° on average
+and 68° at worst. Both components fail, so it is not an orientation-only
+artifact.
+
+The timeline says why. |object − wrist| runs 162 → 72 → 190 mm across a single
+carry, while the gripper opening moves 0.60 → 0.30 → 0.61: **the fingers are
+flexing.** The wrist cannot be the grasp anchor, because the object is held by
+the fingers and the wrist-to-finger distance is a free variable.
+
+Testing every hand landmark as the anchor, scored by the standard deviation of
+its distance to the object over the carry:
+
+| scene | grasp | best anchor | σ | runner-up |
+|---|---|---|---:|---|
+| move-shipok | pinch on a small bracket | **thumb–index midpoint** | **1.6 mm** | index MCP, 2.3 mm |
+| pick_up_u | whole hand over a block | **middle-finger MCP (palm)** | **16.9 mm** | ring MCP, 17.9 mm |
+
+The pinch anchor scores 82 ± 1.6 mm on move-shipok — the grasp there is rigid to
+**under two millimetres**, five times better than the wrist-based figure first
+reported. On pick_up_u the pinch anchor does not even reach the top five; every
+palm landmark beats every fingertip, which is exactly what a whole-hand grasp
+should do.
+
+Two consequences.
+
+**The anchor should be derived per demonstration, not configured.** Retarget
+currently picks `target_position_anchor` from config, between `pinch_center` and
+`wrist`. Neither is right for pick_up_u. The measurement above needs no ground
+truth: choose the hand landmark whose distance to the object is most constant
+while the object is being carried.
+
+**The same minimisation yields a free quality metric.** Its residual *is* the
+rigidity of the grasp — 1.6 mm where the object is pinched and held steady,
+16.9 mm where it sits loosely in a palm. A demonstration whose best anchor still
+scores tens of millimetres is one where the object moved in the hand, and that
+is worth knowing before the trajectory is retargeted as though it had not.
+
+Checked that the pick_up_u residual is not a segmentation artifact: on the
+sparsest 30 % of frames the deviation is 9.5 mm against 9.4 mm elsewhere.
+
+Colour detection reproduced on this scene without changes — 100 % of sampled
+frames, 2 000–3 400 points — on a different object, operator and calibration.
+The table sits at −19 mm there too, matching the other board-on-table
+calibration to the millimetre.
+
+## 7. Where this points
 
 Estimate the object pose **in the table plane** — `(x, y, yaw)` — rather than in
 SE(3). Segment with colour plus depth. Take yaw from the in-plane silhouette
