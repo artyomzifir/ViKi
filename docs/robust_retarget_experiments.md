@@ -1177,6 +1177,99 @@ hand_fit poses. Either baselines must carry the overlay, or profile comparisons
 must be stated as landmark-pose-only and never generalised to production.
 
 
+## E13 — the first profile comparison measured on what production actually uses
+
+Every comparison before this one ran off `intermediates/baselines/<profile>/cln.npz`,
+which never receives the `hand_fit_*` overlay (see the E11 retraction: `protect_baseline`
+is write-once and runs before `install_articulated_overlay`). Retarget is configured with
+`pose_source: "hand_fit"`, so production follows the articulated fit, not the landmarks.
+
+These artifacts are the **active** `cln.npz` snapshotted after each `prepare_episode`,
+so they carry the overlay. `prepare_episode` is sufficient and cheap (~35 s): triangulation
+runs there, and all five profiles share detector settings, so MediaPipe need not re-run.
+
+### Metric definitions (`viki/perception/articulated.py`)
+
+| metric | definition | gate |
+|---|---|---|
+| `anchor_joint_fraction` | share of (frame, joint) slots with `confidence > 0`, i.e. a genuinely triangulated landmark for the model to anchor to | — |
+| `supported_frame_fraction` | share of frames with **≥ 8 reliable joints and ≥ 4 reliable palm joints**. Unsupported frames are not solved — their pose is filled from neighbouring supported frames | — |
+| `anchor_residual_median/p95_mm` | ‖fitted − observed‖ over anchored slots only: how far the rigid model lands from the measurement it was fitted to | median ≤ 20 mm, p95 ≤ 100 mm |
+| `bone_length_cv_max` | largest coefficient of variation of any fitted bone length over the episode | < 1e-3 |
+| `wrist_preservation_max_mm` | largest wrist displacement between source and fit | < 0.01 mm |
+| `palm_outlier_frames` | frames where a palm edge deviates >20% from its reference length | must be empty |
+| `source/fitted_joint_jerk_rms_mm` | RMS third difference before and after the fit | fitted ≤ max(1.5×source, source + 0.75) |
+
+`anchor_residual` is internal consistency — model against its own input — not ground truth.
+Its value is that the model is **rigid**: bone lengths are held to a CV of ~1e-5 and the
+wrist to 0.00 mm. Observations that are geometrically impossible for a human hand cannot be
+absorbed by it and must surface as residual.
+
+### Results
+
+| scene | profile | anchor % | **supp %** | resMed | **resP95** | boneCV | srcJerk | fitJerk | gate |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| move-shipok | v2 | 72.3 | 50.2 | 9.87 | 37.39 | 8.4e-06 | 1.17 | 1.16 | ok |
+| | v2.1 | 72.3 | 50.2 | 9.87 | 37.39 | 8.4e-06 | 1.17 | 1.16 | ok |
+| | v3 | 72.3 | 50.2 | 9.85 | 37.23 | 8.4e-06 | 1.17 | 1.16 | ok |
+| | 8px | 91.1 | **89.6** | 11.84 | 27.15 | 1.1e-05 | 1.51 | 1.29 | ok |
+| | 16px | 95.7 | **97.0** | 11.74 | 26.30 | 7.1e-06 | 1.71 | 1.32 | ok |
+| cup_grab | v2 / v2.1 / v3 | 50.3 | 30.3 | 8.53 | 33.76 | 1.1e-05 | 1.99 | 1.48 | ok |
+| | 8px | 68.5 | **60.2** | 8.16 | 20.44 | 1.1e-05 | 2.62 | 1.97 | ok |
+| | 16px | 81.7 | **80.2** | 10.32 | 24.73 | 1.1e-05 | 3.48 | 2.15 | ok |
+| block-push | v2 / v2.1 / v3 | 75.7 | 43.6 | 7.10 | 33.72 | 1.0e-05 | 2.02 | 1.56 | ok |
+| | 8px | 93.5 | **91.6** | 7.77 | 17.73 | 9.9e-06 | 2.43 | 1.98 | ok |
+| | 16px | 99.4 | **100.0** | 7.96 | 17.47 | 1.1e-05 | 2.59 | 2.17 | ok |
+| pyramid | v2 / v2.1 / v3 | 74.3 | 49.4 | 8.25 | 19.37 | 1.3e-05 | 2.22 | 1.57 | ok |
+| | 8px | 90.0 | **88.4** | 7.92 | 16.51 | 1.2e-05 | 2.71 | 2.08 | ok |
+| | 16px | 95.4 | **95.0** | 8.14 | 16.70 | 1.0e-05 | 2.94 | 2.15 | ok |
+| pick_up_u | v2 / v2.1 / v3 | 74.1 | 36.0 | 8.47 | 25.79 | 1.0e-05 | 2.02 | 1.39 | ok |
+| | 8px | 89.1 | **80.8** | 7.53 | 18.92 | 1.1e-05 | 2.56 | 1.88 | ok |
+| | 16px | 92.7 | **93.5** | 8.62 | 19.55 | 1.1e-05 | 2.95 | 2.10 | ok |
+
+`wrist_preservation_max_mm = 0.00` and `palm_outlier_frames = []` on all 25 runs; every
+quality gate accepted.
+
+### Findings
+
+**1. v2, v2.1 and v3 are the same artifact.** `hand_fit_positions` are byte-identical
+between v2 and v2.1, and differ from v3 by 0.0000 mm (rotations by at most 7.9° on one
+scene, ≤1.6° elsewhere). The three differ only in `omega`, and `omega` is not an input to
+the fit — it reaches only the IK data term. **Everything E8 and E9 changed is invisible in
+the artifact that goes downstream.** v2.1 as built is indistinguishable from the default at
+the output of extract.
+
+**2. The reprojection gate roughly doubles the frames that are genuinely solved.**
+`supported_frame_fraction` rises **+30 to +58 points**: 50→97, 30→80, 44→100, 49→95, 36→94.
+On the default profile, **half to two thirds of every episode reaches the robot as a pose
+filled from neighbouring frames rather than solved from measurements.** That is the single
+most consequential number in this notebook, and no earlier experiment reported it because
+none of them looked at this artifact.
+
+**3. The added observations are anatomically admissible, and the rigid model says so.**
+`anchor_residual_p95` **falls** on every scene: 37.4→26.3, 33.8→20.4, 33.7→17.5, 25.8→18.9,
+19.4→16.5. Bone CV stays at ~1e-5 and the palm-outlier list stays empty. If the widened gate
+were admitting geometric garbage, a model that holds bone lengths to five decimal places
+could not absorb it — the tail residual would rise. It falls. This is the strongest evidence
+produced so far that the extra coverage is real, and it is not my judgement but the model's.
+
+**4. 8 px is better on agreement, 16 px on coverage.** Median residual improves under 8 px on
+three scenes (−0.37, −0.34, −0.94 mm) and degrades under 16 px on two of those (+1.79, +0.14).
+16 px wins `supported_frame_fraction` everywhere. cup_grab prefers 8 px on both residual
+measures, consistent with E6 singling it out for the worst camera geometry.
+
+**5. Two E7 gates were measuring quantities production discards.** Gate 4 rejected profiles
+on raw-landmark bone dispersion of 6–12%; the fit drives bone CV to ~1e-5 regardless. Gate 3
+measured raw-landmark jitter; `fitJerk` shows the fit absorbing most of the increase
+(source 1.17→1.71 while fitted only 1.16→1.32). E7's rejection of both candidates rested
+substantially on metrics that never reach the robot.
+
+### What is still not established
+
+Residual is model-vs-observation, not accuracy. Nothing here measures whether the fitted hand
+is where the real hand was. And the retarget grid must be redone on these artifacts, with the
+configured UR10, before any promotion — the E11 grid used baselines and therefore landmark
+poses.
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
