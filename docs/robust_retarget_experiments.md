@@ -1299,6 +1299,95 @@ became linear (`0d51a50`) — so the landmarks, and hence `hand_fit`, differ. An
 across that boundary confounds tool geometry with perception, which is why the reference is
 being re-established rather than repaired.
 
+## E14 — the profile comparison, correctly configured at last
+
+First measurement with every known confound removed: inputs are the snapshotted
+**active** `cln.npz`, so `pose_source: "hand_fit"` resolves to the articulated
+fit that production follows (E13); the robot is the configured `ur10` rather
+than a hardcoded `ur3` (E11 retraction); base −0.7, adapter 11 mm.
+
+`supp%` is `geometry_support_mask`: frames whose hand pose was **solved** from
+≥8 reliable joints including ≥4 palm joints, rather than filled from neighbours.
+`err|supported` is the tracking error restricted to those frames — the only
+column that compares like with like, since a recipe that fabricates more has a
+smoother target and flatters the headline RMSE.
+
+| scene | profile | supp% | posRMSE | p95 | ori | **err\|supported** | err\|filled |
+|---|---|---:|---:|---:|---:|---:|---:|
+| cup_grab | v2 | 30.3 | 64.1 | 138.5 | 37.5° | **46.0** | 70.6 |
+| | 8 px | 60.2 | 32.5 | 67.7 | 32.4° | **23.5** | 42.7 |
+| | 16 px | 80.2 | 23.8 | 46.6 | 26.8° | **21.9** | 30.3 |
+| move-shipok | v2 | 50.2 | 47.4 | 110.7 | 25.3° | **50.0** | 44.6 |
+| | 8 px | 89.6 | 33.9 | 82.1 | 22.8° | **33.3** | 38.3 |
+| | 16 px | 97.0 | 19.3 | 57.8 | 22.2° | **16.0** | 63.5 |
+| block-push | v2 | 43.6 | 63.2 | 113.1 | 51.8° | **73.8** | 53.6 |
+| | 8 px | 91.6 | 122.8 | 171.0 | 48.1° | **119.2** | 156.9 |
+| | 16 px | 100.0 | 99.6 | 139.2 | 45.3° | **99.6** | — |
+
+### What holds
+
+**On the two scenes where the table is not an active constraint, the widened
+gate halves to thirds the error on evidence-backed frames.** cup_grab
+46.0 → 23.5 → 21.9 mm; move-shipok 50.0 → 33.3 → 16.0 mm. Monotone in the gate
+width, on the frames that carry real measurements.
+
+**Orientation improves monotonically on all three scenes**, block-push included:
+37.5 → 32.4 → 26.8, 25.3 → 22.8 → 22.2, 51.8 → 48.1 → 45.3. Orientation is not
+blocked by the floor the way height is, so this is the one column free of the
+block-push confound, and it agrees with the coverage ordering everywhere.
+
+**The two widened profiles converge on each other and both depart from the
+default.** Achieved-trajectory divergence: 16 px vs 8 px is 2.0 mm (move-shipok)
+and 6.1 mm (cup_grab) median, while each sits 14–31 mm from v2. Two different
+thresholds, two different triangulations, two independent articulated fits, one
+trajectory — and the default somewhere else. Agreement between independent
+methods is evidence that no single-recipe metric can supply.
+
+**The default tracks its fabricated frames better than its measured ones.** On
+move-shipok v2 scores 50.0 mm on supported frames against 44.6 on filled: the
+invented frames are smoother and easier to follow. At 16 px the relation
+inverts hard, 16.0 against 63.5, which is the healthy shape — accurate where
+there is evidence, poor where there is none. That inversion is also why the
+headline RMSE must never be read alone.
+
+### What reverses, and why it is not perception
+
+**block-push gets worse with better perception**, 73.8 → 119.2 → 99.6 mm on
+supported frames. Diagnosed rather than accepted: 68–73% of the squared error
+there is vertical, and the robot sits systematically *above* the target — median
++48 mm under v2, +103.6 mm under 8 px.
+
+The floor constraint applies to the lowest point of every moving collision
+geometry, not to the tool point. A Robotiq 2F-85 interposes its own body between
+the flange and the grasp centre, so keeping the assembly above the plane holds
+the tool point high. Targets sit a median 36 mm above the table; the achieved
+tool point is held at 87–145 mm. The floor margin is ≈0 throughout: the arm
+rides the constraint for the whole episode.
+
+The human hand *is* the gripper; the robot's is not. **block-push is not
+executable by this end-effector at this target definition**, and honest
+perception makes that more binding rather than less, because interpolation had
+been smoothing the hand's lowest excursions upward. This is a task-definition
+problem, not a perception one, and it is now recorded as an assumption in the
+thesis.
+
+### Floor tolerance
+
+The re-run also validates the tolerance change. Penetrations are 36 µm (8 px)
+and 31 µm (16 px) against the new 0.5 mm bound, and v2 clears by
+5.1 × 10⁻⁷ mm — half a micron. Under the old 10⁻⁷ m bound, whether an 897-frame
+episode survived was decided by the last bits of the solve. The fix did not mask
+a real penetration: at 14 mm calibration accuracy, 31 µm is nothing.
+
+### Status
+
+No promotion. Position error is still measured against each profile's own
+target, and for 8 px and 16 px that target differs from v2's, so part of the
+gain could be an easier target rather than a better one — the convergence
+argument and the `err|supported` split narrow that, but do not close it. What is
+established is the ordering, its consistency across scenes and metrics, and that
+the one reversal has a diagnosed non-perception cause.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
