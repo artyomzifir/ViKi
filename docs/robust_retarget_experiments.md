@@ -1000,6 +1000,116 @@ The retarget comparison runs on **four scenes**, not five. block-push is exclude
 for a reason that has nothing to do with the perception profiles under test, and
 excluding it silently would have hidden the most interesting failure in the set.
 
+## E11 — the extract×retarget grid: perception is not the limiting factor
+
+Twenty-two of twenty-five (scene × profile) pairs retargeted; block-push fails on
+v2, 8 px and 16 px per E10. Every plan converged.
+
+### The level, before any comparison
+
+| | range across all 22 plans |
+|---|---|
+| position RMSE | **72 – 141 mm** |
+| orientation RMSE | **64 – 93°** |
+| min joint-limit margin | 2.68 – 3.07 rad |
+
+A retarget that misses by 100 mm and 80° is not tracking the hand. Whatever the
+perception recipe contributes is a correction to a number that is already an
+order of magnitude too large, and no profile choice moves it into a usable range.
+The joint margins are far from any limit, so the arm is not joint-blocked.
+
+### Cause A — a large part of every trajectory is out of reach
+
+The base is pinned at x = −0.7 m in the calibration frame while the hand works
+around the board origin, so target TCP distance from the base is **525–911 mm**,
+median 694–760. Across all 22 plans the achieved TCP never exceeds **739 mm**,
+which pins the assembly's actual reach without appealing to a datasheet. So
+12–61% of the frames of every episode ask for a pose the arm cannot occupy.
+
+Per frame, split at that 739 mm radius:
+
+| scene / profile | RMSE, target in reach | RMSE, target beyond | ori in | ori beyond |
+|---|---:|---:|---:|---:|
+| move-shipok / v2 | 71.4 mm | 94.9 mm | 59.7° | 71.9° |
+| move-shipok / 16px | 38.1 mm | 95.6 mm | 52.9° | 72.0° |
+| cup_grab / v2 | 72.6 mm | 119.5 mm | 80.7° | 92.1° |
+| cup_grab / 16px | 54.1 mm | 98.4 mm | 61.6° | 75.3° |
+| pyramid / v2 | 81.1 mm | 171.9 mm | 85.8° | 109.3° |
+| pyramid / 8px | 53.9 mm | 136.7 mm | 73.7° | 108.2° |
+| pick_up_u / v2 | 45.3 mm | 112.2 mm | 78.8° | 87.9° |
+| pick_up_u / 16px | 39.5 mm | 109.2 mm | 63.1° | 80.2° |
+
+Error on unreachable frames is **2–3× that on reachable ones** in every one of
+the 22 plans, with no exception.
+
+Either the base offset is wrong or the demonstrations are recorded too far from
+where the robot will stand. Both are rig decisions, not code, and nothing
+downstream can compensate: the arm is 740 mm long and the work is at 700–900 mm.
+
+### Cause B — orientation is effectively unweighted
+
+`BatchWeights` has `position=1.0`, `orientation=0.01`, and `_pose_error` scales
+by their square roots, so the exchange rate is **1 rad ≈ 0.1 m**: 57° of palm
+rotation costs the solver as much as 100 mm of position. With position errors
+already around 100 mm, trading orientation away is the cheaper option every time,
+and it does — 64–93° RMSE on every plan, even on reachable frames.
+
+E9 recorded this as "a tuning choice, not a bug". At these magnitudes that
+understates it: the retarget is not solving for palm orientation at all. For a
+two-finger grasp, orientation is not a secondary objective.
+
+### Methodological note — the aggregate correlation is a trap
+
+Across the 22 plans, the Pearson correlation between the fraction of
+out-of-reach frames and position RMSE is **−0.131**: absent, and slightly
+backwards. The per-frame split above shows a factor of 2–3 with no exceptions.
+The aggregate washes out because each plan's mix of scene difficulty, target
+geometry and weighting differs; the effect only survives when the comparison is
+made *within* a trajectory. This is the same population error as E7's gates 3–4,
+in a new place: an average over inhomogeneous frames answers no question.
+
+### What the profiles do, on the frames the robot can actually reach
+
+**v2 → v2.1 is a perfectly controlled comparison.** Verified byte-identical
+targets (`max|Δtarget| = 0.0000 mm` on all four solved scenes); only `omega`
+differs. So any difference is caused by the palm gate alone.
+
+| scene | v2 | v2.1 | v3 | 8 px | 16 px |
+|---|---:|---:|---:|---:|---:|
+| move-shipok | 71.4 | **88.9** | 88.7 | 68.8 | **38.1** |
+| cup_grab | 72.6 | **86.0** | 86.1 | 56.1 | **54.1** |
+| pyramid | 81.1 | **101.1** | 101.1 | **53.9** | 102.5 |
+| pick_up_u | 45.3 | **68.3** | 68.3 | 38.6 | **39.5** |
+
+**The E8 fix, applied on its own, makes the IK worse — on all four scenes, on
+identical targets.** It removes 45–61% of the weighted frames (E9 correction
+table), and the solver, left with less data-term support, drifts further from the
+target it is still being asked to follow. Removing a fabrication is correct; doing
+it without replacing the support it was providing is a net loss here.
+
+That is a negative result for promoting v2.1 as-is, and it is the reason the two
+factors were separated: bundled inside v3, this cost would have been invisible
+and v3's inert recalibration would have been blamed or credited for it.
+
+The widened reprojection gate goes the other way, roughly halving the reachable
+frame error on three scenes of four, because it adds honest measurements rather
+than removing dishonest weight. pyramid is the exception, and 8 px beats 16 px
+there by a factor of two — consistent with E7, where 16 px was the dose that
+degraded recruits on three of five scenes.
+
+### What this grid does and does not license
+
+It does **not** license promoting any profile. Position error is measured against
+each profile's own target, so for 8 px and 16 px, whose target geometry differs
+from v2's, part of the improvement may be an easier target rather than a better
+one. Only v2 → v2.1 is fully controlled.
+
+It does establish the order of work. Perception is not the binding constraint at
+the IK stage: reach and orientation weighting are, and both are larger than every
+perception effect measured in E4 through E9 combined. Fixing the palm gate's
+lost support (rather than reverting the gate) is worth doing, but only after a
+trajectory the arm can physically follow exists to measure it on.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
