@@ -1270,6 +1270,35 @@ Residual is model-vs-observation, not accuracy. Nothing here measures whether th
 is where the real hand was. And the retarget grid must be redone on these artifacts, with the
 configured UR10, before any promotion — the E11 grid used baselines and therefore landmark
 poses.
+## Decision — the adapter is 11 mm; the 2026-09-08 plans are not a reference
+
+The four plans on disk from 2026-09-08 record `adapter.translation_m = [0, 0, 0.05]`.
+Every default in the codebase says 11 mm: `config.py`, both configuration JSONs, the
+`/api/pipeline` route default (`adapter_z_mm: float = 11.0`) and the Retarget tab's form
+(`S.adapterTranslationMm || [0, 0, 11]`). `data/user_configuration.json` is clean and holds
+11 mm, so the 50 mm was typed into the UI by hand for that session and survived only inside
+the plans it produced.
+
+**Confirmed with the operator: the physical adapter is 11 mm.**
+
+Consequences:
+
+- The 50 mm plans placed the TCP 39 mm off along the tool axis. **cup_grab's
+  33.8 mm / 33.2° is not a valid benchmark** and must not be quoted as "it used to be
+  better"; it was measured against the wrong tool geometry. The same applies to the other
+  three historical plans, which additionally used the mirrored `+0.7` base.
+- There is therefore **no historical reference for retarget quality**. The E14 grid — ur10,
+  base −0.7, adapter 11 mm, `pose_source: hand_fit` — is the first correctly configured
+  measurement and becomes the reference itself.
+- No code or configuration change is needed: 11 mm is already what every default and the
+  running grid use.
+
+What remains unexplained is not the adapter. Between 2026-09-08 and now the perception
+generation changed twice — the handedness gate was removed (`d7466a0`) and fused filling
+became linear (`0d51a50`) — so the landmarks, and hence `hand_fit`, differ. Any comparison
+across that boundary confounds tool geometry with perception, which is why the reference is
+being re-established rather than repaired.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
