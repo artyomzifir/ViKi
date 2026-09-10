@@ -44,6 +44,9 @@ from viki.retarget.grippers import (
 )
 from viki.retarget.robots import RobotConfig, normalize_robot
 from viki.retarget.solver import (
+    COLLISION_TOLERANCE_M,
+    FLOOR_TOLERANCE_M,
+    NUMERIC_TOLERANCE,
     BatchOptions,
     BatchWeights,
     PinocchioKinematics,
@@ -653,10 +656,16 @@ def retarget_episode(
         dt,
         frame_indices=passive_frames,
     )
+    # One dict, four units: joint (rad), velocity (rad/s), floor (m),
+    # collision (m). Each gets the tolerance that belongs to its quantity.
+    margin_tolerance = {
+        "floor": FLOOR_TOLERANCE_M,
+        "collision": COLLISION_TOLERANCE_M,
+    }
     violated = {
         name: margin
         for name, margin in full_margins.items()
-        if margin < -1e-7
+        if margin < -margin_tolerance.get(name, NUMERIC_TOLERANCE)
     }
     if violated:
         detail = ", ".join(

@@ -17,6 +17,26 @@ from scipy import sparse
 from scipy.signal import savgol_filter
 from scipy.spatial.transform import Rotation
 
+# Constraint-feasibility tolerances.
+#
+# The floor is the calibration board plane, and that plane is solved to roughly
+# 14 mm on this rig; the batch solver's own convergence criterion is 1e-3 rad,
+# which is ~0.7 mm of TCP motion at a 700 mm radius. A tolerance of 1e-7 m was
+# therefore four orders of magnitude tighter than the solver's own resolution
+# and five tighter than the calibration that defines where zero is, and it
+# discarded whole 897-frame episodes over a 36 micrometre dip. 0.5 mm is still
+# far inside the calibration error and is the smallest value that is physically
+# meaningful here.
+FLOOR_TOLERANCE_M = 5e-4
+# Self-collision stays strict: it is a safety constraint and its margin is not
+# limited by the board calibration. This is a numerical epsilon, not a budget.
+COLLISION_TOLERANCE_M = 1e-7
+# Joint (rad) and velocity (rad/s) margins are not lengths; they keep a pure
+# numerical epsilon. `trajectory_constraint_margins` returns all four in one
+# dict, so a single scalar threshold would silently conflate the units.
+NUMERIC_TOLERANCE = 1e-7
+
+
 from viki.retarget.cost import (
     huber_irls_weights,
     huber_loss,
@@ -747,19 +767,20 @@ def solve_trajectory(
         for t in range(n_frames)
     ])
     min_floor = _trajectory_min_floor_margin(kinematics, q)
-    if min_floor < -1e-7:
+    if min_floor < -FLOOR_TOLERANCE_M:
         raise RuntimeError(
             "retarget could not find a floor-feasible trajectory; remaining "
-            f"penetration is {-min_floor * 1000.0:.1f} mm"
+            f"penetration is {-min_floor * 1000.0:.4g} mm "
+            f"(tolerance {FLOOR_TOLERANCE_M * 1000.0:.4g} mm)"
         )
     min_collision = (
         _trajectory_min_collision_margin(kinematics, q)
         if options.collision_enabled else np.inf
     )
-    if min_collision < -1e-7:
+    if min_collision < -COLLISION_TOLERANCE_M:
         raise RuntimeError(
             "retarget could not find a collision-feasible trajectory; remaining "
-            f"barrier violation is {-min_collision * 1000.0:.1f} mm"
+            f"barrier violation is {-min_collision * 1000.0:.4g} mm"
         )
     return BatchResult(
         q=q,
