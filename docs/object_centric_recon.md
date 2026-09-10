@@ -221,7 +221,41 @@ frames, 2 000–3 400 points — on a different object, operator and calibration
 The table sits at −19 mm there too, matching the other board-on-table
 calibration to the millimetre.
 
-## 7. Where this points
+## 7. cup_grab, where the colour route dies
+
+Tested deliberately, because a method is characterised by the case it fails on.
+
+**Colour is not merely weak here, it is absent.** In a mid-episode frame the
+saturation median is 18 and only **3.4 %** of pixels exceed S = 120. A white mug
+on a white desk, a grey cardigan, a grey room. No HSV gate exists that finds the
+object.
+
+**Geometry does produce the object, as a candidate among others.** With the
+table plane measured at +33 mm and the hand capsules removed, every frame yields
+a dominant cluster of 5 400–7 300 points at 170–186 mm above the table, extent
+~40×50×28 cm — the operator — and a second, much smaller cluster low over the
+table. That second one is the mug.
+
+**But the identity does not persist.** Tracking "largest low cluster" across the
+episode flips between at least three things: a flat 13×13×3 cm patch at
+y = −0.194, another at y = +0.114 — the two mugs at rest, seen from above — and
+a taller 14×20×17 cm cluster that appears near the hand. Its distance to the
+pinch centre reads 35 mm at frame 800 and 51 mm at 880, against 100–540 mm
+elsewhere.
+
+So the object *is* separable geometrically, but per-frame identity is not, and
+colour was what supplied identity for free on the other scenes. Recovering it
+needs temporal association between frames plus a rule for which candidate is the
+subject — proximity to the hand at the moment of grasp is the obvious one, and
+the numbers above show it discriminates by an order of magnitude.
+
+This also settles that colour cannot be a load-bearing assumption of the method.
+It can be a *protocol* assumption — "the manipulated object must be colour
+distinctive" is as cheap to satisfy as the ChArUco board already is — but the
+pipeline must degrade to geometry plus association when it is not met, and
+cup_grab is the case to develop that against.
+
+## 8. Where this points
 
 Estimate the object pose **in the table plane** — `(x, y, yaw)` — rather than in
 SE(3). Segment with colour plus depth. Take yaw from the in-plane silhouette
