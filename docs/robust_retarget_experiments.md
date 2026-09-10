@@ -1110,6 +1110,73 @@ perception effect measured in E4 through E9 combined. Fixing the palm gate's
 lost support (rather than reverting the gate) is worth doing, but only after a
 trajectory the arm can physically follow exists to measure it on.
 
+### Retraction — E11 was run on the wrong robot
+
+**The harness hardcoded `robot="ur3"`. The project default is
+`RETARGET_DEFAULT_ROBOT = "ur10"`, and every historical plan on disk used it.**
+That is a mistake in the experiment, not a finding about the pipeline.
+
+Consequences:
+
+- **Cause A above is void.** A UR10 reaches 1300 mm; the targets sit at
+  525–911 mm. Nothing was out of reach. The measured 739 mm ceiling was the UR3
+  saturating, and the 2–3× error on "unreachable" frames was that arm stretched
+  straight. With the configured robot there is no reach problem to report.
+- The absolute error level (72–141 mm, 64–93°) is not a property of the pipeline
+  either. It is what a UR3 does when asked to follow a UR10-sized workspace.
+- **Cause B may still stand** — the orientation weight is 1% of position
+  regardless of arm — but its measured magnitude was taken from the same invalid
+  runs and must be re-measured before being quoted.
+- **The profile comparison must be redone.** The v2 → v2.1 result was internally
+  controlled (byte-identical targets, only `omega` differing), so its *direction*
+  may survive; its magnitudes may not. Nothing from E11 should be cited until the
+  rerun replaces it.
+
+### What the historical plans actually show
+
+Four plans from 2026-09-08 survive on disk, and they are the "it used to be good"
+reference:
+
+| scene | robot | base | pose source | position RMSE | orientation RMSE |
+|---|---|---|---|---:|---:|
+| cup_grab | ur10 | **−0.7** | hand_fit | **33.8 mm** | 33.2° |
+| pyramid | ur10 | +0.7 | hand_fit | 37.0 mm | 68.5° |
+| pick_up_u | ur10 | +0.7 | hand_fit | 202.9 mm | 115.6° |
+| block-push | ur10 | +0.7 | hand_fit | 379.0 mm | 91.8° |
+
+Two things follow, and both are about the rig rather than perception.
+
+**The base sign matters enormously and −0.7 is the right one.** The single run at
+−0.7 scores 33.8 mm; the three at +0.7 score 37, 203 and 379 mm. Pinning the
+default to −0.7 was correct, and the two poor historical scenes were mirrored to
+the wrong side of the workspace, not badly perceived.
+
+**block-push retargeted successfully on 2026-09-08** at 379 mm. Its E10 floor
+failure is therefore not intrinsic to the scene either — it appears under a UR3,
+whose shorter arm must dive to reach the same targets. E10 needs the same rerun
+before its "the floor constraint rejects whole episodes" claim can stand; what
+survives unconditionally is the formatting defect that prints sub-0.05 mm
+penetrations as "0.0 mm".
+
+### A real divergence, found while checking this
+
+The historical plans record `source_pose = hand_fit`. The retarget config asks
+for `pose_source: "hand_fit"` and `load_targets` honours it through
+`cln_pose_keys`. The **active** `cln.npz` carries `hand_fit_positions` and
+`hand_fit_rotations`, so production retargets the articulated fit.
+
+The **protected baseline artifacts carry no `hand_fit_*` keys at all** — verified
+on both episodes checked. So every experiment run off a baseline silently falls
+back to landmark poses, while production uses the articulated fit.
+
+That is not a harness bug; it is a gap between the reproducible-baseline
+machinery and the shipped path, and it affects the single field that defines the
+IK target. Every profile comparison in this notebook that ran off a baseline has
+therefore been comparing landmark-pose pipelines, while the product ships
+hand_fit poses. Either baselines must carry the overlay, or profile comparisons
+must be stated as landmark-pose-only and never generalised to production.
+
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
