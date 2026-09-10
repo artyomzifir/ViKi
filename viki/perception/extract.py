@@ -149,6 +149,7 @@ def extract_episode(
     min_confidence: float | None = None,
     tracking_confidence: float | None = None,
     depth_radius_px: int | None = None,
+    depth_radius_mrad: float | None = None,
     save_observations: bool | None = None,
     profile: str | None = None,
     flip: bool = False,
@@ -201,6 +202,24 @@ def extract_episode(
         if depth_radius_px is not None
         else getattr(_cfg, "SKELETON_DEPTH_SAMP_RADIUS", 15)
     )
+
+    def _depth_radius_for(dev_id: str) -> int:
+        """Median-filter patch radius, in pixels of THIS camera's depth image.
+
+        The patch is a solid angle around the landmark, not a pixel count: the
+        same 15 px covers 38 mrad on a 640x576 NFOV depth frame and 30 mrad on
+        a 512x512 WFOV binned one, and this project has already switched depth
+        modes once. When the profile states an angle it is converted per camera
+        from that camera's own depth focal length; otherwise the frozen pixel
+        count is used unchanged.
+        """
+        if depth_radius_mrad is None:
+            return obs_radius
+        Kd = _from_fxfy((intr_all.get(dev_id, {}) or {}).get("depth") or {})
+        if Kd is None:
+            return obs_radius
+        f = 0.5 * (float(Kd[0, 0]) + float(Kd[1, 1]))
+        return max(1, int(round(depth_radius_mrad / 1000.0 * f)))
     _obs_calib_id = None
     if save_obs:
         from viki.perception import observations as _obs
@@ -285,7 +304,7 @@ def extract_episode(
                 obs_rows.append(_obs.collect_row(
                     camera_id=dev_id, frame_index=idx - 1, host_timestamp_us=int(ts_us),
                     detection=det, depth_m=depth_m, projector=projector,
-                    depth_radius=obs_radius,
+                    depth_radius=_depth_radius_for(dev_id),
                 ))
 
             prepared = PreparedFrame(rgb=rgb, depth_m=depth_m, depth_K=K,
@@ -323,6 +342,10 @@ def extract_episode(
     if save_obs:
         sampler_cfg = {
             "depth_radius_px": obs_radius,
+            # Recorded only when in use: a frozen profile's sampler metadata
+            # must stay byte-for-byte what it recorded.
+            **({"depth_radius_mrad": depth_radius_mrad}
+               if depth_radius_mrad is not None else {}),
             "model": model_id,
             "min_confidence": min_confidence,
             "profile": profile,

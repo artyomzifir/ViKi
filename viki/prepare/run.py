@@ -123,6 +123,33 @@ def _pose_and_gripper(
     return positions, rotations, rpy, valid, gripper
 
 
+def frames_from_ms(timestamps, ms, *, odd: bool = False, minimum: int = 1) -> int | None:
+    """Convert a duration to a frame count using an episode's own time grid.
+
+    A window stated in frames is not a property of the motion: seven frames is
+    233 ms at 30 fps and 467 ms at 15, so the same profile smooths twice as
+    hard on a slower recording. Durations are the invariant form; the frame
+    count is derived per episode from the timestamps actually recorded, not
+    from a configured nominal fps, so a take that dropped frames converts
+    correctly too.
+
+    Returns ``None`` when no duration was requested or the grid is unusable, so
+    the caller can fall back to its frozen frame count.
+    """
+    if ms is None:
+        return None
+    ts = np.asarray(timestamps, dtype=np.float64).ravel()
+    if ts.size < 2:
+        return None
+    dt_us = float(np.median(np.diff(ts)))
+    if not np.isfinite(dt_us) or dt_us <= 0.0:
+        return None
+    n = int(round(float(ms) * 1000.0 / dt_us))
+    if odd and n % 2 == 0:
+        n += 1
+    return max(int(minimum), n)
+
+
 def _confidence_arrays(
     grid_conf: np.ndarray,
     landmark_ids: np.ndarray,
@@ -307,6 +334,10 @@ class PreparationPipeline:
         self.checkpoints_dir: Path | None = None
         # >0 leaves interior gaps longer than this many frames unfilled
         self.interp_max_gap = int(getattr(config, "PERCEPTION_INTERP_MAX_GAP", 0))
+        # Invariant forms. When set they replace the frame counts above, which
+        # are kept only so profiles frozen before this reproduce exactly.
+        self.interp_max_gap_ms = None
+        self.sg_window_ms = None
         # optional explicit fused-output time grid (µs) — the raw synced-frame
         # timestamps, so cln.npz shares one index with the point cloud. None →
         # fuse onto the union of the per-camera detection timestamps.
@@ -429,7 +460,11 @@ class PreparationPipeline:
         # 1. Interpolation part: per camera, independently fill NaN gaps (linear).
         raw_filled: dict[str, np.ndarray] = {}
         for dev in trajectories:
-            raw_filled[dev] = interpolate_nans(trajectories[dev], max_gap=self.interp_max_gap)
+            gap = frames_from_ms(ts_map.get(dev), self.interp_max_gap_ms, minimum=0)
+            raw_filled[dev] = interpolate_nans(
+                trajectories[dev],
+                max_gap=self.interp_max_gap if gap is None else gap,
+            )
 
         checkpoint_params = {
             "fusion_mode": self.fusion_mode,
@@ -509,17 +544,22 @@ class PreparationPipeline:
         # after the two-finger audit exposed catastrophic cubic extrapolation.
         from viki.prepare.interpolate import fill_fused_gaps
 
+        fused_gap = frames_from_ms(grid, self.interp_max_gap_ms, minimum=0)
         filled_fused = fill_fused_gaps(
             observed_fused,
             method=self.fused_interpolation,
-            max_gap=self.interp_max_gap,
+            max_gap=self.interp_max_gap if fused_gap is None else fused_gap,
             extrapolate_edges=self.fused_extrapolate_edges,
         )
 
-        # 3. Smooth the fused trajectory.
+        # 3. Smooth the fused trajectory. The Savitzky-Golay window must stay
+        # odd and longer than the polynomial it fits.
+        sg_frames = frames_from_ms(
+            grid, self.sg_window_ms, odd=True, minimum=int(polyorder) + 2,
+        )
         fused_points = smooth_landmark_sequence(
             filled_fused,
-            window_length=window_length,
+            window_length=window_length if sg_frames is None else sg_frames,
             polyorder=polyorder,
         )
 
@@ -824,6 +864,8 @@ def prepare_episode(
             pp.confidence_alpha = profile_spec.confidence_alpha
             pp.confidence_calibration = profile_spec.confidence_calibration
             pp.palm_evidence = profile_spec.palm_evidence
+            pp.interp_max_gap_ms = profile_spec.interp_max_gap_ms
+            pp.sg_window_ms = profile_spec.sg_window_ms
             pp.gripper_name = profile_spec.gripper
             pp.coordinate_frame = profile_spec.coordinate_frame
         if interp_max_gap is not None:

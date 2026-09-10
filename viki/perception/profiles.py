@@ -55,6 +55,16 @@ class PerceptionProfile:
     # how many of its four landmarks were real (E8). "all_observed" zeroes the
     # frame unless every one of them was triangulated.
     palm_evidence: str = "mean"
+    # Invariant restatements of the three scale-dependent knobs above. A pixel
+    # is an angle times sensor resolution and a frame is a duration divided by
+    # fps, so `depth_radius_px`, `sg_window` and `interp_max_gap` all change
+    # physical meaning when the capture configuration changes. When one of
+    # these is set it replaces its frame/pixel counterpart, resolved per
+    # episode from that episode's own intrinsics and timestamps. The counted
+    # forms stay for profiles frozen before this existed.
+    depth_radius_mrad: float | None = None
+    sg_window_ms: float | None = None
+    interp_max_gap_ms: float | None = None
     tracking_confidence: float | None = None
     articulated_hand_fit: str | None = None
     triangulation: dict[str, object] = field(default_factory=dict)
@@ -80,6 +90,10 @@ class PerceptionProfile:
         # immutable; "mean" is exactly what they always did.
         if payload["palm_evidence"] == "mean":
             payload.pop("palm_evidence")
+        # Frozen manifests predate the invariant fields entirely.
+        for invariant in ("depth_radius_mrad", "sg_window_ms", "interp_max_gap_ms"):
+            if payload[invariant] is None:
+                payload.pop(invariant)
         if payload["tracking_confidence"] is None:
             payload.pop("tracking_confidence")
         return payload
@@ -272,6 +286,17 @@ _PROFILES[STABLE_FUSED_HAND_V4] = replace(
         "triangulation agreement gate expressed as an angle, so it is "
         "independent of capture resolution and of per-camera focal length."
     ),
+    # Every scale-dependent knob restated. The values are the ones V2 was
+    # measured with, converted at the intrinsics every recording here used, so
+    # V4 reproduces the validated behaviour on this rig and keeps reproducing
+    # it on a rig configured differently:
+    #   25.0 mrad  = 15.9 px at the 1280x720 colour fx of 635 (the E13/E14 dose)
+    #   38.0 mrad  = 15   px at the 640x576 NFOV depth fx of 392 (V2's radius)
+    #   233 ms     = 7    frames at 30 fps (V2's Savitzky-Golay window)
+    # `interp_max_gap` stays 0, which means "no limit" and is already
+    # scale-free; a real limit would have to be stated in milliseconds.
+    depth_radius_mrad=38.0,
+    sg_window_ms=233.0,
     triangulation={
         **_PROFILES[STABLE_FUSED_HAND_V2].triangulation,
         "reproj_inlier_mrad": 25.0,

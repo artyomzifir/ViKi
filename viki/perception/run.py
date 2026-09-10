@@ -101,6 +101,7 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
         track_lm=opts.track_lm,
         min_confidence=opts.min_confidence,
         depth_radius_px=profile.depth_radius_px if profile is not None else None,
+        depth_radius_mrad=profile.depth_radius_mrad if profile is not None else None,
         save_observations=(profile.save_observations if profile is not None else None),
         tracking_confidence=(profile.tracking_confidence if profile is not None else None),
         profile=opts.profile,
