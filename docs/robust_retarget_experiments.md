@@ -1522,6 +1522,40 @@ unchanged and the supersede recorded. Nothing in this notebook is invalidated:
 E13 and E14 were measured on snapshots of the active artifact precisely because
 the baselines were incomplete.
 
+### Correction to E14 — the floor is not the table, and it differs per calibration
+
+E14 read block-push's vertical gap as "the target sits a median 36 mm above the
+plane while the achieved tool point is held 87–145 mm above it". The 36 mm is
+measured from z = 0, which is the **board** plane, and the board plane is not
+the table.
+
+Measured as the lowest dense horizontal layer, per episode (see
+`object_centric_recon.md` §1):
+
+| calibration | scenes | table z | |
+|---|---|---:|---|
+| `skrip`, `arteom_dont_kill_me_pls` | move-shipok, pick_up_u | **−19 mm** | board was calibrated lying on the table; this is its thickness |
+| `calib-v1-checkpoint` | cup_grab, block-push, pyramid | **+33 mm** | board stood vertically off to the side; z = 0 is unrelated to the table |
+
+Each group repeats to ±2 mm.
+
+So on block-push the hand worked **4 mm above the table**, not 36. The video
+shows why: the block is *pushed flat with the palm*, not grasped. The E14
+conclusion — that the scene has no parallel-jaw equivalent because the gripper
+body must clear a plane the human hand does not — is therefore stronger than it
+was stated, not weaker.
+
+The floor constraint is `z >= 0` in the calibration frame and is a safety
+constraint. Against the measured table it is **19 mm too high** on two scenes,
+forbidding the robot the band in which the demonstration happened, and **33 mm
+too low** on three, permitting the gripper 33 mm into the table. The 0.5 mm
+tolerance introduced earlier is irrelevant beside a 33 mm datum error.
+
+The floor should be the table plane measured per episode. Not changed yet: it
+touches a safety constraint and the plane-fitting needs its own validation
+across more than five recordings.
+
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change
