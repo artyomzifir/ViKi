@@ -331,6 +331,31 @@ def _trajectory_min_collision_margin(
     return minimum
 
 
+def max_reach_m(kinematics, *, samples: int = 4096, seed: int = 0) -> float:
+    """Largest distance from the robot base to the tool point, over joint limits.
+
+    Sampled rather than taken from a datasheet, because the reachable envelope
+    belongs to the *assembly* — arm plus adapter plus gripper — and the tool
+    point is the grasp centre, not the flange. Sampling converges quickly: the
+    maximum is attained on a broad smooth region of configuration space (the
+    arm extended), not at an isolated configuration.
+
+    Returned in metres, in the robot base frame, so a viewer can draw it as a
+    sphere centred on the base without knowing anything about the kinematics.
+    """
+    lo = np.asarray(kinematics.q_min, dtype=np.float64).copy()
+    hi = np.asarray(kinematics.q_max, dtype=np.float64).copy()
+    # Continuous joints carry infinite bounds; one full turn covers them.
+    lo[~np.isfinite(lo)] = -np.pi
+    hi[~np.isfinite(hi)] = np.pi
+    rng = np.random.default_rng(seed)
+    best = 0.0
+    for q in rng.uniform(lo, hi, size=(int(samples), len(lo))):
+        position, _ = kinematics.pose(q)
+        best = max(best, float(np.linalg.norm(position)))
+    return best
+
+
 def trajectory_constraint_margins(
     kinematics: Kinematics,
     trajectory: np.ndarray,

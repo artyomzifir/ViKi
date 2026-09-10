@@ -26,6 +26,62 @@ from viki.server import jobs
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+@lru_cache(maxsize=16)
+def _assembly_reach_m(
+    robot_key: str,
+    gripper_key: str,
+    adapter_kind: str,  # part of the cache key only; the PoC adapter is a cylinder
+    adapter_translation_m: tuple,
+    adapter_rpy_deg: tuple,
+    adapter_radius_m: float,
+) -> float:
+    """Reachable radius of arm + adapter + gripper, in metres, cached per assembly.
+
+    Computed from the model rather than stored in plan.h5, so plans written
+    before this existed still get an envelope. Returns 0.0 if the assembly
+    cannot be built - the viewer then simply has nothing to draw.
+    """
+    import numpy as _np
+
+    from viki.retarget.adapters import CylinderGripperAdapter
+    from viki.retarget.grippers import attach_gripper, normalize_gripper
+    from viki.retarget.robots import normalize_robot
+    from viki.retarget.run import _load_robot_description
+    from viki.retarget.solver import PinocchioKinematics, max_reach_m
+
+    try:
+        cfg = normalize_robot(robot_key)
+        gripper_cfg = normalize_gripper(gripper_key)
+        adapter = CylinderGripperAdapter(
+            translation_m=tuple(float(v) for v in adapter_translation_m),
+            rpy_deg=tuple(float(v) for v in adapter_rpy_deg),
+            radius_m=float(adapter_radius_m),
+        )
+        assembly = attach_gripper(
+            _load_robot_description(cfg.description), cfg, gripper_cfg, adapter
+        )
+        kinematics = PinocchioKinematics(
+            assembly.robot,
+            assembly.orientation_frame,
+            collision_pairs=0,
+            collision_min_distance_m=0.0,
+            actuated_joint_names=cfg.joint_names,
+            passive_joint_positions={
+                assembly.drive_joint: gripper_cfg.joint_positions(_np.asarray([1.0])),
+            },
+            gripper_prefix=assembly.gripper_prefix,
+            position_points=assembly.position_points,
+        )
+        kinematics.set_frame(0)
+        return float(max_reach_m(kinematics))
+    except Exception:  # noqa: BLE001 - an envelope is an aid, never a hard failure
+        logger.warning("reach envelope unavailable for %s/%s", robot_key, gripper_key,
+                       exc_info=True)
+        return 0.0
+
+
+
 _ep = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
@@ -457,7 +513,7 @@ async def retarget_preview(
     from viki.retarget.grippers import attach_gripper, normalize_gripper
     from viki.retarget.run import _load_robot_description
     from viki.retarget.robots import normalize_robot
-    from viki.retarget.solver import PinocchioKinematics
+    from viki.retarget.solver import PinocchioKinematics, max_reach_m
 
     cfg = normalize_robot(robot)
     gripper_cfg = normalize_gripper(gripper)
@@ -531,6 +587,7 @@ async def retarget_preview(
         "base_position": base.tolist(),
         "base_rpy_deg": base_rpy.tolist(),
         "base_transform": base_pose.tolist(),
+        "reach_m": float(max_reach_m(kinematics)),
         "link_edges": kinematics.link_edges.tolist(),
         "link_groups": list(kinematics.link_groups),
         "point_groups": list(kinematics.point_groups),
@@ -616,6 +673,20 @@ async def retarget_scene(ep_id: str):
                         if "base_rpy_deg_calibration" in plan else [0.0, 0.0, 0.0]
                     ),
                 ).tolist(),
+                "reach_m": _assembly_reach_m(
+                    str(plan["robot_key"]),
+                    str(plan["gripper_model"]) if "gripper_model" in plan else "binary",
+                    str(plan["adapter_kind"]) if "adapter_kind" in plan else "none",
+                    tuple(
+                        np.asarray(plan["adapter_translation_m"], dtype=float).tolist()
+                        if "adapter_translation_m" in plan else (0.0, 0.0, 0.0)
+                    ),
+                    tuple(
+                        np.asarray(plan["adapter_rpy_deg"], dtype=float).tolist()
+                        if "adapter_rpy_deg" in plan else (0.0, 0.0, 0.0)
+                    ),
+                    float(plan["adapter_radius_m"]) if "adapter_radius_m" in plan else 0.0,
+                ),
                 "link_edges": np.asarray(plan["link_edges"], dtype=np.int32).tolist(),
                 "link_groups": (
                     json.loads(str(plan["link_groups_json"]))

@@ -109,7 +109,7 @@ const DEFAULT_LAYERS = {
   cloud: true, perCamera: false, fused: true, trajectory: true,
   palm: true, frusta: true, board: true, bbox: false, handFit: false,
   robot: true, robotMesh: true, targetTrajectory: true, achievedTrajectory: true,
-  sequentialBaseline: true,
+  sequentialBaseline: true, reach: false,
 };
 
 // The legend is one grouped list: a block per lifecycle/data-source, its rows
@@ -148,6 +148,7 @@ const LEGEND_GROUPS = [
       { key: 'robot', label: 'robot arm / gripper', src: 'plan',
         swatch: 'linear-gradient(90deg,#8aa4ba 0 55%,#f59e0b 55% 100%)' },
       { key: 'robotMesh', label: 'solid URDF mesh', swatch: '#b9c4d0', src: 'mesh' },
+      { key: 'reach', label: 'reach envelope', swatch: '#4ade80', src: 'reach' },
       { key: 'targetTrajectory', label: 'target TCP', swatch: '#f472b6', src: 'plan' },
       { key: 'achievedTrajectory', label: 'achieved TCP', swatch: '#22d3ee', src: 'plan' },
       { key: 'sequentialBaseline', label: 'sequential baseline', swatch: '#a78bfa', src: 'plan' },
@@ -246,6 +247,56 @@ export function create(canvasEl, {
   const robotMeshGroup = new THREE.Group();
   robotGroup.add(robotMeshGroup);
   let robotMeshReady = false, robotMeshToken = 0;
+
+  // Reach envelope: the sphere the tool point can touch, centred on the base.
+  // A sibling of robotGroup rather than a child, so it survives the arm being
+  // switched off - the whole point of the layer is to answer "could the robot
+  // have gone there?" for targets the arm is not currently near. Radius comes
+  // from the backend (`reach_m`), sampled from the same kinematics that solved
+  // the plan, so it covers arm + adapter + gripper rather than a datasheet arm.
+  const reachGroup = new THREE.Group();
+  reachGroup.visible = false;
+  calibrationGroup.add(reachGroup);
+
+  // Latitude/longitude wireframe, matching the ground grid's construction
+  // (LineSegments, no fill) so the two read as the same kind of reference
+  // object; only the colour differs.
+  function buildReachSphere(radius) {
+    clearGroup(reachGroup);
+    if (!Number.isFinite(radius) || radius <= 0) return;
+    const RINGS = 12, MERIDIANS = 24, SEG = 72;
+    const pts = [];
+    const push = (a, b) => { pts.push(a.x, a.y, a.z, b.x, b.y, b.z); };
+    // parallels
+    for (let i = 1; i < RINGS; i++) {
+      const phi = (i / RINGS) * Math.PI;
+      const r = radius * Math.sin(phi), z = radius * Math.cos(phi);
+      for (let k = 0; k < SEG; k++) {
+        const t0 = (k / SEG) * 2 * Math.PI, t1 = ((k + 1) / SEG) * 2 * Math.PI;
+        push(new THREE.Vector3(r * Math.cos(t0), r * Math.sin(t0), z),
+             new THREE.Vector3(r * Math.cos(t1), r * Math.sin(t1), z));
+      }
+    }
+    // meridians
+    for (let m = 0; m < MERIDIANS; m++) {
+      const theta = (m / MERIDIANS) * 2 * Math.PI;
+      const ct = Math.cos(theta), st = Math.sin(theta);
+      for (let k = 0; k < SEG; k++) {
+        const p0 = (k / SEG) * Math.PI, p1 = ((k + 1) / SEG) * Math.PI;
+        push(new THREE.Vector3(radius * Math.sin(p0) * ct, radius * Math.sin(p0) * st,
+                               radius * Math.cos(p0)),
+             new THREE.Vector3(radius * Math.sin(p1) * ct, radius * Math.sin(p1) * st,
+                               radius * Math.cos(p1)));
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    // depthWrite off so the arm and the trajectories stay readable through it.
+    const material = new THREE.LineBasicMaterial({
+      color: 0x4ade80, transparent: true, opacity: 0.22, depthWrite: false,
+    });
+    reachGroup.add(new THREE.LineSegments(geometry, material));
+  }
   const targetTrajLine = new THREE.LineSegments(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({ color: 0xf472b6 })
@@ -367,6 +418,7 @@ export function create(canvasEl, {
       case 'cloud': return !!cmeta;
       case 'plan': return !!retarget?.ready;
       case 'mesh': return !!retarget?.ready && !!retarget?.robot_visuals?.length;
+      case 'reach': return Number.isFinite(retarget?.reach_m) && retarget.reach_m > 0;
       default: return true;
     }
   }
@@ -471,6 +523,8 @@ export function create(canvasEl, {
     handJoints.visible = layers.handFit;
     const robotOn = layers.robot && !!retarget?.ready;
     robotGroup.visible = robotOn;
+    reachGroup.visible = layers.reach && !!retarget?.ready
+      && Number.isFinite(retarget?.reach_m) && retarget.reach_m > 0;
     // Solid URDF meshes replace the stick-figure links/joints when they are
     // loaded and the "robot: solid mesh" row is on; the base triad + light stay.
     const meshMode = robotOn && layers.robotMesh && robotMeshReady
@@ -711,7 +765,19 @@ export function create(canvasEl, {
     clearRobotMeshes();
     clearGroup(robotGroup);
     robotGroup.add(robotMeshGroup);
+    clearGroup(reachGroup);
     if (!retarget?.ready) return;
+    // Envelope is a sphere about the base, so only the base translation is
+    // needed; base rotation cannot change what a sphere covers.
+    buildReachSphere(retarget.reach_m);
+    if (retarget.base_transform) {
+      const m = rowMajorMatrix4(retarget.base_transform);
+      reachGroup.position.setFromMatrixPosition(m);
+    } else if (Array.isArray(retarget.base_position)) {
+      reachGroup.position.set(...retarget.base_position);
+    } else {
+      reachGroup.position.set(0, 0, 0);
+    }
     const linkMaterial = new THREE.MeshStandardMaterial({ color: 0x8aa4ba, roughness: 0.65 });
     const gripperMaterial = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.55 });
     const jointMaterial = new THREE.MeshStandardMaterial({ color: 0xdbeafe, roughness: 0.45 });
