@@ -237,6 +237,7 @@ def _build_parser() -> argparse.ArgumentParser:
         STABLE_FUSED_HAND_V2,
         STABLE_FUSED_HAND_V2_1,
         STABLE_FUSED_HAND_V3,
+        STABLE_FUSED_HAND_V4,
     )
 
     p = argparse.ArgumentParser(prog="viki", description=__doc__.splitlines()[3])
@@ -270,6 +271,7 @@ def _build_parser() -> argparse.ArgumentParser:
             FUSED_HAND_NO_EXTRAP_V1,
             FUSED_HAND_REPROJ8_V1,
             FUSED_HAND_REPROJ16_V1,
+            STABLE_FUSED_HAND_V4,
             STABLE_FUSED_HAND_V3,
             STABLE_FUSED_HAND_V2_1,
             STABLE_FUSED_HAND_V2,
@@ -302,6 +304,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=[
             CLEAN_LANDMARKS_V1,
             FUSED_HAND_NO_EXTRAP_V1,
+            STABLE_FUSED_HAND_V4,
             STABLE_FUSED_HAND_V3,
             STABLE_FUSED_HAND_V2_1,
             STABLE_FUSED_HAND_V2,
@@ -328,6 +331,7 @@ def _build_parser() -> argparse.ArgumentParser:
             FUSED_HAND_NO_EXTRAP_V1,
             FUSED_HAND_REPROJ8_V1,
             FUSED_HAND_REPROJ16_V1,
+            STABLE_FUSED_HAND_V4,
             STABLE_FUSED_HAND_V3,
             STABLE_FUSED_HAND_V2_1,
             STABLE_FUSED_HAND_V2,

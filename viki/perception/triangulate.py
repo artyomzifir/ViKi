@@ -69,7 +69,7 @@ def _delta_for(lm: int, base: float) -> float:
 
 
 class _Cam:
-    __slots__ = ("id", "K", "dist", "T_wc", "P", "C", "size")
+    __slots__ = ("id", "K", "dist", "T_wc", "P", "C", "size", "f")
 
     def __init__(self, cid: str, meta: dict):
         self.id = cid
@@ -80,6 +80,10 @@ class _Cam:
         self.P = self.K @ T_cw[:3, :4]                        # 3×4, world → pixel
         self.C = self.T_wc[:3, 3]                             # camera centre (world)
         self.size = tuple(meta.get("image_size", (0, 0)))
+        # Scalar focal length in pixels. Dividing a pixel residual by it gives
+        # radians, which is the only form in which two cameras of different
+        # resolution can be compared at all.
+        self.f = 0.5 * (float(self.K[0, 0]) + float(self.K[1, 1]))
 
     def undistort(self, uv) -> np.ndarray:
         p = np.asarray(uv, float).reshape(1, 1, 2)
@@ -122,6 +126,19 @@ class TriConfig:
         self.reproj_inlier_px = number(
             "reproj_inlier_px", "TRI_REPROJ_INLIER_PX", 4.0,
         )
+        # Invariant form of the same gate. A pixel is an angle multiplied by
+        # sensor resolution, so a threshold in pixels silently tightens when a
+        # recording is made at a higher resolution and means different things
+        # to cameras of different focal length in the same rig. When this is
+        # set it replaces `reproj_inlier_px` entirely and the whole stage -
+        # gate, robust loss scale and quality falloff - works in radians.
+        # `reproj_inlier_px` is retained only so that profiles frozen before
+        # this existed keep reproducing exactly what they recorded.
+        mrad = values.get(
+            "reproj_inlier_mrad", getattr(config, "TRI_REPROJ_INLIER_MRAD", None),
+        )
+        self.reproj_inlier_mrad = None if mrad is None else float(mrad)
+        self.angular = self.reproj_inlier_mrad is not None
         self.depth_lambda = number("depth_lambda", "TRI_DEPTH_LAMBDA", 0.10)
         self.depth_delta_m = number("depth_delta_m", "TRI_DEPTH_DELTA_M", 0.010)
         self.depth_spread_scale_m = number(
@@ -142,6 +159,7 @@ class TriConfig:
             "min_score": self.min_score,
             "min_ray_deg": self.min_ray_deg,
             "reproj_inlier_px": self.reproj_inlier_px,
+            "reproj_inlier_mrad": self.reproj_inlier_mrad,
             "depth_lambda": self.depth_lambda,
             "depth_delta_m": self.depth_delta_m,
             "depth_spread_scale_m": self.depth_spread_scale_m,
@@ -167,6 +185,21 @@ def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: Tr
     for v in usable:
         v["_uvu"] = cams[v["camera_id"]].undistort(v["uv"])
 
+    # In angular mode every residual is divided by the observing camera's focal
+    # length, so the gate, the robust loss and the quality falloff all live in
+    # radians and are identical for a 720p and a 4K recording of the same scene.
+    # In legacy pixel mode nothing is divided and the behaviour is bit-identical
+    # to what the frozen profiles recorded.
+    inlier_gate = (
+        cfg.reproj_inlier_mrad / 1000.0 if cfg.angular else cfg.reproj_inlier_px
+    )
+
+    def _reproj(cam, X, uv_undistorted):
+        """Reprojection error in radians (angular mode) or pixels (legacy)."""
+        uvp, z = cam.project(X)
+        e = float(np.linalg.norm(uvp - uv_undistorted))
+        return (e / cam.f if cfg.angular else e), z
+
     best = None  # (key tuple, X, inlier_ids)
     for i in range(len(usable)):
         for j in range(i + 1, len(usable)):
@@ -181,10 +214,9 @@ def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: Tr
                 continue
             errs, inl = [], []
             for v in usable:
-                uvp, z = cams[v["camera_id"]].project(X)
-                e = float(np.linalg.norm(uvp - v["_uvu"]))
+                e, z = _reproj(cams[v["camera_id"]], X, v["_uvu"])
                 errs.append(e)
-                if z > 0 and e <= cfg.reproj_inlier_px:
+                if z > 0 and e <= inlier_gate:
                     inl.append(v)
             key = (len(inl), sum(v["score"] for v in inl), -float(np.median(errs)))
             if best is None or key > best[0]:
@@ -201,22 +233,30 @@ def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: Tr
             c = cams[v["camera_id"]]
             uvp, z = c.project(X)
             w = max(v["score"], 1e-3) ** 0.5
-            r += [w * (uvp[0] - v["_uvu"][0]), w * (uvp[1] - v["_uvu"][1])]
+            # Angular mode divides the pixel residual by this camera's focal
+            # length; otherwise a high-resolution view would dominate the fit
+            # purely by having more pixels per radian.
+            s_px = (1.0 / c.f) if cfg.angular else 1.0
+            r += [w * s_px * (uvp[0] - v["_uvu"][0]),
+                  w * s_px * (uvp[1] - v["_uvu"][1])]
             if v["depth_valid"] and np.isfinite(v["depth_m"]):
                 spread = v["depth_spread_m"] if np.isfinite(v["depth_spread_m"]) else 0.0
                 wd = v["score"] * float(np.exp(-spread / cfg.depth_spread_scale_m))
                 dscale = (cfg.depth_lambda * max(wd, 1e-4)) ** 0.5
-                # express the depth error as an equivalent pixel disparity
-                # (f · Δz / z) so it shares units and f_scale with reprojection
-                f = 0.5 * (c.K[0, 0] + c.K[1, 1])
+                # The depth error is expressed in the same unit as the
+                # reprojection residual so both share one f_scale: an
+                # equivalent pixel disparity f·Δz/z in legacy mode, and its
+                # angular form Δz/z - which needs no focal length at all -
+                # in angular mode.
                 dz = z - v["depth_m"] - _delta_for(lm, cfg.depth_delta_m)
-                r.append(dscale * f * dz / max(z, 1e-3))
+                ratio = dz / max(z, 1e-3)
+                r.append(dscale * (ratio if cfg.angular else c.f * ratio))
         return np.asarray(r, float)
 
-    sol = least_squares(resid, X0, loss=cfg.loss, f_scale=cfg.reproj_inlier_px, max_nfev=60)
+    sol = least_squares(resid, X0, loss=cfg.loss, f_scale=inlier_gate, max_nfev=60)
     X = sol.x
 
-    errs = [float(np.linalg.norm(cams[v["camera_id"]].project(X)[0] - v["_uvu"])) for v in inliers]
+    errs = [_reproj(cams[v["camera_id"]], X, v["_uvu"])[0] for v in inliers]
     ray = max(
         (_ray_deg(cams[inliers[a]["camera_id"]].C, cams[inliers[b]["camera_id"]].C, X)
          for a in range(len(inliers)) for b in range(a + 1, len(inliers))),
@@ -225,7 +265,7 @@ def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: Tr
     mean_err = float(np.mean(errs))
     quality = (
         (len(inliers) / max(len(usable), 1))
-        * float(np.clip(1.0 - mean_err / (2 * cfg.reproj_inlier_px), 0.0, 1.0))
+        * float(np.clip(1.0 - mean_err / (2 * inlier_gate), 0.0, 1.0))
         * float(np.clip(ray / cfg.ray_ref_deg, 0.0, 1.0))
     )
     if cfg.quality_detector_score:

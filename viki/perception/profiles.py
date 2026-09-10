@@ -18,6 +18,7 @@ STABLE_FUSED_HAND_V2 = "stable-fused-hand-v2"
 STABLE_FUSED_HAND_V2_1 = "stable-fused-hand-v2.1"
 FUSED_HAND_NO_EXTRAP_V1 = "fused-hand-no-extrap-v1"
 STABLE_FUSED_HAND_V3 = "stable-fused-hand-v3"
+STABLE_FUSED_HAND_V4 = "stable-fused-hand-v4"
 FUSED_HAND_REPROJ8_V1 = "fused-hand-reproj8-v1"
 FUSED_HAND_REPROJ16_V1 = "fused-hand-reproj16-v1"
 # Keep the absolute-confidence V3 available for controlled A/B runs, but use
@@ -256,6 +257,27 @@ def _with_reproj_px(base: PerceptionProfile, name: str, px: float) -> Perception
 _PROFILES[FUSED_HAND_REPROJ8_V1] = _with_reproj_px(
     _PROFILES[STABLE_FUSED_HAND_V2], FUSED_HAND_REPROJ8_V1, 8.0,
 )
+# V4 is the first profile whose triangulation gate is stated in an invariant
+# unit. A pixel is an angle times sensor resolution, so `reproj_inlier_px`
+# silently tightens when a recording is made at a higher resolution and means
+# different things to two cameras of different focal length in the same rig.
+# 25.0 mrad is 15.9 px at the 1280x720 colour intrinsics every measured
+# recording used, i.e. the 16 px dose of E13/E14 restated so that it transfers.
+# Everything else is V2 verbatim: one factor, in a unit that travels.
+_PROFILES[STABLE_FUSED_HAND_V4] = replace(
+    _PROFILES[STABLE_FUSED_HAND_V2],
+    name=STABLE_FUSED_HAND_V4,
+    description=(
+        "Stable perception v4: v2 geometry and continuous gripper with the "
+        "triangulation agreement gate expressed as an angle, so it is "
+        "independent of capture resolution and of per-camera focal length."
+    ),
+    triangulation={
+        **_PROFILES[STABLE_FUSED_HAND_V2].triangulation,
+        "reproj_inlier_mrad": 25.0,
+    },
+)
+
 _PROFILES[FUSED_HAND_REPROJ16_V1] = _with_reproj_px(
     _PROFILES[STABLE_FUSED_HAND_V2], FUSED_HAND_REPROJ16_V1, 16.0,
 )
