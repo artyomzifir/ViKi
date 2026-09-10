@@ -75,8 +75,9 @@ conflating them would make the aggregate uninformative about what to improve.
 \begin{enumerate}[leftmargin=2em]
   \item \emph{Landmark detection noise.} Error in the image-plane hand
         landmarks, propagated through depth lifting. This contribution is
-        reduced by confidence weighting \eqref{eq:weights} and by multi-view
-        fusion, and it is characterised by the wrist-position repeatability
+        reduced by multi-view triangulation \eqref{eq:triangulate}, which
+        constrains the point by camera geometry instead of averaging per-view
+        depth lifts, and it is characterised by the wrist-position repeatability
         measurement of Table~\ref{tab:calib}. It is not reduced by better
         calibration.
   \item \emph{Calibration error.} Error in the camera-to-workspace and

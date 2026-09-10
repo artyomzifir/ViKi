@@ -64,8 +64,14 @@ failing replay are either re-solved with modified weights or discarded.}
 \label{sec:hardware}
 
 The capture rig comprises two Azure Kinect DK cameras and one Intel RealSense
-D435i observing a tabletop workspace, with a UR3 manipulator mounted at a fixed
-position relative to that workspace. The Azure Kinect was selected for the
+D435i observing a tabletop workspace, with a UR10 manipulator mounted at a
+fixed position relative to that workspace. Reach is the binding constraint on
+this choice rather than payload: with the base offset used here, target poses
+lie between $525$ and $911$~mm from the base, so a UR3, whose reach is
+$500$~mm, cannot cover the demonstrated workspace at all---a substitution
+verified to leave between $12$ and $61$~per cent of every recording
+unreachable, with tracking error on those frames two to three times that on
+reachable ones. The Azure Kinect was selected for the
 primary views because its time-of-flight depth sensing provides substantially
 better range estimation than neural regression from RGB, and because its
 specified error characteristics---random error standard deviation at most
@@ -138,7 +144,7 @@ Residual alignment jitter is measured rather than assumed
 is verified by confirming bounded drift in the inter-camera timestamp
 difference \cite{ridgerun}.
 
-\section{Perception and Confidence-Weighted Fusion}
+\section{Perception and Multi-View Reconstruction}
 \label{sec:fusion}
 
 \subsection{Landmark detection and lifting}
@@ -150,18 +156,84 @@ registered depth map rather than a learned depth estimate, exploiting the
 time-of-flight measurement directly, and transformed into the workspace frame
 by \eqref{eq:extrinsic}.
 
-\subsection{Fusion}
+\subsection{Multi-view triangulation}
 
-Estimates from multiple views are combined by confidence-weighted averaging
-rather than by naive mean. For landmark $i$ at time $t$, the fused position is
+When a landmark is seen by two or more calibrated views, its position is not
+averaged from per-view depth lifts but estimated directly from the image
+observations, with depth entering as an additional soft residual rather than as
+the anchor. Averaging per-view lifts inherits the depth error of every view;
+triangulation is constrained by the camera geometry, which is known to
+calibration accuracy and does not degrade with range.
+
+For landmark $i$ at time $t$, let $\mathcal{K}_{i,t}$ be the views whose
+detector score clears a threshold and whose observation is finite. Every pair
+$(a,b) \subset \mathcal{K}_{i,t}$ yields a linear direct-linear-transform
+estimate, which is retained only if it lies in front of both cameras and if the
+two viewing rays subtend at least a minimum angle $\theta_{\min}$; a pair with a
+short effective baseline is ill-conditioned regardless of how confident the
+detector is. Each surviving hypothesis is scored against all views in
+$\mathcal{K}_{i,t}$ by the number of reprojection inliers, and the best is
+refined over its inlier set by
+\begin{equation}
+  \hat{\bx}_{i,t} \;=\;
+  \argmin_{\bx}\;
+  \sum_{k \in \mathcal{K}^{\text{in}}_{i,t}}
+  \rho\!\left(\norm{\pi_k(\bx) - \bu^{k}_{i,t}}^{2}\right)
+  \;+\;
+  \lambda_d \sum_{k} \beta^{k}_{i,t}\,
+  \rho_d\!\left(\left(z_k(\bx) - d^{k}_{i,t} - \delta_i\right)^{2}\right),
+  \label{eq:triangulate}
+\end{equation}
+where $\pi_k$ is the pinhole projection of view $k$, $\bu^{k}_{i,t}$ the
+observed pixel, $z_k$ the depth of $\bx$ in that camera, $d^{k}_{i,t}$ the
+measured depth, and $\delta_i$ a per-landmark offset from the skin surface to
+the joint centre---depth sees the skin, the joint sits inside the finger. The
+depth weight $\beta^{k}_{i,t}$ is attenuated by the local depth spread and set
+to zero for invalid samples, so that a single bad silhouette pixel cannot move
+an otherwise well-constrained point. Observations are undistorted once, before
+the linear estimate, and every projection downstream is a plain pinhole map;
+distortion is never re-applied inside the residual.
+
+The estimate carries a transparent geometric quality
+\begin{equation}
+  q_{i,t} \;=\;
+  \underbrace{\frac{\left|\mathcal{K}^{\text{in}}_{i,t}\right|}
+                   {\left|\mathcal{K}_{i,t}\right|}}_{\text{agreement}}
+  \cdot
+  \underbrace{\operatorname{clip}\!\left(
+      1 - \frac{\bar{e}_{i,t}}{2 e_{\text{in}}},\,0,\,1\right)}_{\text{reprojection}}
+  \cdot
+  \underbrace{\operatorname{clip}\!\left(
+      \frac{\theta_{i,t}}{\theta_{\text{ref}}},\,0,\,1\right)}_{\text{baseline}},
+  \label{eq:quality}
+\end{equation}
+with $\bar{e}_{i,t}$ the mean reprojection error over inliers, $\theta_{i,t}$
+the widest ray angle, and $e_{\text{in}}$ the inlier radius. This is a
+transparent heuristic, not a calibrated variance, and it is used as such: it
+weights evidence, and is never interpreted as an inverse covariance.
+
+A property of \eqref{eq:quality} deserves explicit statement, because it
+governs how much of a recording survives. The same $e_{\text{in}}$ is the
+acceptance threshold, the scale of the robust loss $\rho$ in
+\eqref{eq:triangulate}, and the denominator of the reprojection factor. The
+factor is therefore designed to grade confidence out to $2 e_{\text{in}}$,
+while the threshold admits nothing beyond $e_{\text{in}}$: half of the designed
+grading range is unreachable by construction. Widening $e_{\text{in}}$ does not
+introduce a soft-weighting mechanism, it permits the existing one to operate
+over its own range. A consequence is that $q$ is not comparable across settings
+of $e_{\text{in}}$: the same residual scores differently under a different
+denominator.
+
+\subsection{Single-view fallback}
+
+Where only one view observes a landmark, triangulation is undefined and the
+estimate falls back to the depth lift of that view. The historical multi-view
+path also combined per-view lifts by confidence-weighted averaging,
 \begin{equation}
   \hat{\bx}_{i,t} \;=\;
   \frac{\sum_{k} w^{k}_{i,t}\, \bx^{k}_{i,t}}
        {\sum_{k} w^{k}_{i,t}},
-  \label{eq:fusion}
-\end{equation}
-with weights
-\begin{equation}
+  \qquad
   w^{k}_{i,t} \;=\;
   \underbrace{v^{k}_{i,t}}_{\text{detector}}
   \cdot
@@ -170,41 +242,45 @@ with weights
   \underbrace{\frac{1}{\left(d^{k}_{i,t}\right)^{2}}}_{\text{range}}
   \cdot
   \underbrace{\max\!\left(0, \cos\theta^{k}_{i,t}\right)}_{\text{incidence}},
-  \label{eq:weights}
+  \label{eq:fusion}
 \end{equation}
-where
-
-\begin{center}
-\begin{tabular}{@{\hspace{10mm}}p{16mm}@{}p{95mm}}
-$v^{k}_{i,t}$ & detector visibility score for landmark $i$ in view $k$;\\
-$c^{k}_{i,t}$ & sensor depth confidence or validity flag at that pixel;\\
-$d^{k}_{i,t}$ & range from camera $k$ to the landmark;\\
-$\theta^{k}_{i,t}$ & angle between the local surface normal and the viewing direction.
-\end{tabular}
-\end{center}
-
-\noindent The range and incidence factors follow established practice in
+where $v^{k}_{i,t}$ is the detector score, $c^{k}_{i,t}$ the sensor depth
+validity at that pixel, $d^{k}_{i,t}$ the range, and $\theta^{k}_{i,t}$ the
+incidence angle. The range and incidence factors follow established practice in
 geometric depth fusion, where surfaces observed near perpendicular are weighted
 above obliquely observed ones because they are measured more accurately
 \cite{fusionpatent}; the detector and sensor factors follow confidence-map
-re-weighting \cite{zeng}. The product form is chosen so that a zero in any
+re-weighting \cite{zeng}. The product form ensures that a zero in any
 factor---an undetected landmark, an invalid depth pixel, a grazing view---
-removes that view's contribution entirely rather than merely attenuating it.
+removes that view's contribution entirely rather than attenuating it.
+
+This path is retained for reproducibility of earlier recordings and for
+single-camera operation. It is not the path used for the results reported here,
+because averaging per-view lifts propagates depth error into the fused point,
+whereas \eqref{eq:triangulate} constrains the point by geometry and admits
+depth only as evidence.
 
 \subsection{Wrist pose and gripper state}
 
 The wrist pose $\bT^{W}_{H,t} \in \SE$ is obtained by fitting an orthonormal
-frame to the fused wrist and knuckle landmarks. The gripper state is derived
-from the thumb--index distance,
+frame to the fused wrist and knuckle landmarks. The gripper state is the thumb--index
+separation, mapped to a normalised opening,
 \begin{equation}
   g_t \;=\;
-  \mathbb{1}\!\left[\,\norm{\hat{\bx}_{\text{thumb},t}
-  - \hat{\bx}_{\text{index},t}} < \tau_g \,\right],
+  \operatorname{clip}\!\left(
+    \frac{\norm{\hat{\bx}_{\text{thumb},t} - \hat{\bx}_{\text{index},t}}
+          - \tau_{\text{closed}}}
+         {\tau_{\text{open}} - \tau_{\text{closed}}},\,0,\,1\right),
   \label{eq:gripper}
 \end{equation}
-with hysteresis on $\tau_g$ to suppress chatter at the threshold. This single
-scalar is the entire hand representation beyond the wrist frame, following the
-convention established for parallel-jaw targets in \cite{opentv, ace}.
+temporally filtered to suppress chatter. An earlier formulation thresholded the
+same distance into a binary open/closed indicator; it was replaced because a
+parallel-jaw gripper is a continuously commandable actuator, and quantising the
+one degree of freedom that carries the grasp discards precisely the approach
+and release phases that distinguish a successful demonstration from a failed
+one. This single scalar remains the entire hand representation beyond the wrist
+frame, following the convention established for parallel-jaw targets in
+\cite{opentv, ace}.
 
 \section{Object-Centric Representation}
 \label{sec:objcentric}
@@ -294,16 +370,45 @@ $h_j$ & collision and self-collision barrier functions.
 
 \subsection{Confidence weighting}
 
-The per-frame weight aggregates the landmark confidences that produced the
-wrist estimate at time $t$,
+The per-frame weight aggregates the geometric qualities \eqref{eq:quality} of
+the landmarks that define the palm frame at time $t$,
 \begin{equation}
   \omega_t \;=\;
-  \left(\frac{1}{|\mathcal{I}|}\sum_{i \in \mathcal{I}}
-        \max_k w^{k}_{i,t}\right)^{\alpha},
+  \left(\frac{1}{|\mathcal{I}|}\sum_{i \in \mathcal{I}} c_{i,t}\right)^{\alpha}
+  \cdot \mathbb{1}\!\left[\text{frame valid}\right],
+  \qquad
+  c_{i,t} =
+  \begin{cases}
+    q_{i,t}, & \text{landmark triangulated,}\\
+    0, & \text{landmark interpolated,}
+  \end{cases}
   \label{eq:conf}
 \end{equation}
-with $\mathcal{I}$ the landmark subset defining the wrist frame and $\alpha$
-controlling how sharply low-confidence frames are discounted. The construction
+with $\mathcal{I}$ the four landmarks defining the palm frame---wrist and the
+index, middle and little metacarpophalangeal joints---and $\alpha$ controlling
+how sharply low-confidence frames are discounted.
+
+Equation \eqref{eq:conf} as written admits a frame whose palm was only
+partially observed: a mean over four terms is non-zero whenever one of them is,
+so a palm with a single triangulated landmark still contributes at roughly a
+quarter weight, and the orientation it contributes was fitted partly through
+interpolated points. Measured across five recordings, between 45 and 61 per
+cent of the frames carrying non-zero weight had an incompletely observed palm.
+A stricter variant zeroes the frame unless every landmark in $\mathcal{I}$ was
+triangulated,
+\begin{equation}
+  \omega^{\text{strict}}_t \;=\;
+  \omega_t \cdot
+  \mathbb{1}\!\left[\,\forall i \in \mathcal{I}:\; \text{$i$ triangulated}\,\right].
+  \label{eq:confstrict}
+\end{equation}
+Both are reported, because the stricter form is not uniformly better: it
+removes a fabrication, but it also removes between 45 and 61 per cent of the
+weighted frames, and the measurements in Chapter~\ref{ch:disc} show the
+solver drifting further from the target for want of the support the fabricated
+frames were supplying. Recovering that support---rather than reinstating the
+fabrication---is identified as future work in
+Section~\ref{sec:limitations}. The construction
 is the offline analogue of the distance-dependent switching weights used in
 online teleoperation retargeting \cite{opentv}: frames in which the hand is
 partially occluded or poorly observed exert proportionally less influence on
@@ -414,9 +519,21 @@ Section~\ref{sec:limitations}.
 
 \begin{enumerate}[leftmargin=2em]
   \item \emph{Parallel-jaw target.} The hand is reduced to a wrist pose and a
-        binary gripper state. Multi-fingered dexterous targets would require
-        the finger-level representation rejected in
-        Section~\ref{sec:lit-hand}.
+        single continuous gripper opening \eqref{eq:gripper}. Multi-fingered
+        dexterous targets would require the finger-level representation
+        rejected in Section~\ref{sec:lit-hand}.
+  \item \emph{The gripper body is not the hand.} The target is the midpoint
+        between thumb and index tips, but a parallel-jaw gripper interposes a
+        body of its own between the flange and that point, and the whole
+        assembly must stay above the workspace plane. For tasks performed
+        against the table surface the demonstrated pose can therefore be
+        kinematically unreachable even when the arm's reach is ample: in one
+        recording the target sits a median of $36$~mm above the plane while the
+        achieved tool point is held $87$--$145$~mm above it, and the resulting
+        vertical gap accounts for roughly $70$~per cent of the squared tracking
+        error. Improving perception makes this discrepancy more visible, not
+        less, because interpolation had been smoothing the lowest excursions
+        upward.
   \item \emph{Rigid objects.} The object-relative representation
         \eqref{eq:objrel} presupposes a rigid body with a well-defined pose.
         Deformable objects would require a flow-based representation

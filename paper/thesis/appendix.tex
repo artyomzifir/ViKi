@@ -22,7 +22,8 @@ $\bq_t \in \R^{n}$ & manipulator configuration at timestep $t$ \\
 $f(\bq_t)$ & forward kinematics of the end-effector \\
 $\be_t$ & task-space residual, \eqref{eq:residual} \\
 $\omega_t$ & per-frame perception confidence weight, \eqref{eq:conf} \\
-$w^{k}_{i,t}$ & per-landmark fusion weight, \eqref{eq:weights} \\
+$q_{i,t}$ & geometric quality of a triangulated landmark, \eqref{eq:quality} \\
+$w^{k}_{i,t}$ & per-view weight, single-view fallback, \eqref{eq:fusion} \\
 $v^{k}_{i,t}$ & detector visibility score \\
 $c^{k}_{i,t}$ & sensor depth confidence \\
 $\rho_\delta$ & Huber loss with transition parameter $\delta$ \\
