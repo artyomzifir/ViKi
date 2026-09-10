@@ -258,6 +258,45 @@ export function create(canvasEl, {
   reachGroup.visible = false;
   calibrationGroup.add(reachGroup);
 
+  // A loaded plan wins over the configured default: it is the assembly that
+  // actually produced the trajectory on screen. Otherwise fall back to config.
+  function reachRadius() {
+    if (Number.isFinite(retarget?.reach_m) && retarget.reach_m > 0) return retarget.reach_m;
+    if (Number.isFinite(reachInfo?.reach_m) && reachInfo.reach_m > 0) return reachInfo.reach_m;
+    return 0;
+  }
+  function reachCentre() {
+    if (retarget?.ready) {
+      if (retarget.base_transform) {
+        return new THREE.Vector3().setFromMatrixPosition(rowMajorMatrix4(retarget.base_transform));
+      }
+      if (Array.isArray(retarget.base_position)) {
+        return new THREE.Vector3(...retarget.base_position);
+      }
+    }
+    if (Array.isArray(reachInfo?.base_position)) {
+      return new THREE.Vector3(...reachInfo.base_position);
+    }
+    return new THREE.Vector3(0, 0, 0);
+  }
+  function refreshReach() {
+    buildReachSphere(reachRadius());
+    reachGroup.position.copy(reachCentre());
+  }
+  async function ensureReachInfo() {
+    if (reachRequested) return;
+    reachRequested = true;
+    try {
+      reachInfo = await api('GET', '/api/pipeline/retarget/reach');
+    } catch (err) {
+      log?.(`reach envelope unavailable: ${err}`);
+      reachInfo = null;
+    }
+    refreshReach();
+    updateLegend();
+    applyLayerVisibility();
+  }
+
   // Latitude/longitude wireframe, matching the ground grid's construction
   // (LineSegments, no fill) so the two read as the same kind of reference
   // object; only the colour differs.
@@ -386,6 +425,9 @@ export function create(canvasEl, {
 
   // ── state ─────────────────────────────────────────────────────────────
   let geo = null, cmeta = null, retarget = null, epId = null, variantId = 'active', episodes = [], epIndex = -1;
+  // Reach envelope of the CONFIGURED assembly. Fetched once and kept
+  // independent of any plan, so tabs that never load one still draw it.
+  let reachInfo = null, reachRequested = false;
   let frame = 0, playing = false, playTimer = 0, playSerial = 0, playPending = false;
   let colorMode = initColor || 'rgb', stride = initStride || 1;
   let layers = { ...DEFAULT_LAYERS, ...(initLayers || {}) };
@@ -418,7 +460,7 @@ export function create(canvasEl, {
       case 'cloud': return !!cmeta;
       case 'plan': return !!retarget?.ready;
       case 'mesh': return !!retarget?.ready && !!retarget?.robot_visuals?.length;
-      case 'reach': return Number.isFinite(retarget?.reach_m) && retarget.reach_m > 0;
+      case 'reach': return reachRadius() > 0;
       default: return true;
     }
   }
@@ -523,8 +565,7 @@ export function create(canvasEl, {
     handJoints.visible = layers.handFit;
     const robotOn = layers.robot && !!retarget?.ready;
     robotGroup.visible = robotOn;
-    reachGroup.visible = layers.reach && !!retarget?.ready
-      && Number.isFinite(retarget?.reach_m) && retarget.reach_m > 0;
+    reachGroup.visible = layers.reach && reachRadius() > 0;
     // Solid URDF meshes replace the stick-figure links/joints when they are
     // loaded and the "robot: solid mesh" row is on; the base triad + light stay.
     const meshMode = robotOn && layers.robotMesh && robotMeshReady
@@ -765,19 +806,10 @@ export function create(canvasEl, {
     clearRobotMeshes();
     clearGroup(robotGroup);
     robotGroup.add(robotMeshGroup);
-    clearGroup(reachGroup);
+    // The envelope is a sphere about the base, so base rotation cannot change
+    // what it covers; only the centre and the radius matter.
+    refreshReach();
     if (!retarget?.ready) return;
-    // Envelope is a sphere about the base, so only the base translation is
-    // needed; base rotation cannot change what a sphere covers.
-    buildReachSphere(retarget.reach_m);
-    if (retarget.base_transform) {
-      const m = rowMajorMatrix4(retarget.base_transform);
-      reachGroup.position.setFromMatrixPosition(m);
-    } else if (Array.isArray(retarget.base_position)) {
-      reachGroup.position.set(...retarget.base_position);
-    } else {
-      reachGroup.position.set(0, 0, 0);
-    }
     const linkMaterial = new THREE.MeshStandardMaterial({ color: 0x8aa4ba, roughness: 0.65 });
     const gripperMaterial = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.55 });
     const jointMaterial = new THREE.MeshStandardMaterial({ color: 0xdbeafe, roughness: 0.45 });
@@ -1042,6 +1074,7 @@ export function create(canvasEl, {
   // ── public API ────────────────────────────────────────────────────────
   async function loadEpisode(id, list, variant = 'active') {
     pause();
+    ensureReachInfo();
     const serial = ++loadSerial;
     const episodeChanged = id !== epId;
     loadingEpisode = true;

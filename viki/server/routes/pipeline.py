@@ -488,6 +488,36 @@ async def retarget_grippers():
     return {"grippers": gripper_catalog()}
 
 
+@_ep.get("/retarget/reach")
+async def retarget_reach():
+    """Reach envelope of the configured assembly, independent of any plan.
+
+    The envelope is a property of the robot and where it stands, not of a
+    retargeted episode, so the viewer must be able to draw it on a tab that has
+    never loaded a plan - which is exactly where it is most useful, when
+    judging whether the hand being recorded is inside the workspace at all.
+    Resolution goes through the same `config_from_options` the retarget stage
+    uses, so what is drawn is what would be solved.
+    """
+    from viki.retarget.run import config_from_options
+
+    cfg = config_from_options(None, {})
+    return {
+        "robot": cfg.robot,
+        "gripper": cfg.gripper,
+        "base_position": list(cfg.base_position),
+        "base_rpy_deg": list(cfg.base_rpy_deg),
+        "reach_m": _assembly_reach_m(
+            cfg.robot,
+            cfg.gripper,
+            cfg.adapter.kind,
+            tuple(float(v) for v in cfg.adapter.translation_m),
+            tuple(float(v) for v in cfg.adapter.rpy_deg),
+            float(cfg.adapter.radius_m),
+        ),
+    }
+
+
 @_ep.get("/retarget/preview")
 async def retarget_preview(
     robot: str = "ur10",
