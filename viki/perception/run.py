@@ -32,6 +32,10 @@ class PerceiveOpts:
     interp_max_gap: int = 0
     sg_window: int = 7
     sg_polyorder: int = 2
+    # Custom-path override of the triangulation agreement gate, in milliradians.
+    # Stated as an angle so the same value means the same thing at any capture
+    # resolution; a named profile ignores it, because a profile owns its own.
+    reproj_inlier_mrad: float | None = None
     flip: bool = False
     build_cloud: bool = False
     cloud_stride: int = 6
@@ -55,6 +59,11 @@ class PerceiveOpts:
             min_confidence=float(d.get("min_confidence", 0.5)),
             interp_max_gap=int(d.get("interp_max_gap", getattr(cfg, "PERCEPTION_INTERP_MAX_GAP", 0))),
             sg_window=int(d.get("sg_window", 7)),
+            reproj_inlier_mrad=(
+                float(d["reproj_inlier_mrad"])
+                if d.get("reproj_inlier_mrad") not in (None, "", 0)
+                else None
+            ),
             sg_polyorder=int(d.get("sg_polyorder", 2)),
             flip=bool(d.get("flip", False)),
             build_cloud=bool(d.get("build_cloud", False)),
@@ -112,7 +121,11 @@ def perceive_episode(ep, opts: PerceiveOpts | dict | None = None, report=None) -
     report(stage="fuse")
     prepare_episode(ep, opts.sg_window, opts.sg_polyorder,
                     interp_max_gap=opts.interp_max_gap, report=report,
-                    profile=opts.profile)
+                    profile=opts.profile,
+                    triangulation=(
+                        {"reproj_inlier_mrad": opts.reproj_inlier_mrad}
+                        if opts.reproj_inlier_mrad is not None else None
+                    ))
 
     if opts.build_cloud:
         report(stage="cloud")

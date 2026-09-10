@@ -21,10 +21,28 @@ STABLE_FUSED_HAND_V3 = "stable-fused-hand-v3"
 STABLE_FUSED_HAND_V4 = "stable-fused-hand-v4"
 FUSED_HAND_REPROJ8_V1 = "fused-hand-reproj8-v1"
 FUSED_HAND_REPROJ16_V1 = "fused-hand-reproj16-v1"
-# Keep the absolute-confidence V3 available for controlled A/B runs, but use
-# the already validated V2 recipe as the product baseline until V3 is shown to
-# improve fixed-episode metrics without reducing usable observations.
-DEFAULT_PERCEPTION_PROFILE = STABLE_FUSED_HAND_V2
+# V4 is the product baseline as of 2026-09-10. It is V2 with the triangulation
+# agreement gate widened from 4 px to 25 mrad (15.9 px at this rig's colour
+# intrinsics) and every scale-dependent knob restated invariantly.
+#
+# Evidence, on the artifact production actually retargets rather than on the
+# landmark intermediate every earlier comparison used (E13, E14):
+#   * frames whose hand pose is SOLVED rather than filled from neighbours rise
+#     from 30-50% to 80-100% across five scenes;
+#   * the rigid articulated model, which holds bone lengths to a CV of 1e-5,
+#     absorbs the added observations with a LOWER p95 residual on every scene -
+#     geometric nonsense could not be fitted, so the model itself is the witness
+#     that the extra coverage is real;
+#   * IK tracking error on evidence-backed frames halves to thirds where the
+#     table is not an active constraint, and orientation improves monotonically
+#     on every scene measured, including the one where position does not.
+#
+# Deliberately NOT included: `palm_evidence="all_observed"`, which fixes a real
+# defect (E8) but was measured to make IK worse on identical targets by removing
+# 45-61% of the weighted frames; and `confidence_calibration="absolute"`, which
+# is a no-op on this data and would make this a two-factor change. Both remain
+# available on V2.1 and V3.
+DEFAULT_PERCEPTION_PROFILE = STABLE_FUSED_HAND_V4
 
 
 @dataclass(frozen=True)

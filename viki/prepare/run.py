@@ -829,6 +829,7 @@ def generate_stage_checkpoints(
 def prepare_episode(
     ep, window_length: int = 7, polyorder: int = 2, interp_max_gap: int | None = None,
     report=None, profile: str | None = None,
+    triangulation: dict[str, object] | None = None,
 ) -> str:
     """
     Episode-aware wrapper around :meth:`PreparationPipeline.smooth_recording`:
@@ -880,8 +881,14 @@ def prepare_episode(
         _configure_episode_inputs(
             pp,
             ep,
-            triangulation=(profile_spec.triangulation if profile_spec else None),
-            force_triangulation=profile_spec is not None,
+            # A named profile owns its triangulation outright. The custom path
+            # may override individual knobs per run; when it does, joints3d.npz
+            # must be rebuilt even if it looks fresh, or the override would
+            # silently do nothing.
+            triangulation=(
+                profile_spec.triangulation if profile_spec else (triangulation or None)
+            ),
+            force_triangulation=profile_spec is not None or bool(triangulation),
             require_triangulation=profile_spec is not None,
         )
 

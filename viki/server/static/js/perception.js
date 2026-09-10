@@ -21,10 +21,11 @@ const STABLE_PIPELINE_V1 = 'stable-fused-hand-v1';
 const STABLE_PIPELINE_V2 = 'stable-fused-hand-v2';
 const NO_EXTRAP_PIPELINE_V1 = 'fused-hand-no-extrap-v1';
 const STABLE_PIPELINE_V3 = 'stable-fused-hand-v3';
-const DEFAULT_PIPELINE = STABLE_PIPELINE_V2;
-// UI-state schema version. Bumped when V2 became the default so an old saved
-// V3 selection cannot silently defeat the deliberate baseline rollback.
-const SESSION_KEY = 'perceive-v3';
+const STABLE_PIPELINE_V4 = 'stable-fused-hand-v4';
+const DEFAULT_PIPELINE = STABLE_PIPELINE_V4;
+// UI-state schema version. Bumped whenever the default profile changes, so a
+// selection saved under the previous default cannot silently outlive it.
+const SESSION_KEY = 'perceive-v4';
 // 21-point hand diagram, palm toward you, fingers up. [x, y] in a 0..100 box.
 const HAND_XY = [
   [50, 94],                                  // 0 wrist
@@ -87,7 +88,8 @@ export function mount(view) {
         <div class="calib-sec-title">1 · Model</div>
         <div class="cfg-row"><label>Pipeline</label>
           <select data-role="profile">
-            <option value="${STABLE_PIPELINE_V2}" ${S.profile === STABLE_PIPELINE_V2 ? 'selected' : ''}>stable v2 · linear edge hold</option>
+            <option value="${STABLE_PIPELINE_V4}" ${S.profile === STABLE_PIPELINE_V4 ? 'selected' : ''}>stable v4 · 25 mrad gate (default)</option>
+            <option value="${STABLE_PIPELINE_V2}" ${S.profile === STABLE_PIPELINE_V2 ? 'selected' : ''}>stable v2 · 4 px gate (previous default)</option>
             <option value="${NO_EXTRAP_PIPELINE_V1}" ${S.profile === NO_EXTRAP_PIPELINE_V1 ? 'selected' : ''}>candidate · no edge extrapolation</option>
             <option value="${STABLE_PIPELINE_V3}" ${S.profile === STABLE_PIPELINE_V3 ? 'selected' : ''}>experimental v3 · absolute confidence</option>
             <option value="${STABLE_PIPELINE_V1}" ${S.profile === STABLE_PIPELINE_V1 ? 'selected' : ''}>stable v1 · binary gripper (legacy)</option>
@@ -121,6 +123,13 @@ export function mount(view) {
           <input type="number" data-role="sgwin" min="3" step="2" value="${S.sg_window}"></div>
         <div class="cfg-row"><label>SG polyorder</label>
           <input type="number" data-role="sgpoly" min="1" value="${S.sg_polyorder}"></div>
+        <div class="cfg-row"><label>Triangulation gate, mrad</label>
+          <input type="number" data-role="gatemrad" min="0" step="0.5"
+                 value="${S.reproj_inlier_mrad ?? ''}" placeholder="config"></div>
+        <div class="hint" data-role="gate-meta">
+          How far two cameras may disagree about a joint before it is discarded.
+          An angle, so it means the same at any capture resolution. Blank = config.
+        </div>
       </section>
 
       <section class="calib-sec">
@@ -200,9 +209,11 @@ function syncProfile() {
   const profile = root.querySelector('[data-role="profile"]').value;
   const locked = [CLEAN_BASELINE, STABLE_PIPELINE_V3, STABLE_PIPELINE_V1,
     NO_EXTRAP_PIPELINE_V1,
-    STABLE_PIPELINE_V2].includes(profile);
+    STABLE_PIPELINE_V2, STABLE_PIPELINE_V4].includes(profile);
   const fixed = {
     model: 'mediapipe', flip: false, minconf: 0.5, gap: 0, sgwin: 7, sgpoly: 2,
+    // A named profile owns its own gate; the field shows what it will use.
+    gatemrad: profile === STABLE_PIPELINE_V4 ? 25 : '',
   };
   if (locked) {
     Object.entries(fixed).forEach(([role, value]) => {
@@ -213,12 +224,14 @@ function syncProfile() {
     });
     renderHand(DEFAULT_LM);
   }
-  ['model', 'flip', 'minconf', 'gap', 'sgwin', 'sgpoly'].forEach(role => {
+  ['model', 'flip', 'minconf', 'gap', 'sgwin', 'sgpoly', 'gatemrad'].forEach(role => {
     const el = root.querySelector(`[data-role="${role}"]`);
     if (el) el.disabled = locked;
   });
   root.querySelector('[data-role="profile-meta"]').textContent =
-    profile === STABLE_PIPELINE_V3
+    profile === STABLE_PIPELINE_V4
+      ? 'default v4: v2 geometry · 25 mrad agreement gate · resolution-independent'
+      : profile === STABLE_PIPELINE_V3
       ? 'experimental v3: validated gates · absolute cross-episode confidence'
       : profile === NO_EXTRAP_PIPELINE_V1
         ? 'candidate: v2 linear fill · only between observations · no edge extrapolation'
@@ -343,6 +356,10 @@ function opts() {
     interp_max_gap: +root.querySelector('[data-role="gap"]').value,
     sg_window: +root.querySelector('[data-role="sgwin"]').value,
     sg_polyorder: +root.querySelector('[data-role="sgpoly"]').value,
+    reproj_inlier_mrad: (() => {
+      const raw = root.querySelector('[data-role="gatemrad"]').value.trim();
+      return raw === '' ? null : +raw;
+    })(),
     build_cloud: root.querySelector('[data-role="regen-cloud"]').checked,
     cloud_stride: +root.querySelector('[data-role="stride"]').value,
     cloud_bbox: bbox.length === 6 ? bbox : null,

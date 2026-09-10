@@ -1388,6 +1388,79 @@ argument and the `err|supported` split narrow that, but do not close it. What is
 established is the ordering, its consistency across scenes and metrics, and that
 the one reversal has a diagnosed non-perception cause.
 
+## Promotion — stable-fused-hand-v4 is the default from 2026-09-10
+
+`DEFAULT_PERCEPTION_PROFILE = stable-fused-hand-v4`. V4 is V2 with the
+triangulation agreement gate widened from 4 px to **25 mrad**, and with every
+scale-dependent knob restated in a unit that survives a change of capture
+configuration.
+
+### What changed, and what deliberately did not
+
+| knob | V2 | V4 | resolves to, this rig |
+|---|---|---|---|
+| triangulation gate | 4 px | **25.0 mrad** | 15.9 px |
+| depth patch radius | 15 px | **38.0 mrad** | exactly 15 px |
+| Savitzky-Golay window | 7 frames | **233 ms** | exactly 7 frames |
+| `interp_max_gap` | 0 | 0 | unlimited; already scale-free |
+| everything else | — | identical to V2 | — |
+
+Only the first is a behavioural change. The other two are the *same* values
+restated, verified to resolve to the frozen integers.
+
+**Not included, deliberately.** `palm_evidence="all_observed"` fixes the real
+defect of E8 but E14 measured it making IK worse on byte-identical targets, by
+removing 45–61% of the weighted frames; the fabrication it deletes was carrying
+load that nothing replaces yet. `confidence_calibration="absolute"` is a no-op
+on this data (E9 correction) and would have made this a two-factor change.
+Both stay on V2.1 and V3.
+
+### Evidence
+
+Measured on the artifact production actually retargets — the articulated fit —
+rather than on the landmark intermediate every comparison before E13 used.
+
+- **Frames whose hand pose is solved rather than filled** rise from 30–50% to
+  80–100% across five scenes (E13). On V2, half to two thirds of every episode
+  reached the robot as a pose interpolated from neighbours.
+- **The rigid model is the witness, not me.** The articulated fit holds bone
+  lengths to a CV of ~1e-5; geometry that is impossible for a hand cannot be
+  absorbed by it and must surface as residual. `anchor_residual_p95` *falls* on
+  every scene, the palm-outlier list stays empty, and the quality gate accepts
+  everywhere.
+- **IK tracking error on evidence-backed frames** halves to thirds where the
+  table is not an active constraint: 46.0 → 21.9 mm on cup_grab, 50.0 → 16.0 on
+  move-shipok (E14). **Orientation improves monotonically on every scene
+  measured**, including the one where position does not — and orientation is the
+  column free of the block-push floor confound.
+- **Two independent recipes agree.** The 8 px and 16 px candidates converge on
+  each other to 2.0–6.1 mm median of achieved trajectory while each sits 14–31 mm
+  from V2: two thresholds, two triangulations, two articulated fits, one hand.
+
+### The caveat that must travel with this
+
+**The acceptance gates for this dose were not registered before the run.** E7
+pre-registered gates and the candidates failed them; two of those four gates
+were later shown to measure quantities the articulated fit discards (raw
+landmark bone dispersion, which the fit drives to 1e-5 regardless, and raw
+landmark jitter, which it absorbs). The evidence that actually supports this
+promotion — E13 and E14 — was produced *after* the hypothesis, which is exactly
+the ordering rule 7 exists to prevent.
+
+The promotion is made anyway because the effect is large, monotone in the dose,
+consistent across three independent metric families, and because the alternative
+is shipping a default that reaches the robot with half its trajectory invented.
+But this entry is the record that the discipline was not followed here, and a
+pre-registered confirmation on scenes not used to form the hypothesis remains
+owed.
+
+### Custom runs
+
+`reproj_inlier_mrad` is exposed on the Extract tab as "Triangulation gate, mrad",
+editable only on the custom path — a named profile owns its own gate and shows
+it read-only. Supplying it forces `joints3d.npz` to be rebuilt, since otherwise
+a changed gate would silently do nothing against a fresh-looking artifact.
+
 ## Next controlled experiment
 
 After the linear V2 promotion, the next implementation candidate should change

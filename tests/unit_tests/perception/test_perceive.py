@@ -97,14 +97,20 @@ def test_perceive_end_to_end(tmp_path, monkeypatch):
 
 
 def test_perceive_opts_from_dict_defaults():
-    from viki.perception.profiles import STABLE_FUSED_HAND_V2
+    from viki.perception.profiles import STABLE_FUSED_HAND_V4
 
     o = PerceiveOpts.from_dict({})
     assert o.model and isinstance(o.track_lm, list) and len(o.track_lm) >= 6
-    assert o.profile == STABLE_FUSED_HAND_V2
+    assert o.profile == STABLE_FUSED_HAND_V4
     assert PerceiveOpts.from_dict({"profile": None}).profile is None
     # legacy 'backend' key still maps to model
     assert PerceiveOpts.from_dict({"backend": "rtmpose-m-hand5"}).model == "rtmpose-m-hand5"
+    # The angular gate override belongs to the custom path only, and an empty
+    # or zero value means "leave it to config" rather than "gate at zero".
+    assert o.reproj_inlier_mrad is None
+    assert PerceiveOpts.from_dict({"reproj_inlier_mrad": 12.5}).reproj_inlier_mrad == 12.5
+    for blank in (None, "", 0):
+        assert PerceiveOpts.from_dict({"reproj_inlier_mrad": blank}).reproj_inlier_mrad is None
     o2 = PerceiveOpts.from_dict({"hand": "left", "sg_window": 9, "track_lm": [0, 4, 8]})
     assert o2.hand == "left" and o2.sg_window == 9 and o2.track_lm == [0, 4, 8]
 
@@ -285,10 +291,11 @@ def test_stable_profiles_version_gripper_and_confidence_without_mutating_v1():
         STABLE_FUSED_HAND_V1,
         STABLE_FUSED_HAND_V2,
         STABLE_FUSED_HAND_V3,
+        STABLE_FUSED_HAND_V4,
         get_profile,
     )
 
-    assert DEFAULT_PERCEPTION_PROFILE == STABLE_FUSED_HAND_V2
+    assert DEFAULT_PERCEPTION_PROFILE == STABLE_FUSED_HAND_V4
     assert get_profile(STABLE_FUSED_HAND_V1).gripper == "binary"
     assert get_profile(STABLE_FUSED_HAND_V1).fused_interpolation == "cubic"
     assert get_profile(STABLE_FUSED_HAND_V1).fused_extrapolate_edges is True
@@ -305,6 +312,25 @@ def test_stable_profiles_version_gripper_and_confidence_without_mutating_v1():
             )
     assert get_profile(STABLE_FUSED_HAND_V2).confidence_calibration == "episode_max"
     assert get_profile(STABLE_FUSED_HAND_V3).gripper == "linear"
+
+    # V4 is V2 with every scale-dependent knob restated in a unit that does not
+    # change meaning when the capture configuration does. The default must not
+    # silently acquire a pixel- or frame-counted parameter again.
+    v2, v4 = get_profile(STABLE_FUSED_HAND_V2), get_profile(STABLE_FUSED_HAND_V4)
+    assert v4.triangulation["reproj_inlier_mrad"] == 25.0
+    assert v4.depth_radius_mrad is not None and v4.sg_window_ms is not None
+    # 0 means "no limit", which is already scale-free.
+    assert v4.interp_max_gap == 0
+    for field_name in v2.__dataclass_fields__:
+        if field_name not in {
+            "name", "description", "triangulation",
+            "depth_radius_mrad", "sg_window_ms", "interp_max_gap_ms",
+        }:
+            assert getattr(v4, field_name) == getattr(v2, field_name), field_name
+    # V1 and V2 keep their frozen counted forms: they are the record of what was
+    # actually run, and every protected baseline validates against them.
+    assert v2.depth_radius_mrad is None and v2.sg_window_ms is None
+    assert v2.triangulation.get("reproj_inlier_mrad") is None
     assert get_profile(STABLE_FUSED_HAND_V3).fused_interpolation == "linear"
     assert get_profile(STABLE_FUSED_HAND_V3).fused_extrapolate_edges is True
     assert get_profile(STABLE_FUSED_HAND_V3).confidence_calibration == "absolute"
