@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -36,10 +38,22 @@ async def start_export(req: ExportRequest):
         if req.format == "lerobot":
             from viki.export import export_dataset
 
-            return export_dataset(req.episodes, req.out_dir, fps=req.fps)
+            return {"out_dir": export_dataset(req.episodes, req.out_dir, fps=req.fps)}
         from viki.export import export_trajectories
 
-        return export_trajectories(req.episodes, req.out_dir, name=req.name)
+        out = export_trajectories(req.episodes, req.out_dir, name=req.name)
+        # Hand the UI what was actually written rather than only where: a
+        # bundle that silently skipped half its episodes should say so.
+        manifest = json.loads((Path(out) / "dataset.json").read_text())
+        return {
+            "out_dir": out,
+            "name": manifest["name"],
+            "episode_count": manifest["episode_count"],
+            "total_frames": manifest["total_frames"],
+            "robots": manifest["robots"],
+            "skipped": manifest["skipped"],
+            "screening": manifest["screening"],
+        }
 
     return {"job_id": jobs.submit("export", _job)}
 

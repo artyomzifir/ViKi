@@ -8,6 +8,7 @@ import * as record from './record.js';
 import * as perception from './perception.js';
 import * as retarget from './retarget.js';
 import * as viewer from './viewer.js';
+import * as exportTab from './export.js';
 import * as configModal from './config.js';
 import { makeStub } from './tabs_stub.js';
 
@@ -17,7 +18,7 @@ const TABS = {
   extract: { label: 'Extract', mod: perception },
   retarget: { label: 'Retarget', mod: retarget },
   replay: { label: 'Replay', mod: makeStub('Replay') },
-  export: { label: 'Export', mod: makeStub('Export') },
+  export: { label: 'Export', mod: exportTab },
   viewer: { label: 'Viewer', mod: viewer },
 };
 const DEFAULT_TAB = 'calibration';

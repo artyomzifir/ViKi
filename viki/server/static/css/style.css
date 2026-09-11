@@ -32,7 +32,7 @@
 ::-webkit-scrollbar-thumb:active { background: var(--accent); }
 /* Panels painted on --surface: fade the track/inset border into that ground. */
 .cfg-body, #log-popover .log-list, .calib-cards, .record-cards, #calib-sets-list,
-.episode-list, .perc-side, .perc-eps, .ret-side, .ret-eps,
+.episode-list, .perc-side, .perc-eps, .ret-side, .ret-eps, .exp-eps, .exp-main,
 .calib-leftcol, .record-leftcol {
   scrollbar-color: var(--border) var(--surface);
 }
@@ -40,7 +40,8 @@
 .calib-cards::-webkit-scrollbar-thumb, .record-cards::-webkit-scrollbar-thumb,
 #calib-sets-list::-webkit-scrollbar-thumb, .episode-list::-webkit-scrollbar-thumb,
 .perc-side::-webkit-scrollbar-thumb, .perc-eps::-webkit-scrollbar-thumb,
-.ret-side::-webkit-scrollbar-thumb, .ret-eps::-webkit-scrollbar-thumb {
+.ret-side::-webkit-scrollbar-thumb, .ret-eps::-webkit-scrollbar-thumb,
+.exp-eps::-webkit-scrollbar-thumb, .exp-main::-webkit-scrollbar-thumb {
   border-color: var(--surface);
 }
 
@@ -544,6 +545,29 @@ button.scene-legend-row:focus-visible { outline: 1px solid var(--accent); outlin
 /* the per-frame progress pill is reused by the job popover and episode rows */
 .perc-bar { width: 60px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .perc-bar i { display: block; height: 100%; background: var(--accent); }
+
+/* ── Export tab: pick episodes on the left, format and result on the right ── */
+.export-tab {
+  height: 100%; display: grid;
+  grid-template-columns: clamp(230px, 22vw, 320px) minmax(0, 1fr);
+  gap: 1px; background: var(--border);
+}
+.exp-runcol {
+  background: var(--surface); padding: 10px; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.exp-runcol .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.exp-runcol .cfg-row select { width: 150px; }
+.exp-eps { flex: 1; min-height: 80px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+.exp-main {
+  background: var(--surface); padding: 10px; overflow-y: auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.exp-main .calib-sec { padding: 10px 12px; gap: 8px; max-width: 720px; }
+.exp-main .cfg-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.exp-main .cfg-row select { width: 300px; }
+.exp-main .cfg-row input { width: 300px; }
+.exp-main ul.hint { margin: 4px 0 0 16px; padding: 0; }
 
 /* ── Retarget tab: same scene grammar, denser solver controls ────────── */
 .retarget-tab {
