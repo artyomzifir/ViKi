@@ -237,8 +237,6 @@ skeleton_models/
 # skeleton_tests/
 models/
 
-
-CLAUDE.md
 .claude
 .agents
 .codex
