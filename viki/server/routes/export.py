@@ -1,4 +1,4 @@
-"""viki.server.routes.export — labelled episodes -> LeRobot dataset (stub, paper §3.9)."""
+"""viki.server.routes.export — retargeted episodes -> a dataset (paper §3.9)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,10 @@ router = APIRouter(prefix="/export", tags=["export"])
 class ExportRequest(BaseModel):
     episodes: list[str]
     out_dir: str
+    # "trajectory" needs nothing beyond numpy; "lerobot" needs the optional
+    # extra and episodes that have been replayed and screened.
+    format: str = "trajectory"
+    name: str | None = None
     fps: int = 15
 
 
@@ -24,12 +28,18 @@ async def start_export(req: ExportRequest):
     if not req.episodes:
         raise HTTPException(400, "no episodes given")
 
-    logger.info("export: %d episode(s) -> %s @ %d fps", len(req.episodes), req.out_dir, req.fps)
+    if req.format not in {"trajectory", "lerobot"}:
+        raise HTTPException(422, "format must be 'trajectory' or 'lerobot'")
+    logger.info("export: %d episode(s) -> %s (%s)", len(req.episodes), req.out_dir, req.format)
 
     def _job():
-        from viki.export import export_dataset
+        if req.format == "lerobot":
+            from viki.export import export_dataset
 
-        return export_dataset(req.episodes, req.out_dir, fps=req.fps)
+            return export_dataset(req.episodes, req.out_dir, fps=req.fps)
+        from viki.export import export_trajectories
+
+        return export_trajectories(req.episodes, req.out_dir, name=req.name)
 
     return {"job_id": jobs.submit("export", _job)}
 

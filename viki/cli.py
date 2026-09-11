@@ -184,9 +184,14 @@ def _cmd_label(a) -> None:
 
 
 def _cmd_export(a) -> None:
-    from viki.export import export_dataset
+    if a.format == "lerobot":
+        from viki.export import export_dataset
 
-    print(export_dataset(a.episodes, a.out, fps=a.fps))
+        print(export_dataset(a.episodes, a.out, fps=a.fps))
+    else:
+        from viki.export import export_trajectories
+
+        print(export_trajectories(a.episodes, a.out, name=a.name))
 
 
 def _cmd_viz(a) -> None:
@@ -392,10 +397,17 @@ def _build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--outcome", default=None, choices=["good", "bad", "unrated"])
     pl.set_defaults(func=_cmd_label)
 
-    px = sub.add_parser("export", help="labelled episodes -> LeRobot dataset")
+    px = sub.add_parser("export", help="retargeted episodes -> a dataset")
     px.add_argument("episodes", nargs="+")
     px.add_argument("--out", required=True)
-    px.add_argument("--fps", type=int, default=15)
+    px.add_argument(
+        "--format", choices=["trajectory", "lerobot"], default="trajectory",
+        help="trajectory: self-contained npz bundle, no optional deps (default). "
+             "lerobot: policy-training dataset with video; needs viki[export] and "
+             "episodes that have been replayed and screened",
+    )
+    px.add_argument("--name", default=None, help="dataset name in the manifest")
+    px.add_argument("--fps", type=int, default=15, help="lerobot format only")
     px.set_defaults(func=_cmd_export)
 
     pv = sub.add_parser("viz", help="headless 3-D figure of an episode (rec|cln)")

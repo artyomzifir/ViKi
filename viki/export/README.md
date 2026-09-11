@@ -1,38 +1,64 @@
-# viki.export — LeRobot dataset  · [stub stage]
+# viki.export — datasets  · v0.0.1
 
-**Stage 6** · labelled + screened episodes → `datasets/<name>/` · paper §3.9
+**Stage 6** · retargeted episodes → a dataset · paper §3.9
 
-Aggregate eligible episodes into one LeRobot dataset for policy training.
-Delegates to the **optional** `lerobot` package (`pip install 'viki[export]'`,
-which pulls in torch) — `export.run` raises a clear install error when it is
-absent.
+Two writers, for two different needs.
 
-## Eligibility
+| | `export_trajectories` (default) | `export_dataset` |
+|---|---|---|
+| output | self-contained `.npz` bundle + manifest | LeRobot dataset |
+| dependencies | numpy only | optional `viki[export]` → `lerobot`, torch |
+| camera video | no | yes |
+| requires replay + screening | no | yes |
+| intended for | replaying, inspecting, converting, shipping | policy training |
 
-An episode is exported when `retarget` and `replay` have run, its replay verdict
-is not `reject`, its label `outcome` is not `bad`, and it has a non-empty
-`task` string (`labeling.validate_labels(..., for_export=True)`).
+```bash
+viki export <episode>... --out data/datasets/pick            # trajectory bundle
+viki export <episode>... --out data/pick --format lerobot    # LeRobot
+```
 
-## Files
+## Trajectory bundle
 
-| file | what |
+```
+<out>/dataset.json                    manifest: schema, units, frames, provenance, index
+<out>/episodes/<id>/trajectory.npz    the arrays
+<out>/episodes/<id>/meta.json         that episode's provenance
+```
+
+Units are metres, radians, seconds and microseconds. Poses are in the
+**calibration** frame (ChArUco board origin) unless the key ends `_rig`, and the
+manifest says so rather than leaving it to be assumed.
+
+| array | what |
 |---|---|
-| `run.py` | `export_dataset(episode_ids, out_dir, fps)` — filter, build per-frame dicts, drive the writer |
-| `lerobot.py` | `LeRobotWriter` — `LeRobotDataset.create` / `add_frame(frame, task=...)` / `save_episode` / `finalize` |
+| `q`, `joint_velocity`, `joint_acceleration` | robot joint trajectory, rad |
+| `q_approach` | home → first frame, not per-frame |
+| `gripper_opening`, `gripper_opening_m`, `gripper_joint_position` | gripper command |
+| `target_position_calibration`, `target_rotation_calibration` | commanded tool pose |
+| `achieved_position_calibration`, `achieved_rotation_calibration` | forward kinematics |
+| `position_error_m`, `orientation_error_rad` | tracking error |
+| `omega` | per-frame evidence weight used by the IK |
+| `hand_position_rig`, `hand_rotation_rig`, `hand_valid` | the human pose the plan came from |
+| `hand_observed_mask`, `hand_pose_supported` | which frames were measured rather than filled |
+| `timestamps` | host monotonic µs |
 
-## Frame schema (per timestep)
+### What this version does not guarantee
 
-| key | source |
-|---|---|
-| `observation.images.<cam>` | `raw/<cam>.mp4`, decimated to `fps` |
-| `observation.state` | `replay.h5:q_attained` + continuous normalised `gripper_attained` (falls back to `plan.h5`) |
-| `action` | next-step `observation.state` |
-| `task` | `EpisodeLabels.task` (per-segment when phase segments are set → frame-level task) |
-| `next.success` | `outcome == "good" and verdict in {pass, dry-run}` |
-| `annotation.wrist_pose` `.object_relative` `.confidence` `.replay_residual` `.phase` | `cln.npz` + `replay.h5` + labels |
+**Nothing is screened.** Replay is a stub, so trajectories are exported without
+being replayed, and an episode need not be labelled or rated. The manifest says
+this in `screening`, and every episode's `meta.json` records what actually ran —
+`replay_run`, `replay_verdict`, `labelled`, `outcome_rated`. A consumer should
+not mistake a bundle for a vetted dataset.
 
-## Stubbed
+An episode qualifies when retarget has produced a readable `plan.h5`. One
+unreadable episode is skipped and listed in the manifest's `skipped`, never
+fatal to the rest.
 
+## LeRobot dataset
+
+Eligibility is the stricter one: `retarget` and `replay` have run, the replay
+verdict is not `reject`, `outcome` is not `bad`, and the task string is
+non-empty. Frame schema and stub status are unchanged from before:
 `annotation.object_relative` is a shape-correct placeholder until
-`prepare.represent` produces a real track; `info.json` is stamped
-`viki_export_status="partial"`.
+`prepare.represent` produces a real object track — see
+`docs/object_centric_decision.md` for why it does not yet.

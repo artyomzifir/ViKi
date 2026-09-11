@@ -3,8 +3,13 @@ End-to-end smoke test over a synthetic episode:
     rec.npz -> prepare -> retarget -> replay(dryrun) -> label -> export
 
 Uses a hand-written rec.npz (no camera decode). Retarget is skipped when
-Pinocchio/PINK is unavailable; export asserts the clean "needs lerobot" error.
+Pinocchio/PINK is unavailable. Export is checked both ways: the trajectory
+bundle runs for real and closes the chain, and the LeRobot path asserts its
+clean "needs lerobot" error.
 """
+
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -82,8 +87,21 @@ def test_pipeline_smoke(tmp_path):
     validate_labels(labels, n_frames, for_export=True)
     save_labels(ep, labels)
 
-    # export: no lerobot in the test image -> clean install error
-    from viki.export import export_dataset
+    # export, trajectory bundle: the default path, and the one that completes
+    # without optional dependencies. This is what closes the artifact chain.
+    from viki.export import export_dataset, export_trajectories
 
+    out = export_trajectories([str(ep.root)], str(tmp_path / "bundle"))
+    manifest = json.loads((Path(out) / "dataset.json").read_text())
+    assert manifest["episode_count"] == 1
+    assert manifest["total_frames"] == n_frames
+    assert manifest["episodes"][0]["task"] == "pick up the block"
+    # Replay did run here, and the manifest must say so rather than blanket-claim
+    # that nothing was screened.
+    assert manifest["episodes"][0]["screening"]["replay_run"] is True
+    traj = np.load(Path(out) / "episodes" / ep.id / "trajectory.npz", allow_pickle=False)
+    assert traj["q"].shape == (n_frames, 6)
+
+    # export, LeRobot: no lerobot in the test image -> clean install error
     with pytest.raises(RuntimeError, match="lerobot"):
         export_dataset([str(ep.root)], str(tmp_path / "ds"), fps=15)
