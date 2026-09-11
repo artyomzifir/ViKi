@@ -11,7 +11,7 @@ prepare       prepare/      rec.npz     ->  cln.npz      fused + smoothed landma
 retarget      retarget/     cln.npz     ->  plan.h5      pinch/palm target -> adapter -> gripper TCP -> robot joints
 replay        replay/       plan.h5     ->  replay.h5    proprioception attained on hardware   [stub]
 label         labeling.py   -> meta.json["labels"]       task string / phase segments / outcome
-export        export/       episodes/*  ->  datasets/<name>/   LeRobot dataset                 [stub]
+export        export/       episodes/*  ->  datasets/<name>/   trajectory bundle; LeRobot  [partial]
 
 calibration/  intrinsics + extrinsics (board -> world), a side input to perception
 render/       depth colourise, MJPEG, 3-D matplotlib views — no FastAPI, no hardware
