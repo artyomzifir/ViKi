@@ -255,7 +255,64 @@ distinctive" is as cheap to satisfy as the ChArUco board already is — but the
 pipeline must degrade to geometry plus association when it is not met, and
 cup_grab is the case to develop that against.
 
-## 8. Where this points
+## 8. Does the object make a steadier IK target than the hand?
+
+Asked because the motivating purpose is not cross-placement transfer but
+**grasp stability** — keeping jitter in the grasp approximation out of the
+kinematics downstream. That purpose needs no new recordings, so it is testable
+now.
+
+Measured as RMS second difference of the target trajectory during a hold, in
+mm per frame². `smoothed_points` is already Savitzky-Golay filtered by the
+pipeline, so both signals are reported under the same SG(7,2) to keep it fair.
+
+### A segmentation bug found on the way
+
+The first run said the object was 8–38× *worse* than the hand on pick_up_u
+(raw d2 = 31.3 against 0.83). That was not the data. Taking the **largest
+connected component** of the colour mask is wrong for a grasped object: the
+hand occludes its middle and splits the red region into two pieces, and the
+"largest" flips between them. Frames 450–460 show two components of 10 463 and
+4 939 px; by 470 they merge into one of 15 581; at 530 the order swaps and the
+wrong piece wins.
+
+Grouping by **proximity to the grasp** instead of by connectivity fixes it:
+
+| scene | largest component | proximity |
+|---|---:|---:|
+| pick_up_u, raw | 31.3 | **2.76** |
+| pick_up_u, SG | 6.93 | **0.93** |
+| move-shipok, raw | 0.57 | 0.83 |
+| move-shipok, SG | 0.24 | 0.28 |
+
+An 11× reduction where it was broken, at a cost of ~14 % where connectivity
+already worked — because proximity admits a few extra points. Proximity is the
+right default. (The apparent hue of those components, H ≈ 120–145, is an
+averaging artefact across the red wrap-around, not skin.)
+
+### The answer
+
+| scene | hand anchor, SG | object, SG | |
+|---|---:|---:|---|
+| move-shipok (pinch) | 0.412 | **0.276** | object 33 % steadier |
+| pick_up_u (whole hand) | 0.827 | 0.931 | object 13 % noisier |
+
+**The object does not dominate the hand.** It is meaningfully steadier on the
+pinch grasp and slightly worse on the whole-hand grasp. As an argument for
+replacing the hand-derived target with an object-derived one, this does not
+carry: the gain is real but neither large nor general.
+
+What the measurement does show is **disagreement**: on pick_up_u the object and
+the hand anchor differ with σ = 22.8 mm. One of the two is wrong by two
+centimetres, and which one is not decidable from smoothness. That suggests the
+object's value here is not as a replacement signal but as an **independent
+witness** — the disagreement is a per-frame flag for "the grasp approximation is
+not to be trusted here", which serves the stated purpose better than smoothing
+would. Registration does not rescue it either: replacing the centroid with an
+ICP-registered model position changed d2 by under 20 % on both scenes, and the
+ICP residual on pick_up_u is 6.7 mm against 2.0 mm on move-shipok.
+
+## 9. Where this points
 
 Estimate the object pose **in the table plane** — `(x, y, yaw)` — rather than in
 SE(3). Segment with colour plus depth. Take yaw from the in-plane silhouette
