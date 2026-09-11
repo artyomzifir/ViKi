@@ -1,4 +1,4 @@
-# ViKi — Vision-based Kinematic Imitation
+# ViKi — Video-to-Kinematics
 
 > Turn multi-view RGB-D video of a human doing a manipulation task into a
 > robot-ready demonstration dataset — no teleoperation rig required.
