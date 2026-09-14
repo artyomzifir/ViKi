@@ -173,6 +173,7 @@
   "DEPTH_DEBUG": false,
   "RETARGET_DEFAULT_ROBOT": "ur10",
   "RETARGET_DEFAULT_GRIPPER_MODEL": "robotiq_2f85",
+  "RETARGET_REFERENCE_POLICY": "robot_home",
   "RETARGET_TARGET_POSITION_ANCHOR": "pinch_center",
   "RETARGET_ROBOT_BASE_POSITION": [
     -0.7,
@@ -201,7 +202,7 @@
     0.0
   ],
   "RETARGET_HAND_TO_EE_RPY_DEG": [
-    -175.675,
+    4.325,
     15.45,
     -47.922
   ],

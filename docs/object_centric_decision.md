@@ -1,5 +1,12 @@
 # Object-centric representation — where it stands, and what to do
 
+> **2026-09-14 update.**  This decision still applies to making an unconditional
+> object-pose factor part of production retarget.  The next approved precursor
+> is now to evaluate semantic RGB-D segmentation independently, without treating
+> its output as truth or enabling object-relative retarget by default.  See
+> [`2026-09-14-sam-rgbd-segmentation-plan.md`](2026-09-14-sam-rgbd-segmentation-plan.md)
+> and [`2026-09-13-object-shape-se3-grasp-probe.md`](2026-09-13-object-shape-se3-grasp-probe.md).
+
 Conclusion of the reconnaissance in `object_centric_recon.md`. This is a
 recommendation, not a change: no code was touched.
 

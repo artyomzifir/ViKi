@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class RetargetConfig:
     robot: str
+    reference_policy: str
     base_position: tuple[float, float, float]
     base_rpy_deg: tuple[float, float, float]
     hand_to_ee_translation: tuple[float, float, float]
@@ -99,6 +100,16 @@ def config_from_options(
 ) -> RetargetConfig:
     """Merge one request over the restart-persisted retarget defaults."""
     values = dict(options or {})
+    reference_policy = str(
+        _setting(
+            values,
+            "reference_policy",
+            "RETARGET_REFERENCE_POLICY",
+            "robot_home",
+        )
+    ).strip().lower()
+    if reference_policy not in {"robot_home", "zero"}:
+        raise ValueError("reference_policy must be 'robot_home' or 'zero'")
     base = validate_base_position(
         _setting(values, "base_position", "RETARGET_ROBOT_BASE_POSITION", [0, 0, 0])
     )
@@ -113,7 +124,7 @@ def config_from_options(
             values,
             "hand_to_ee_rpy_deg",
             "RETARGET_HAND_TO_EE_RPY_DEG",
-            [-175.675, 15.45, -47.922],
+            [4.325, 15.45, -47.922],
         )
     )
     weights = BatchWeights(
@@ -196,6 +207,7 @@ def config_from_options(
     )
     out = RetargetConfig(
         robot=str(robot or _setting(values, "robot", "RETARGET_DEFAULT_ROBOT", "ur10")),
+        reference_policy=reference_policy,
         base_position=tuple(float(x) for x in base),
         base_rpy_deg=tuple(float(x) for x in base_rpy),
         hand_to_ee_translation=tuple(float(x) for x in hand_t),
@@ -555,6 +567,7 @@ def retarget_episode(
             f"{robot_cfg.description}: {len(target_robot_p)} frames in {CALIBRATION_FRAME}, "
             f"target={targets.position_anchor}+palm, base={list(cfg.base_position)}, "
             f"base_rpy_deg={list(cfg.base_rpy_deg)}, "
+            f"reference={cfg.reference_policy}, "
             f"tool_point={gripper_cfg.grasp_center_name}, "
             f"adapter={cfg.adapter.length_m * 1000.0:.1f} mm, floor=z>=0"
         )
@@ -563,6 +576,11 @@ def retarget_episode(
     dt = 1.0 / targets.fps
     gripper_opening = gripper_cfg.profile_opening(targets.gripper_opening, dt)
     gripper_joint_position = gripper_cfg.joint_positions(gripper_opening)
+    reference_q = (
+        np.asarray(robot_cfg.home_q, dtype=np.float64)
+        if cfg.reference_policy == "robot_home"
+        else np.zeros(len(robot_cfg.joint_names), dtype=np.float64)
+    )
     kinematics = PinocchioKinematics(
         assembly.robot,
         assembly.orientation_frame,
@@ -570,6 +588,7 @@ def retarget_episode(
         collision_min_distance_m=cfg.collision_min_distance_m,
         actuated_joint_names=robot_cfg.joint_names,
         actuated_position_limits=robot_cfg.position_limits,
+        reference_q=reference_q,
         passive_joint_positions={
             assembly.drive_joint: gripper_joint_position,
         },
@@ -691,6 +710,13 @@ def retarget_episode(
         np.gradient(full_velocity, dt, axis=0)
         if len(full_velocity) > 2 else np.zeros_like(full_velocity)
     )
+    supported = targets.confidence > 0.0
+    wrist_joint_id = int(kinematics.model.getJointId(robot_cfg.joint_names[-1]))
+    wrist_height_m = (
+        joint_placements[:, wrist_joint_id, 2, 3] - target_calib_p[:, 2]
+    )
+    target_axis_z = target_calib_r[:, 2, 2]
+    achieved_axis_z = achieved_calib_r[:, 2, 2]
     metrics = {
         "position_rmse_mm": float(np.sqrt(np.mean(result.position_error_m ** 2)) * 1000.0),
         "position_p95_mm": float(np.percentile(result.position_error_m, 95) * 1000.0),
@@ -723,6 +749,18 @@ def retarget_episode(
         "target_position_anchor": targets.position_anchor,
         "adapter_length_mm": cfg.adapter.length_m * 1000.0,
         "approach_duration_sec": len(q_approach) * dt,
+        "reference_policy": cfg.reference_policy,
+        "reference_q": kinematics.q_reference.tolist(),
+        "wrist_above_target_fraction": float(np.mean(wrist_height_m > 0.0)),
+        "wrist_target_height_median_mm": float(
+            1000.0 * np.median(wrist_height_m)
+        ),
+        "target_tool_axis_down_fraction": float(
+            np.mean(target_axis_z[supported] < 0.0)
+        ) if supported.any() else 0.0,
+        "achieved_tool_axis_down_fraction": float(
+            np.mean(achieved_axis_z[supported] < 0.0)
+        ) if supported.any() else 0.0,
     }
     if sequential is not None:
         sequential_velocity = (
@@ -854,6 +892,8 @@ def retarget_episode(
         adapter_length_mm=cfg.adapter.length_m * 1000.0,
         position_rmse_mm=metrics["position_rmse_mm"],
         solver_status=plan["solver_status"],
+        reference_policy=cfg.reference_policy,
+        wrist_above_target_fraction=metrics["wrist_above_target_fraction"],
     )
     logger.info(
         "retarget %s: %s, %.1f mm RMSE",

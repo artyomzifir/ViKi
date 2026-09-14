@@ -28,9 +28,8 @@ function rpyFields(prefix, values, label = 'RPY', step = 1) {
 
 export function mount(view) {
   const defaults = FRONTEND_CONFIG.retarget || {};
-  // v3 resets position-only sessions now that the calibrated orientation term
-  // is part of the default objective.
-  const S = { ...defaults, ...sessionGet('retarget-v5', {}) };
+  // Version the saved form whenever defaults acquire incompatible semantics.
+  const S = { ...defaults, ...sessionGet('retarget-v6', {}) };
   // A fresh tab starts with the neutral assembly instead of an empty scene.
   // Selecting an episode below replaces it with that episode's plan.
   showingPreview = true;
@@ -68,6 +67,10 @@ export function mount(view) {
         <div class="calib-sec-title">1 · Robot & command</div>
         <div class="cfg-row"><label>Robot</label><select data-role="robot"></select></div>
         <div class="hint" data-role="robot-meta">URDF model</div>
+        <div class="cfg-row"><label>IK reference</label><select data-role="reference-policy">
+          <option value="robot_home">robot home (upper workspace)</option>
+          <option value="zero">zero (legacy)</option>
+        </select></div>
         <div class="cfg-row"><label>Pose source</label><select data-role="pose-source">
           <option value="landmarks">landmarks</option><option value="hand_fit">hand fit</option>
         </select></div>
@@ -147,6 +150,7 @@ export function mount(view) {
     if (frameError) frameError.textContent = frameErrorText(viewedPlan, frameNo);
   });
   root.querySelector('[data-role="pose-source"]').value = S.poseSource || 'landmarks';
+  root.querySelector('[data-role="reference-policy"]').value = S.referencePolicy || 'robot_home';
   root.querySelector('[data-role="target-anchor"]').value = S.targetPositionAnchor || 'pinch_center';
   ctl.onLayerChange(l => sessionSet('retargetLayers', l));
   root.addEventListener('click', onClick);
@@ -240,6 +244,7 @@ function vector(prefix) { return ['x', 'y', 'z'].map(axis => number(`${prefix}-$
 function options() {
   return {
     robot: root.querySelector('[data-role="robot"]').value,
+    reference_policy: root.querySelector('[data-role="reference-policy"]').value,
     pose_source: root.querySelector('[data-role="pose-source"]').value,
     target_position_anchor: root.querySelector('[data-role="target-anchor"]').value,
     gripper: root.querySelector('[data-role="gripper"]').value,
@@ -268,8 +273,9 @@ function options() {
 function persist() {
   if (!root) return;
   const o = options();
-  sessionSet('retarget-v5', {
+  sessionSet('retarget-v6', {
     robot: o.robot, gripper: o.gripper, poseSource: o.pose_source,
+    referencePolicy: o.reference_policy,
     targetPositionAnchor: o.target_position_anchor, basePosition: o.base_position,
     baseRpyDeg: o.base_rpy_deg,
     adapterTranslationMm: o.adapter_translation_mm, adapterRpyDeg: o.adapter_rpy_deg,
@@ -309,6 +315,7 @@ async function previewRobot() {
   const [adapterRoll, adapterPitch, adapterYaw] = vector('adapter-rpy');
   const params = new URLSearchParams({
     robot, gripper, x, y, z,
+    reference_policy: root.querySelector('[data-role="reference-policy"]').value,
     base_roll_deg: baseRoll, base_pitch_deg: basePitch, base_yaw_deg: baseYaw,
     adapter_x_mm: adapterX, adapter_y_mm: adapterY, adapter_z_mm: adapterZ,
     adapter_roll_deg: adapterRoll, adapter_pitch_deg: adapterPitch,
@@ -353,10 +360,16 @@ function renderMetrics(data) {
 }
 
 function frameErrorText(data, frameNo) {
-  const position = Number(data?.position_error_m?.[frameNo]);
-  const orientation = Number(data?.orientation_error_rad?.[frameNo]);
+  const sceneFps = Number(ctl?.fps) || Number(data?.fps) || 1;
+  const planFps = Number(data?.fps) || sceneFps;
+  const index = Math.max(0, Math.min(
+    Math.round(frameNo * planFps / sceneFps),
+    Math.max(0, Number(data?.n_frames || 1) - 1),
+  ));
+  const position = Number(data?.position_error_m?.[index]);
+  const orientation = Number(data?.orientation_error_rad?.[index]);
   if (!Number.isFinite(position) || !Number.isFinite(orientation)) return 'frame error unavailable';
-  const opening = Number(data?.gripper_opening_m?.[frameNo]);
+  const opening = Number(data?.gripper_opening_m?.[index]);
   const grip = Number.isFinite(opening) ? ` · gripper ${(opening * 1000).toFixed(1)} mm` : '';
   return `frame error ${(position * 1000).toFixed(1)} mm · ${(orientation * 180 / Math.PI).toFixed(1)}°${grip}`;
 }
@@ -420,7 +433,8 @@ function onChange(event) {
   else if (el.dataset.role === 'gripper') { syncGripperMeta(); persist(); previewRobot(); }
   else if (el.dataset.role) {
     persist();
-    if (el.dataset.role === 'target-anchor' || el.dataset.role.startsWith('base-')
+    if (el.dataset.role === 'reference-policy' || el.dataset.role === 'target-anchor'
+        || el.dataset.role.startsWith('base-')
         || el.dataset.role.startsWith('adapter-')) previewRobot();
   }
 }

@@ -87,6 +87,14 @@ def test_retarget_episode_real_ik(tmp_path):
         assert str(plan["target_position_anchor"]) == "pinch_center"
         assert str(plan["adapter_kind"]) == "user_cylinder"
         metrics = json.loads(str(plan["metrics_json"]))
+        assert metrics["reference_policy"] == "robot_home"
+        np.testing.assert_allclose(
+            metrics["reference_q"],
+            [0.0, -np.pi / 2.0, 0.0, -np.pi / 2.0, 0.0, 0.0],
+        )
+        assert 0.0 <= metrics["wrist_above_target_fraction"] <= 1.0
+        assert 0.0 <= metrics["target_tool_axis_down_fraction"] <= 1.0
+        assert 0.0 <= metrics["achieved_tool_axis_down_fraction"] <= 1.0
         assert metrics["min_floor_margin_mm"] >= -1e-6
         assert metrics["min_collision_margin"] >= -1e-7
         assert metrics["min_joint_limit_margin_rad"] >= -1e-7

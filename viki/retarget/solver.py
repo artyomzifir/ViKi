@@ -997,6 +997,7 @@ class PinocchioKinematics:
         collision_min_distance_m: float,
         actuated_joint_names: tuple[str, ...] | None = None,
         actuated_position_limits: tuple[tuple[float, float], ...] | None = None,
+        reference_q: tuple[float, ...] | np.ndarray | None = None,
         passive_joint_positions: dict[str, np.ndarray] | None = None,
         gripper_prefix: str = "",
         position_points: tuple[
@@ -1086,7 +1087,16 @@ class PinocchioKinematics:
         self._active_joint_ids = tuple(active_joint_ids)
         self._active_v_indices = np.asarray(active_v_indices, dtype=np.int32)
         self.nq = len(active_joint_ids)
-        self.q_reference = np.zeros(self.nq, dtype=np.float64)
+        if reference_q is None:
+            self.q_reference = np.zeros(self.nq, dtype=np.float64)
+        else:
+            self.q_reference = np.asarray(reference_q, dtype=np.float64).copy()
+            if self.q_reference.shape != (self.nq,) or not np.isfinite(
+                self.q_reference
+            ).all():
+                raise ValueError(
+                    f"reference_q must be a finite vector with shape {(self.nq,)}"
+                )
         self.q_min = np.full(self.nq, -np.inf, dtype=np.float64)
         self.q_max = np.full(self.nq, np.inf, dtype=np.float64)
         for output_index, joint_id in enumerate(active_joint_ids):
@@ -1112,6 +1122,10 @@ class PinocchioKinematics:
                 raise ValueError("actuated position limits must be finite lower/upper pairs")
             self.q_min = limits[:, 0].copy()
             self.q_max = limits[:, 1].copy()
+        if np.any(self.q_reference < self.q_min) or np.any(
+            self.q_reference > self.q_max
+        ):
+            raise ValueError("reference_q exceeds the actuated position limits")
         self.velocity_limit = np.asarray(
             self.model.velocityLimit, dtype=np.float64
         )[self._active_v_indices].copy()

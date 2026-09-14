@@ -522,6 +522,7 @@ async def retarget_reach():
 async def retarget_preview(
     robot: str = "ur10",
     gripper: str = "robotiq_2f85",
+    reference_policy: str = "robot_home",
     x: float = 0.0,
     y: float = 0.0,
     z: float = 0.0,
@@ -547,6 +548,14 @@ async def retarget_preview(
 
     cfg = normalize_robot(robot)
     gripper_cfg = normalize_gripper(gripper)
+    reference_policy = reference_policy.strip().lower()
+    if reference_policy not in {"robot_home", "zero"}:
+        raise HTTPException(422, "reference policy must be robot_home or zero")
+    reference_q = (
+        np.asarray(cfg.home_q, dtype=np.float64)
+        if reference_policy == "robot_home"
+        else np.zeros(len(cfg.joint_names), dtype=np.float64)
+    )
     target_position_anchor = target_position_anchor.strip().lower()
     if target_position_anchor not in {"pinch_center", "wrist"}:
         raise HTTPException(422, "target position anchor must be pinch_center or wrist")
@@ -570,6 +579,8 @@ async def retarget_preview(
         collision_pairs=0,
         collision_min_distance_m=0.0,
         actuated_joint_names=cfg.joint_names,
+        actuated_position_limits=cfg.position_limits,
+        reference_q=reference_q,
         passive_joint_positions={
             assembly.drive_joint: gripper_cfg.joint_positions(np.asarray([1.0])),
         },
@@ -597,6 +608,7 @@ async def retarget_preview(
         "preview": True,
         "robot": cfg.description,
         "robot_key": robot,
+        "reference_policy": reference_policy,
         "ee_frame": assembly.tcp_frame,
         "gripper_model": gripper_cfg.key,
         "gripper_label": gripper_cfg.label,

@@ -538,8 +538,19 @@ export function create(canvasEl, {
   tick();
 
   // ── helpers ───────────────────────────────────────────────────────────
-  function fps() { return cmeta?.fps || geo?.fps || 15; }
-  function nFrames() { return retarget?.n_frames || cmeta?.n_frames || geo?.n_frames || 0; }
+  function fps() { return cmeta?.fps || retarget?.fps || geo?.fps || 15; }
+  function nFrames() { return cmeta?.n_frames || retarget?.n_frames || geo?.n_frames || 0; }
+
+  function retargetFrame(i) {
+    if (!retarget?.ready) return 0;
+    // The scene timeline follows the recording/cloud clock.  Lab and comparison
+    // plans may carry a lower sampling rate while retaining the same duration;
+    // map by elapsed time instead of treating one plan row as one camera frame.
+    const sceneFps = fps();
+    const planFps = Number(retarget.fps) || sceneFps;
+    const mapped = Math.round(i * planFps / sceneFps);
+    return Math.max(0, Math.min(mapped, retarget.n_frames - 1));
+  }
 
   function clearGroup(g) {
     while (g.children.length) {
@@ -856,7 +867,7 @@ export function create(canvasEl, {
 
   function updateRobotFrame(i) {
     if (!retarget?.ready) return;
-    const index = Math.max(0, Math.min(i, retarget.n_frames - 1));
+    const index = retargetFrame(i);
     const points = retarget.link_positions?.[index] || [];
     const links = robotGroup.children.filter(child => child.userData.kind === 'robot-link');
     const joints = robotGroup.children.filter(child => child.userData.kind === 'robot-joint');

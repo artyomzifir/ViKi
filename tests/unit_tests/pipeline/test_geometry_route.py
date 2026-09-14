@@ -198,6 +198,16 @@ def test_geometry_404_for_missing_episode(tmp_path, monkeypatch):
     assert exc.value.status_code == 404
 
 
+def test_retarget_preview_rejects_unknown_reference_policy():
+    from fastapi import HTTPException
+
+    from viki.server.routes.pipeline import retarget_preview
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(retarget_preview(reference_policy="guess"))
+    assert exc.value.status_code == 422
+
+
 def test_retarget_scene_includes_target_and_achieved_orientation(tmp_path, monkeypatch):
     episodes = tmp_path / "episodes"
     monkeypatch.setattr("viki.config.EPISODES_DIR", str(episodes), raising=False)

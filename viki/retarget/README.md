@@ -27,8 +27,20 @@ implicit MediaPipe-to-robot transform exists in this stage.
 
 Orientation is part of the default objective. A provisional fixed UR10
 embodiment rotation `T_target,TCP` is stored explicitly in configuration rather
-than treating the palm and URDF `wrist_3_link` axes as identical. The offset is
-editable and must eventually be replaced by a physical hand-to-tool calibration.
+than treating the palm and URDF `wrist_3_link` axes as identical.  The v0.0.2
+default is the provisional top-side correspondence
+`[4.325, 15.45, -47.922]` degrees, derived by applying a local-X half-turn to
+the previous provisional mapping and then checking it on recorded UR10 scenes.
+This is a local palm-to-tool mapping, not a fixed world orientation, and remains
+editable until it is replaced by a physical hand-to-tool calibration.
+
+The batch trajectory is initialised and regularised around the selected robot's
+registered `home_q` by default (`reference_policy=robot_home`).  This biases the
+solve toward the upper-workspace IK branch and selected that branch throughout
+some, but not all, measured UR10 scenes.  `zero` remains available for legacy
+comparisons.  Every plan records the policy and reference vector, plus
+wrist-above-target and tool-axis-hemisphere diagnostics; the later approach
+still starts from the robot's registered hardware home in either policy.
 
 ## Interchangeable grippers
 
