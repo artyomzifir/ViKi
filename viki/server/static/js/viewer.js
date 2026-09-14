@@ -20,6 +20,7 @@ export function mount(view) {
         <select data-role="variant"><option value="active">active</option></select>
       </label>
       <div class="viewer-status" data-role="status">pick an episode</div>
+      <div class="viewer-object-status" data-role="object-status" hidden></div>
       <button class="viewer-build" data-role="build" hidden>Run perception</button>
       <div class="viewer-field">Cloud colour
         <select data-role="color">
@@ -50,12 +51,14 @@ export function mount(view) {
   ctl = scene3d.create($('[data-role="canvas"]'), {
     api, log, layers: sessionGet('viewerLayers', null),
     colorMode: vs.color, stride: vs.stride,
+    objectModels: true,
   });
 
-  ctl.onFrame((f, n) => {
+  ctl.onFrame((f, n, objectSummary) => {
     $('[data-role="time"]').max = Math.max(0, n - 1);
     $('[data-role="time"]').value = f;
     $('[data-role="frame-lbl"]').textContent = `${n ? f + 1 : 0} / ${n}`;
+    renderObjectStatus(objectSummary);
   });
   ctl.onLayerChange(l => sessionSet('viewerLayers', l));
 
@@ -85,7 +88,10 @@ async function loadEpisodes() {
 async function openEpisode(id) {
   const status = root.querySelector('[data-role="status"]');
   const build = root.querySelector('[data-role="build"]');
-  if (!id) { status.textContent = 'pick an episode'; build.hidden = true; return; }
+  if (!id) {
+    status.textContent = 'pick an episode'; build.hidden = true;
+    renderObjectStatus(null); return;
+  }
   status.textContent = 'loading…';
   try {
     const response = await api('GET', `/api/pipeline/episode/${id}/geometry/variants`);
@@ -108,9 +114,43 @@ async function openVariant(id, variant) {
   const g = r.geo || {};
   const source = [g.fusion_mode, g.checkpoint_stage, g.pose_source].filter(Boolean).join(' · ');
   const sourceLabel = source ? ` · ${source}` : '';
+  const objectLabel = r.hasObjectModel
+    ? ` · object model ${r.ometa.objects.length}` : '';
   status.textContent = r.hasCloud
-    ? `${r.cmeta.n_frames} cloud frames · ${g.n_frames || 0} traj frames · fps ${(ctl.fps).toFixed(1)}${sourceLabel}`
-    : (g.n_frames ? `${g.n_frames} traj frames · no point cloud${sourceLabel}` : 'not processed yet — run perception');
+    ? `${r.cmeta.n_frames} cloud frames · ${g.n_frames || 0} traj frames · fps ${(ctl.fps).toFixed(1)}${sourceLabel}${objectLabel}`
+    : (g.n_frames
+      ? `${g.n_frames} traj frames · no point cloud${sourceLabel}${objectLabel}`
+      : (r.hasObjectModel ? `object model ${r.ometa.objects.length} · no point cloud` : 'not processed yet — run perception'));
+}
+
+function renderObjectStatus(summary) {
+  const box = root?.querySelector('[data-role="object-status"]');
+  if (!box) return;
+  box.replaceChildren();
+  box.hidden = !summary?.objects?.length;
+  if (box.hidden) return;
+  const head = document.createElement('div');
+  head.className = 'viewer-object-title';
+  head.textContent = `Object model · ${summary.profile}`;
+  box.appendChild(head);
+  const number = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : '—';
+  for (const object of summary.objects) {
+    const row = document.createElement('div');
+    row.className = 'viewer-object-row';
+    const title = document.createElement('strong');
+    title.textContent = `#${object.id} ${object.label}${object.contact ? ' · contact' : ''}`;
+    const metrics = document.createElement('span');
+    const rotMin = Array.isArray(object.rotation_information)
+      ? Math.min(...object.rotation_information.filter(Number.isFinite)) : NaN;
+    metrics.textContent = [
+      `conf ${number(object.confidence)}`,
+      `res ${number(object.residual_median_m * 1000, 1)}/${number(object.residual_p95_m * 1000, 1)} mm`,
+      `keep ${number(object.retained_fraction * 100, 0)}%`,
+      `rot-info ${number(rotMin)}`,
+    ].join(' · ');
+    row.append(title, metrics);
+    box.appendChild(row);
+  }
 }
 
 async function runPerception(id) {

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from viki import config, datasets
@@ -107,6 +107,25 @@ def _load_npz_for_viewer(
 def _viewer_npz(path: Path) -> dict[str, np.ndarray]:
     stat = path.stat()
     return _load_npz_for_viewer(str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=32)
+def _load_semantic_xyz_for_viewer(
+    path: str, mtime_ns: int, size: int,
+) -> np.ndarray:
+    """Load only XYZ from one semantic-cloud frame for object diagnostics."""
+    del mtime_ns, size  # only participate in the cache key
+    with np.load(path, allow_pickle=False) as archive:
+        xyz = np.asarray(archive["xyz"], dtype=np.float32)
+    xyz.setflags(write=False)
+    return xyz
+
+
+def _semantic_xyz_for_viewer(path: Path) -> np.ndarray:
+    stat = path.stat()
+    return _load_semantic_xyz_for_viewer(
+        str(path.resolve()), stat.st_mtime_ns, stat.st_size,
+    )
 
 
 _VIEWER_CLN_KEYS = {
@@ -1079,6 +1098,138 @@ async def cloud_frame(ep_id: str, frame: int):
         raise HTTPException(404, f"no cloud frame {frame}")
     return FileResponse(
         p,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# ── rigid object-model diagnostics (Viewer tab) ─────────────────────
+
+
+def _object_model_paths(
+    ep: Episode, profile: str,
+) -> tuple[Path, Path]:
+    """Resolve one named segmentation profile without accepting path syntax."""
+    if Path(profile).name != profile or profile in {"", ".", ".."}:
+        raise HTTPException(422, "invalid object-model profile")
+    root = ep.intermediates_dir / "segmentation" / profile
+    artifact = root / "object_models.npz"
+    semantic_cloud = root / "semantic_cloud"
+    if not artifact.is_file() or not semantic_cloud.is_dir():
+        raise HTTPException(404, f"no object model for profile {profile!r}")
+    return artifact, semantic_cloud
+
+
+def _object_model_archive(ep: Episode, profile: str) -> dict[str, np.ndarray]:
+    artifact, _ = _object_model_paths(ep, profile)
+    archive = _viewer_npz(artifact)
+    schema = str(np.asarray(archive.get("schema", "")).item())
+    if schema != "viki_object_models_v1":
+        raise HTTPException(422, f"unsupported object-model schema {schema!r}")
+    return archive
+
+
+@_ep.get("/episode/{ep_id}/object-model")
+async def object_model_meta(
+    ep_id: str, profile: str = "sam2.1_hiera_small",
+):
+    """Canonical core/shell surfaces and their complete lightweight tracks."""
+    ep = _episode(ep_id)
+    d = _object_model_archive(ep, profile)
+    try:
+        object_ids = np.asarray(d["object_ids"], np.int32)
+        labels = np.asarray(d["object_labels"]).astype(str)
+        offsets = np.asarray(d["model_offsets"], np.int64)
+        xyz = np.asarray(d["model_xyz_object"], np.float32)
+        kind = np.asarray(d["model_kind"], np.uint8)
+        rotation = np.asarray(d["rotation_world_object"], np.float32)
+        translation = np.asarray(d["translation_world"], np.float32)
+        confidence = np.asarray(d["track_confidence"], np.float32)
+        residual_median = np.asarray(d["residual_median_m"], np.float32)
+        residual_p95 = np.asarray(d["residual_p95_m"], np.float32)
+        coverage = np.asarray(d["coverage"], np.float32)
+        retained = np.asarray(d["retained_fraction"], np.float32)
+        rotation_information = np.asarray(d["rotation_information"], np.float32)
+        contact = np.asarray(d["contact"], bool)
+        frame_count = int(np.asarray(d["frame_count"]).item())
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise HTTPException(422, f"invalid object-model artifact: {exc}") from exc
+
+    if len(offsets) != len(object_ids) + 1 or len(labels) != len(object_ids):
+        raise HTTPException(422, "invalid object-model object offsets")
+    objects = []
+    for column, (object_id, label) in enumerate(zip(object_ids, labels, strict=True)):
+        start, end = int(offsets[column]), int(offsets[column + 1])
+        if start < 0 or end < start or end > len(xyz):
+            raise HTTPException(422, "invalid object-model point offsets")
+        points = xyz[start:end]
+        point_kind = kind[start:end]
+        objects.append({
+            "id": int(object_id),
+            "label": str(label),
+            "core_xyz_object": _finite_nested(points[point_kind == 1]),
+            "shell_xyz_object": _finite_nested(points[point_kind == 2]),
+            "rotation_world_object": _finite_nested(rotation[:, column]),
+            "translation_world": _finite_nested(translation[:, column]),
+            "track_confidence": _finite_nested(confidence[:, column]),
+            "residual_median_m": _finite_nested(residual_median[:, column]),
+            "residual_p95_m": _finite_nested(residual_p95[:, column]),
+            "coverage": _finite_nested(coverage[:, column]),
+            "retained_fraction": _finite_nested(retained[:, column]),
+            "rotation_information": _finite_nested(rotation_information[:, column]),
+            "contact": contact[:, column].tolist(),
+        })
+    return {
+        "schema": "viki_object_model_viewer_v1",
+        "profile": profile,
+        "n_frames": frame_count,
+        "objects": objects,
+    }
+
+
+@_ep.get("/episode/{ep_id}/object-model/{frame}")
+async def object_model_frame(
+    ep_id: str, frame: int, profile: str = "sam2.1_hiera_small",
+):
+    """Binary point decisions for one frame.
+
+    Layout: ``int32 N``, ``float32 xyz[N,3]``, ``int32 initial_id[N]``,
+    ``int32 assigned_id[N]``, then ``uint8 state[N]``. All numeric fields before
+    the final byte array are little-endian and naturally four-byte aligned.
+    """
+    ep = _episode(ep_id)
+    _, semantic_cloud = _object_model_paths(ep, profile)
+    d = _object_model_archive(ep, profile)
+    try:
+        offsets = np.asarray(d["candidate_frame_offsets"], np.int64)
+        frame_count = int(np.asarray(d["frame_count"]).item())
+        if frame < 0 or frame >= frame_count or frame + 1 >= len(offsets):
+            raise HTTPException(404, f"no object-model frame {frame}")
+        start, end = int(offsets[frame]), int(offsets[frame + 1])
+        indices = np.asarray(d["candidate_point_indices"][start:end], np.int64)
+        initial = np.asarray(d["candidate_initial_id"][start:end], dtype="<i4")
+        assigned = np.asarray(d["candidate_assigned_id"][start:end], dtype="<i4")
+        state = np.asarray(d["candidate_state"][start:end], np.uint8)
+    except HTTPException:
+        raise
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise HTTPException(422, f"invalid object-model decisions: {exc}") from exc
+
+    semantic_frames = sorted(semantic_cloud.glob("*.npz"))
+    if frame >= len(semantic_frames):
+        raise HTTPException(404, f"no semantic-cloud frame {frame}")
+    source_xyz = _semantic_xyz_for_viewer(semantic_frames[frame])
+    if len(indices) and (int(indices.min()) < 0 or int(indices.max()) >= len(source_xyz)):
+        raise HTTPException(422, "object-model point index is outside semantic cloud")
+    xyz = np.asarray(source_xyz[indices], dtype="<f4")
+    if not (len(xyz) == len(initial) == len(assigned) == len(state)):
+        raise HTTPException(422, "object-model decision arrays have different lengths")
+    payload = b"".join((
+        np.asarray([len(xyz)], dtype="<i4").tobytes(),
+        xyz.tobytes(), initial.tobytes(), assigned.tobytes(), state.tobytes(),
+    ))
+    return Response(
+        payload,
         media_type="application/octet-stream",
         headers={"Cache-Control": "no-store"},
     )

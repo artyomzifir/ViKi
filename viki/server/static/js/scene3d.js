@@ -45,6 +45,11 @@ const HAND_EDGES = [
 ];
 const CAM_PALETTE = [0xe6194b, 0x3cb44b, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0];
 const CAM_COLORS = CAM_PALETTE.map(h => new THREE.Color(h));
+const OBJECT_PALETTE = [0x14b8a6, 0xa78bfa, 0xa3e635, 0xfb923c, 0xf472b6, 0x38bdf8];
+const OBJECT_DECISION_LAYERS = [
+  'objectRejected', 'objectAccepted', 'objectReassigned', 'objectAmbiguous',
+];
+const OBJECT_DECISION_COLORS = [0xff4d5a, 0x4ade80, 0x22d3ee, 0xfbbf24];
 const cssHex = n => '#' + (n >>> 0).toString(16).padStart(6, '0');
 
 // Every hand in the scene — the fused skeleton, the per-camera skeletons and
@@ -108,6 +113,9 @@ const DEFAULT_LAYERS = {
   axes: true, grid: true,
   cloud: true, perCamera: false, fused: true, trajectory: true,
   palm: true, frusta: true, board: true, bbox: false, handFit: false,
+  objectCore: true, objectShell: true, objectPose: true,
+  objectAccepted: false, objectRejected: true,
+  objectReassigned: true, objectAmbiguous: true,
   robot: true, robotMesh: true, targetTrajectory: true, achievedTrajectory: true,
   sequentialBaseline: true, reach: false,
 };
@@ -143,6 +151,18 @@ const LEGEND_GROUPS = [
     ],
   },
   {
+    title: 'Objects',
+    rows: [
+      { key: 'objectCore', label: 'rigid core', swatch: 'objectKey', src: 'objectModel' },
+      { key: 'objectShell', label: 'supported shell', swatch: '#c4b5fd', src: 'objectModel' },
+      { key: 'objectPose', label: 'object frame', swatch: 'triad', src: 'objectModel' },
+      { key: 'objectAccepted', label: 'accepted observations', swatch: '#4ade80', src: 'objectModel' },
+      { key: 'objectRejected', label: 'rejected observations', swatch: '#ff4d5a', src: 'objectModel' },
+      { key: 'objectReassigned', label: 'reassigned observations', swatch: '#22d3ee', src: 'objectModel' },
+      { key: 'objectAmbiguous', label: 'ambiguous observations', swatch: '#fbbf24', src: 'objectModel' },
+    ],
+  },
+  {
     title: 'Retarget',
     rows: [
       { key: 'robot', label: 'robot arm / gripper', src: 'plan',
@@ -164,6 +184,7 @@ const LEGEND_GROUPS = [
 
 export function create(canvasEl, {
   api, log, layers: initLayers, colorMode: initColor, stride: initStride,
+  objectModels: enableObjectModels = false,
 }) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b0d10);
@@ -423,8 +444,33 @@ export function create(canvasEl, {
   palmTriad.visible = false;
   worldGroup.add(palmTriad);
 
+  // Object models are stored in their own canonical frame. Each record below
+  // owns a core, shell and triad under one root whose SE(3) transform is updated
+  // from the track at the current timeline frame.
+  const objectModelGroup = new THREE.Group();
+  worldGroup.add(objectModelGroup);
+  let objectRecords = [];
+
+  // SAM-supported observations stay in the world frame. Four reusable point
+  // buffers make filter decisions inspectable without allocating on every tick.
+  const objectDecisionGroup = new THREE.Group();
+  const objectDecisionPoints = OBJECT_DECISION_COLORS.map(color => {
+    const points = new THREE.Points(
+      new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({
+        color, size: 0.0075, sizeAttenuation: true,
+        transparent: true, opacity: 0.88, depthWrite: false,
+      }),
+    );
+    points.frustumCulled = false;
+    objectDecisionGroup.add(points);
+    return points;
+  });
+  worldGroup.add(objectDecisionGroup);
+
   // ── state ─────────────────────────────────────────────────────────────
-  let geo = null, cmeta = null, retarget = null, epId = null, variantId = 'active', episodes = [], epIndex = -1;
+  let geo = null, cmeta = null, ometa = null, retarget = null;
+  let epId = null, variantId = 'active', episodes = [], epIndex = -1;
   // Reach envelope of the CONFIGURED assembly. Fetched once and kept
   // independent of any plan, so tabs that never load one still draw it.
   let reachInfo = null, reachRequested = false;
@@ -434,9 +480,11 @@ export function create(canvasEl, {
   let frameCb = null, layerCb = null;
   const cloudCache = new Map();     // frame -> Promise<{xyz, rgb}>
   const fgCache = new Map();        // frame -> Promise<geometry?frame= payload>
+  const objectFrameCache = new Map(); // frame -> Promise<object decisions>
   const CACHE_CAP = 80;
   let loadSerial = 0, loadingEpisode = false;
   let cloudPos = new Float32Array(0), cloudCol = new Uint8Array(0);
+  const objectDecisionPos = OBJECT_DECISION_COLORS.map(() => new Float32Array(0));
   let raf = 0, disposed = false;
 
   // ── legend overlay ────────────────────────────────────────────────────
@@ -458,6 +506,7 @@ export function create(canvasEl, {
       case 'workspace_bbox': return !!geo?.workspace_bbox;
       case 'cameras': return !!geo?.cameras;
       case 'cloud': return !!cmeta;
+      case 'objectModel': return !!ometa?.objects?.length;
       case 'plan': return !!retarget?.ready;
       case 'mesh': return !!retarget?.ready && !!retarget?.robot_visuals?.length;
       case 'reach': return reachRadius() > 0;
@@ -467,6 +516,9 @@ export function create(canvasEl, {
   function rowSwatch(row) {
     if (row.swatch === 'triad') return null;       // painted by the .triad class
     if (row.swatch === 'camKey') return camKeyGradient();
+    if (row.swatch === 'objectKey') {
+      return `linear-gradient(90deg,${OBJECT_PALETTE.slice(0, 4).map(cssHex).join(',')})`;
+    }
     if (row.swatch === 'cloud') {
       return colorMode === 'height'
         ? 'linear-gradient(90deg,#2b6cff,#57c06a,#ff5a5a)' : '#cfd6df';
@@ -539,7 +591,9 @@ export function create(canvasEl, {
 
   // ── helpers ───────────────────────────────────────────────────────────
   function fps() { return cmeta?.fps || retarget?.fps || geo?.fps || 15; }
-  function nFrames() { return cmeta?.n_frames || retarget?.n_frames || geo?.n_frames || 0; }
+  function nFrames() {
+    return cmeta?.n_frames || ometa?.n_frames || retarget?.n_frames || geo?.n_frames || 0;
+  }
 
   function retargetFrame(i) {
     if (!retarget?.ready) return 0;
@@ -574,6 +628,16 @@ export function create(canvasEl, {
     palmTriad.visible = layers.palm && palmTriad.userData.have;
     handBones.visible = layers.handFit;
     handJoints.visible = layers.handFit;
+    for (const record of objectRecords) {
+      record.root.visible = !!record.root.userData.have
+        && (layers.objectCore || layers.objectShell || layers.objectPose);
+      record.core.visible = layers.objectCore;
+      record.shell.visible = layers.objectShell;
+      record.axes.visible = layers.objectPose;
+    }
+    objectDecisionPoints.forEach((points, state) => {
+      points.visible = !!layers[OBJECT_DECISION_LAYERS[state]];
+    });
     const robotOn = layers.robot && !!retarget?.ready;
     robotGroup.visible = robotOn;
     reachGroup.visible = layers.reach && reachRadius() > 0;
@@ -724,6 +788,68 @@ export function create(canvasEl, {
       rotation[1][0], rotation[1][1], rotation[1][2], 0,
       rotation[2][0], rotation[2][1], rotation[2][2], 0,
       0, 0, 0, 1));
+  }
+
+  function objectPoints(rows, material) {
+    const flat = new Float32Array((rows || []).flat());
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+    if (flat.length) geometry.computeBoundingSphere();
+    const points = new THREE.Points(geometry, material);
+    points.frustumCulled = false;
+    return points;
+  }
+
+  function buildObjectModels() {
+    while (objectModelGroup.children.length) {
+      disposeSubtree(objectModelGroup.children.pop());
+    }
+    objectRecords = [];
+    for (const [index, model] of (ometa?.objects || []).entries()) {
+      const root = new THREE.Group();
+      root.userData.have = false;
+      const baseColor = new THREE.Color(OBJECT_PALETTE[index % OBJECT_PALETTE.length]);
+      const core = objectPoints(model.core_xyz_object, new THREE.PointsMaterial({
+        color: baseColor, size: 0.008, sizeAttenuation: true,
+      }));
+      const shell = objectPoints(model.shell_xyz_object, new THREE.PointsMaterial({
+        color: baseColor.clone().lerp(new THREE.Color(0xffffff), 0.48),
+        size: 0.006, sizeAttenuation: true, transparent: true,
+        opacity: 0.58, depthWrite: false,
+      }));
+      const axes = fatAxes(0.06, 0.0025);
+      root.add(core, shell, axes);
+      objectModelGroup.add(root);
+      objectRecords.push({ root, core, shell, axes, model });
+    }
+  }
+
+  function updateObjectFrame(index) {
+    for (const record of objectRecords) {
+      placePoseFrame(
+        record.root,
+        record.model.translation_world?.[index],
+        record.model.rotation_world_object?.[index],
+      );
+    }
+  }
+
+  function objectFrameSummary(index) {
+    if (!ometa?.objects?.length) return null;
+    return {
+      profile: ometa.profile,
+      objects: ometa.objects.map(model => ({
+        id: model.id,
+        label: model.label,
+        confidence: model.track_confidence?.[index],
+        residual_median_m: model.residual_median_m?.[index],
+        residual_p95_m: model.residual_p95_m?.[index],
+        coverage: model.coverage?.[index],
+        retained_fraction: model.retained_fraction?.[index],
+        rotation_information: model.rotation_information?.[index],
+        contact: !!model.contact?.[index],
+      })),
+    };
   }
 
   function disposeSubtree(obj) {
@@ -1000,6 +1126,81 @@ export function create(canvasEl, {
     g.setDrawRange(0, j);
   }
 
+  function wantObjectDecisions() {
+    return OBJECT_DECISION_LAYERS.some(key => layers[key]);
+  }
+
+  function fetchObjectFrame(i) {
+    if (objectFrameCache.has(i)) return objectFrameCache.get(i);
+    const profile = encodeURIComponent(ometa?.profile || 'sam2.1_hiera_small');
+    const p = fetch(`/api/pipeline/episode/${epId}/object-model/${i}?profile=${profile}`)
+      .then(r => {
+        if (!r.ok) throw new Error('object model ' + i + ': ' + r.status);
+        return r.arrayBuffer();
+      })
+      .then(buf => {
+        if (buf.byteLength < 4) throw new Error('object model frame is truncated');
+        const n = new DataView(buf).getInt32(0, true);
+        const expected = 4 + n * 21;
+        if (n < 0 || buf.byteLength !== expected) {
+          throw new Error(`object model frame has invalid size (${buf.byteLength}, expected ${expected})`);
+        }
+        const xyzOffset = 4;
+        const initialOffset = xyzOffset + n * 12;
+        const assignedOffset = initialOffset + n * 4;
+        const stateOffset = assignedOffset + n * 4;
+        return {
+          n,
+          xyz: new Float32Array(buf, xyzOffset, n * 3),
+          initialId: new Int32Array(buf, initialOffset, n),
+          assignedId: new Int32Array(buf, assignedOffset, n),
+          state: new Uint8Array(buf, stateOffset, n),
+        };
+      }).catch(e => { objectFrameCache.delete(i); throw e; });
+    objectFrameCache.set(i, p);
+    if (objectFrameCache.size > CACHE_CAP) {
+      objectFrameCache.delete(objectFrameCache.keys().next().value);
+    }
+    return p;
+  }
+
+  function clearObjectDecisions() {
+    for (const points of objectDecisionPoints) points.geometry.setDrawRange(0, 0);
+  }
+
+  function paintObjectDecisions({ n, xyz, state }) {
+    const counts = new Uint32Array(OBJECT_DECISION_COLORS.length);
+    for (let i = 0; i < n; i++) {
+      if (state[i] < counts.length) counts[state[i]]++;
+    }
+    for (let value = 0; value < counts.length; value++) {
+      const need = counts[value] * 3;
+      const geometry = objectDecisionPoints[value].geometry;
+      if (objectDecisionPos[value].length < need) {
+        const capacity = Math.max(need, objectDecisionPos[value].length * 2, 3);
+        objectDecisionPos[value] = new Float32Array(capacity);
+        geometry.setAttribute(
+          'position', new THREE.BufferAttribute(objectDecisionPos[value], 3),
+        );
+      }
+      geometry.setDrawRange(0, counts[value]);
+    }
+    const write = new Uint32Array(counts.length);
+    for (let i = 0; i < n; i++) {
+      const value = state[i];
+      if (value >= counts.length) continue;
+      const target = write[value]++ * 3;
+      const source = i * 3;
+      objectDecisionPos[value][target] = xyz[source];
+      objectDecisionPos[value][target + 1] = xyz[source + 1];
+      objectDecisionPos[value][target + 2] = xyz[source + 2];
+    }
+    for (const points of objectDecisionPoints) {
+      const position = points.geometry.getAttribute('position');
+      if (position) position.needsUpdate = true;
+    }
+  }
+
   function fetchFrameGeo(i) {
     if (fgCache.has(i)) return fgCache.get(i);
     const variant = encodeURIComponent(variantId);
@@ -1078,6 +1279,7 @@ export function create(canvasEl, {
       palmTriad.quaternion.setFromRotationMatrix(new THREE.Matrix4().set(
         m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, 0, 0, 0, 1));
     }
+    updateObjectFrame(fi);
     updateRobotFrame(fi);
     applyLayerVisibility();
   }
@@ -1091,16 +1293,21 @@ export function create(canvasEl, {
     loadingEpisode = true;
     if (episodeChanged) {
       cloudCache.clear();
+      objectFrameCache.clear();
       cmeta = null;
+      ometa = null;
       setRetargetData(null);
       clearCloud();
+      clearObjectDecisions();
+      buildObjectModels();
     }
     epId = id;
     variantId = variant || 'active';
     if (Array.isArray(list)) { episodes = list; epIndex = list.findIndex(e => (e.id || e) === id); }
     fgCache.clear();
     if (!id) {
-      clearCloud(); geo = null; loadingEpisode = false;
+      clearCloud(); clearObjectDecisions(); geo = null; ometa = null;
+      buildObjectModels(); loadingEpisode = false;
       return { hasCloud: false };
     }
     try {
@@ -1108,16 +1315,22 @@ export function create(canvasEl, {
       applyWorldDisplay(geo && geo.t_world_display);
     } catch (e) { geo = null; log && log('scene: ' + e, 'error'); }
     if (serial !== loadSerial) return { hasCloud: false };
-    buildBoard(); buildBbox(); buildFrusta(); buildTrajectory(); frameCamera();
-    if (episodeChanged || !cmeta) {
-      try { cmeta = await api('GET', `/api/pipeline/episode/${id}/cloud`); }
-      catch { cmeta = null; clearCloud(); }
-    }
+    const cloudMetaPromise = (episodeChanged || !cmeta)
+      ? api('GET', `/api/pipeline/episode/${id}/cloud`).catch(() => null)
+      : Promise.resolve(cmeta);
+    const objectMetaPromise = enableObjectModels && (episodeChanged || !ometa)
+      ? api('GET', `/api/pipeline/episode/${id}/object-model`).catch(() => null)
+      : Promise.resolve(enableObjectModels ? ometa : null);
+    [cmeta, ometa] = await Promise.all([cloudMetaPromise, objectMetaPromise]);
     if (serial !== loadSerial) return { hasCloud: false };
+    if (!cmeta) clearCloud();
+    buildBoard(); buildBbox(); buildFrusta(); buildTrajectory(); buildObjectModels();
     frame = 0;
+    updateObjectFrame(frame);
+    frameCamera();
     await setFrame(0);
     if (serial === loadSerial) loadingEpisode = false;
-    return { hasCloud: !!cmeta, geo, cmeta };
+    return { hasCloud: !!cmeta, hasObjectModel: !!ometa, geo, cmeta, ometa };
   }
 
   async function setFrame(i) {
@@ -1130,12 +1343,20 @@ export function create(canvasEl, {
     const geometryPromise = epId
       ? fetchFrameGeo(want).catch(e => { log && log('' + e, 'error'); return null; })
       : Promise.resolve(null);
-    const [cloudFrame, frameGeometry] = await Promise.all([cloudPromise, geometryPromise]);
+    const needObjectFrame = !!ometa && want < ometa.n_frames && wantObjectDecisions();
+    const objectPromise = needObjectFrame
+      ? fetchObjectFrame(want).catch(e => { log && log('' + e, 'error'); return null; })
+      : Promise.resolve(null);
+    const [cloudFrame, frameGeometry, objectFrame] = await Promise.all([
+      cloudPromise, geometryPromise, objectPromise,
+    ]);
     if (want !== frame || episode !== epId || sourceVariant !== variantId || disposed) return false;
     if (cloudFrame) paintCloud(cloudFrame);
+    if (objectFrame) paintObjectDecisions(objectFrame);
+    else clearObjectDecisions();
     applyLayerVisibility();
     updateFrameGeometry(frameGeometry);
-    frameCb && frameCb(frame, n);
+    frameCb && frameCb(frame, n, objectFrameSummary(frame));
 
     // Geometry is tiny enough for a short runway.  Point clouds are not: four
     // concurrent cloud reads produced a visible wait/burst cycle (several
@@ -1149,6 +1370,9 @@ export function create(canvasEl, {
     }
     const nextCloud = want + 1;
     if (cmeta && nextCloud < cmeta.n_frames) fetchCloud(nextCloud).catch(() => {});
+    if (ometa && wantObjectDecisions() && nextCloud < ometa.n_frames) {
+      fetchObjectFrame(nextCloud).catch(() => {});
+    }
     return true;
   }
 
@@ -1204,7 +1428,9 @@ export function create(canvasEl, {
 
   // These layers are packed on demand in updateFrameGeometry, so switching one
   // back on needs a frame re-pack, not just a visibility flip.
-  const LAZY_LAYERS = ['perCamera', 'handFit', 'fused'];
+  const LAZY_LAYERS = [
+    'perCamera', 'handFit', 'fused', ...OBJECT_DECISION_LAYERS,
+  ];
   function setLayer(name, on) {
     const needsRefresh = !!on && !layers[name] && LAZY_LAYERS.includes(name);
     layers[name] = !!on;
@@ -1230,7 +1456,7 @@ export function create(canvasEl, {
     pause();
     if (raf) cancelAnimationFrame(raf);
     ro.disconnect();
-    cloudCache.clear(); fgCache.clear();
+    cloudCache.clear(); fgCache.clear(); objectFrameCache.clear();
     controls.dispose();
     scene.traverse(o => {
       o.geometry?.dispose?.();
@@ -1252,7 +1478,8 @@ export function create(canvasEl, {
     get fps() { return fps(); },
     get playing() { return playing; },
     get hasCloud() { return !!cmeta; },
-    get meta() { return { geo, cmeta, variantId }; },
+    get hasObjectModel() { return !!ometa; },
+    get meta() { return { geo, cmeta, ometa, variantId }; },
     get layerState() { return { ...layers }; },
   };
 }
