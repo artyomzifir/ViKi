@@ -16,6 +16,7 @@ is deferred to `viki.prepare`.
 | `backends/` | `HandPoseBackend` ABC + implementations — see `backends/README.md` |
 | `camera_prep.py` | `prepare_frame` : `Frame` → `PreparedFrame` (RGB, depth in metres, depth K) |
 | `geometry.py` | `lift_to_3d` (2-D + depth → camera-frame 3-D), `camera_landmarks_to_world` (apply extrinsics) |
+| `segmentation.py` | optional prompted SAM 2.1 video masks and calibrated RGB-D lift; experimental artifacts only |
 | `hand_angles.py` | `compute_end_effector_pose` — the single site that derives the wrist SE(3) pose from landmarks (also used by `prepare`) |
 | `pipeline.py` | `SkeletonPipeline` — per-`SyncedFrameGroup` orchestration (kept for tooling; the offline path is `extract.py`) |
 | `models.py` | compat re-export of the perception DTOs from `viki.contracts` |
@@ -34,3 +35,45 @@ spread (INDEX→PINKY), **not** the thumb: `x = norm(MIDDLE_MCP − WRIST)`,
 `z = norm(x × (PINKY_MCP − INDEX_MCP))`, `y = z × x`. Missing a required
 landmark falls back to the centroid of the available palm landmarks with an
 identity rotation.
+
+## Experimental scene segmentation
+
+SAM 2.1 is intentionally isolated from the normal ViKi image because the
+PyTorch CUDA wheels are several gigabytes. Build/run the dedicated profile:
+
+```bash
+docker compose build sam2
+docker compose run --rm sam2 segment episodes/<id> \
+  --prompts data/prompts/<scene>.json --lift-3d
+```
+
+If a long 2-D run completed but the optional 3-D lift was interrupted, reuse
+the masks without rerunning SAM:
+
+```bash
+docker compose run --rm cli segment-lift episodes/<id>
+```
+
+The official `sam2.1_hiera_small.pt` checkpoint goes in `models/sam2/`; its
+expected SHA-256 is
+`6d1aa6f30de5c92224f8172114de081d104bbd23dd9dc5c58996f0cad5dc4d38`.
+The image pins upstream commit
+`2b90b9f5ceec907a1c18123530e92e794ad901a4` and PyTorch 2.8 CUDA 12.8.
+The default 100-frame chunk is chosen for the repository's 11 GiB container
+ceiling; reduce it when tracking more than three simultaneous instances.
+
+Prompts use schema `viki_sam2_prompts_v1`: declare stable positive integer
+object IDs and labels (`operator`, `manipulated_object`, `other_object`, or
+`other_dynamic`), then give every object a frame-0 box and/or positive/negative
+points for each camera. Later prompts are corrections. Coordinates are in the
+original colour-video pixels.
+
+Outputs live under
+`intermediates/segmentation/sam2.1_hiera_small/`: bit-packed mask chunks,
+per-camera overlay videos, prompt/model provenance, and—when `--lift-3d` is
+used—mask-supported world-frame point clouds plus a provisional centroid and
+visible-dimensions track. Nothing downstream reads these artifacts implicitly.
+Missing or unlabelled points remain unknown, never free space.
+
+Measured results and known failure modes from the first two real scenes are in
+[`docs/2026-09-14-sam2-segmentation-probe.md`](../../docs/2026-09-14-sam2-segmentation-probe.md).

@@ -8,6 +8,7 @@ server calls — the CLI just parses args and prints results.
     viki perceive <episode>             # stable fused + hand_fit by default
     viki extract  <episode>
     viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
+    viki segment  <episode> ...        # prompted SAM 2.1 masks [+ RGB-D lift]
     viki prepare  <episode>
     viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
@@ -89,6 +90,62 @@ def _cmd_cloud(a) -> None:
     from viki.perception.cloud import build_cloud
 
     print(build_cloud(_episode(a.episode)))
+
+
+def _cmd_segment(a) -> None:
+    from viki.perception.segmentation import (
+        lift_segmentation_to_3d,
+        segment_episode_sam2,
+    )
+
+    def progress(**fields):
+        camera = f" {fields['camera']}" if "camera" in fields else ""
+        print(f"segment{camera}: {fields.get('frame', 0)}/{fields.get('total', 0)}")
+
+    ep = _episode(a.episode)
+    masks = segment_episode_sam2(
+        ep,
+        a.prompts,
+        checkpoint=a.checkpoint,
+        chunk_frames=a.chunk_frames,
+        max_frames=a.max_frames,
+        render_overlay=not a.no_overlay,
+        report=progress,
+    )
+    print(f"masks: {masks}")
+    if a.lift_3d:
+        cloud = lift_segmentation_to_3d(
+            ep,
+            masks,
+            stride=a.depth_stride,
+            voxel_m=a.voxel_m,
+            report=progress,
+        )
+        print(f"semantic cloud: {cloud}")
+
+
+def _cmd_segment_lift(a) -> None:
+    from viki.perception.segmentation import (
+        SAM2_MODEL_KEY,
+        lift_segmentation_to_3d,
+    )
+
+    def progress(**fields):
+        print(f"segment-lift: {fields.get('frame', 0)}/{fields.get('total', 0)}")
+
+    ep = _episode(a.episode)
+    masks = (
+        Path(a.segmentation_dir)
+        if a.segmentation_dir
+        else ep.intermediates_dir / "segmentation" / SAM2_MODEL_KEY
+    )
+    print(lift_segmentation_to_3d(
+        ep,
+        masks,
+        stride=a.depth_stride,
+        voxel_m=a.voxel_m,
+        report=progress,
+    ))
 
 
 def _cmd_prepare(a) -> None:
@@ -293,6 +350,34 @@ def _build_parser() -> argparse.ArgumentParser:
     pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
     pc.add_argument("episode")
     pc.set_defaults(func=_cmd_cloud)
+
+    ps = sub.add_parser(
+        "segment",
+        help="experimental prompted SAM 2.1 masks and optional RGB-D lift",
+    )
+    ps.add_argument("episode")
+    ps.add_argument("--prompts", required=True, help="viki_sam2_prompts_v1 JSON")
+    ps.add_argument(
+        "--checkpoint",
+        default="models/sam2/sam2.1_hiera_small.pt",
+    )
+    ps.add_argument("--chunk-frames", type=int, default=100)
+    ps.add_argument("--max-frames", type=int, default=None)
+    ps.add_argument("--no-overlay", action="store_true")
+    ps.add_argument("--lift-3d", action="store_true")
+    ps.add_argument("--depth-stride", type=int, default=2)
+    ps.add_argument("--voxel-m", type=float, default=0.004)
+    ps.set_defaults(func=_cmd_segment)
+
+    psl = sub.add_parser(
+        "segment-lift",
+        help="existing SAM masks -> calibrated semantic 3-D cloud",
+    )
+    psl.add_argument("episode")
+    psl.add_argument("--segmentation-dir", default=None)
+    psl.add_argument("--depth-stride", type=int, default=2)
+    psl.add_argument("--voxel-m", type=float, default=0.004)
+    psl.set_defaults(func=_cmd_segment_lift)
 
     phf = sub.add_parser("hand-fit", help="batch-fit a capsule hand trajectory and append hand_fit_* to cln.npz")
     phf.add_argument("episode")

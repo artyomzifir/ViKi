@@ -101,3 +101,17 @@ FROM base AS test
 # already satisfied from requirements.txt above, so this resolves from cache.
 RUN --mount=type=cache,target=/root/.cache/pip pip install -e ".[dev]"
 CMD ["/bin/bash"]
+
+# Optional SAM 2.1 inference image.  Keep PyTorch out of the normal web/test
+# image: segmentation is an offline GPU job and its CUDA wheels are several GB.
+# CUDA 12.8 is required here for the host's Blackwell (sm_120) GPU.  SAM 2 is
+# pinned to an audited upstream commit instead of following mutable `main`.
+FROM test AS sam2
+ARG SAM2_COMMIT=2b90b9f5ceec907a1c18123530e92e794ad901a4
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cu128 \
+        "torch==2.8.0" "torchvision==0.23.0" && \
+    pip install "hydra-core>=1.3.2" "iopath>=0.1.10" "pillow>=9.4.0" && \
+    SAM2_BUILD_CUDA=0 pip install --no-build-isolation --no-deps \
+        "git+https://github.com/facebookresearch/sam2.git@${SAM2_COMMIT}"
+CMD ["/bin/bash"]

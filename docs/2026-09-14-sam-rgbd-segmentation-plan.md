@@ -14,8 +14,11 @@ and environment avoidance:
 - `static_environment` — retained as an obstacle;
 - `ambiguous_contact` / `unknown` — never silently treated as free space.
 
-This is a design and experiment plan.  No production segmentation code or model
-dependency has been added.
+This began as a design and experiment plan.  A first non-production probe now
+lives in `viki/perception/segmentation.py`: prompted SAM 2.1 masks and a
+calibrated RGB-D lift under `intermediates/segmentation/`.  Retarget does not
+consume the result yet; the remaining sections describe the intended path from
+that probe to a confidence-bearing object track.
 
 ## Decision
 

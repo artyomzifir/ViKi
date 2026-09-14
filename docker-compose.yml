@@ -1,10 +1,11 @@
 # Single compose file. One image (Dockerfile `test` target = base + pytest),
-# four services:
+# five services:
 #
 #   web       docker compose up                       -> FastAPI on :8000
 #   test      docker compose run --rm test [args]      -> pytest tests/ (args append)
 #   cli       docker compose run --rm cli <verb> ...   -> `viki <verb> ...`
 #   terminal  docker compose run --rm terminal         -> bash, for manual poking
+#   sam2      docker compose run --rm sam2 <args>       -> optional SAM 2.1 image
 #
 # Only `web` starts on `up`; the rest sit behind the `tools` profile and are
 # meant for `run`.
@@ -101,3 +102,16 @@ services:
     tty: true
     entrypoint: ["/app/docker/entrypoint.sh"]
     command: ["/bin/bash"]
+
+  sam2:
+    <<: *common
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: sam2
+    image: viki-sam2
+    container_name: viki-sam2
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["/app/docker/entrypoint.sh", "viki"]
+    command: ["--help"]

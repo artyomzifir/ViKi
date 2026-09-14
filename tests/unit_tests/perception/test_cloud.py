@@ -11,7 +11,12 @@ import pytest
 
 from viki import config
 from viki.episode import new_episode, stage_done
-from viki.perception.cloud import build_cloud
+from viki.perception.cloud import (
+    _bbox_mask,
+    _camera_samples,
+    _voxel_downsample_indices,
+    build_cloud,
+)
 
 
 def _unpack(buf: bytes):
@@ -76,3 +81,29 @@ def test_coarser_voxel_yields_fewer_points(tmp_path, monkeypatch):
     coarse, _, _ = _unpack((ep.cloud_dir / "000000.bin").read_bytes())
 
     assert coarse < fine
+
+
+def test_camera_samples_retain_projected_colour_pixels():
+    color = np.zeros((4, 5, 3), np.uint8)
+    color[2, 3] = [10, 20, 30]
+    depth = np.zeros((4, 5), np.uint16)
+    depth[2, 3] = 1000
+    K = np.array([[100.0, 0.0, 2.0], [0.0, 100.0, 2.0], [0.0, 0.0, 1.0]])
+
+    xyz, rgb, uv = _camera_samples(color, depth, 1, K, None, np.eye(4))
+
+    np.testing.assert_array_equal(uv, [[3, 2]])
+    np.testing.assert_array_equal(rgb, [[30, 20, 10]])
+    np.testing.assert_allclose(xyz, [[0.01, 0.0, 1.0]])
+
+
+def test_voxel_downsample_indices_preserve_source_rows():
+    xyz = np.array([[0.0, 0, 0], [0.001, 0, 0], [0.02, 0, 0]], np.float32)
+    idx = _voxel_downsample_indices(xyz, 0.01)
+    np.testing.assert_array_equal(idx, [0, 2])
+
+
+def test_bbox_mask_keeps_only_workspace_points():
+    xyz = np.array([[0.0, 0.0, 0.5], [2.0, 0.0, 0.5]], np.float32)
+    keep = _bbox_mask(xyz, [-1, 1, -1, 1, 0, 1])
+    np.testing.assert_array_equal(keep, [True, False])

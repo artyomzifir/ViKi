@@ -62,9 +62,10 @@ def _fps_from_timestamps(raw: Path) -> float:
     return float(1e6 / np.median(d)) if d.size else 15.0
 
 
-def _voxel_downsample(xyz: np.ndarray, rgb: np.ndarray, leaf: float) -> tuple[np.ndarray, np.ndarray]:
+def _voxel_downsample_indices(xyz: np.ndarray, leaf: float) -> np.ndarray:
+    """Return stable indices of the first point retained in every voxel."""
     if leaf <= 0 or len(xyz) == 0:
-        return xyz, rgb
+        return np.arange(len(xyz), dtype=np.int64)
     # Pack the 3 voxel indices into one int64 and de-dup on that — a single 1-D
     # sort, ~10x faster than np.unique(axis=0)'s structured lexsort (this is the
     # per-frame hot path of the whole cloud build).
@@ -76,6 +77,15 @@ def _voxel_downsample(xyz: np.ndarray, rgb: np.ndarray, leaf: float) -> tuple[np
     else:  # workspace too large to pack — fall back
         _, idx = np.unique(keys, axis=0, return_index=True)
     idx.sort()
+    return idx.astype(np.int64, copy=False)
+
+
+def _voxel_downsample(
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    leaf: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    idx = _voxel_downsample_indices(xyz, leaf)
     return xyz[idx], rgb[idx]
 
 
@@ -98,19 +108,23 @@ def _bbox_to_frame(bbox, T_world_display) -> list:
     return [float(lo[0]), float(hi[0]), float(lo[1]), float(hi[1]), float(lo[2]), float(hi[2])]
 
 
-def _crop_bbox(xyz: np.ndarray, rgb: np.ndarray, bbox) -> tuple[np.ndarray, np.ndarray]:
+def _bbox_mask(xyz: np.ndarray, bbox) -> np.ndarray:
     if not bbox or len(bbox) != 6:
-        return xyz, rgb
+        return np.ones(len(xyz), dtype=bool)
     x0, x1, y0, y1, z0, z1 = bbox
-    m = (
+    return (
         (xyz[:, 0] >= x0) & (xyz[:, 0] <= x1)
         & (xyz[:, 1] >= y0) & (xyz[:, 1] <= y1)
         & (xyz[:, 2] >= z0) & (xyz[:, 2] <= z1)
     )
+
+
+def _crop_bbox(xyz: np.ndarray, rgb: np.ndarray, bbox) -> tuple[np.ndarray, np.ndarray]:
+    m = _bbox_mask(xyz, bbox)
     return xyz[m], rgb[m]
 
 
-def _camera_cloud(
+def _camera_samples(
     color_bgr: np.ndarray,
     depth_mm: np.ndarray,
     stride: int,
@@ -119,8 +133,8 @@ def _camera_cloud(
     T_world_cam: np.ndarray,
     bg_mm: np.ndarray | None = None,
     bg_tol_mm: float = 50.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """One camera, one frame → (xyz_world Nx3 metres, rgb Nx3 uint8).
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """One camera frame → world points, RGB, and source colour pixels.
 
     Fully vectorised. When a k4a calibration is available the depth→colour-3D
     deprojection uses a precomputed ``(A, B)`` ray map (exact SDK lens model,
@@ -142,7 +156,11 @@ def _camera_cloud(
         keep &= ~((bz > 0) & (np.abs(z - bz) <= float(bg_tol_mm)))
     us, vs, z = us[keep], vs[keep], z[keep]
     if us.size == 0:
-        return np.empty((0, 3), np.float32), np.empty((0, 3), np.uint8)
+        return (
+            np.empty((0, 3), np.float32),
+            np.empty((0, 3), np.uint8),
+            np.empty((0, 2), np.int32),
+        )
 
     ch, cw = color_bgr.shape[:2]
 
@@ -153,13 +171,21 @@ def _camera_cloud(
         pts = pts[finite] / 1000.0  # mm → m
         us, vs = us[finite], vs[finite]
         if pts.size == 0:
-            return np.empty((0, 3), np.float32), np.empty((0, 3), np.uint8)
+            return (
+                np.empty((0, 3), np.float32),
+                np.empty((0, 3), np.uint8),
+                np.empty((0, 2), np.int32),
+            )
         uu = pts[:, 0] / pts[:, 2] * K_color[0, 0] + K_color[0, 2]
         vv = pts[:, 1] / pts[:, 2] * K_color[1, 1] + K_color[1, 2]
     else:
         # depth assumed colour-aligned: pinhole deproject at the depth pixel
         if K_color is None:
-            return np.empty((0, 3), np.float32), np.empty((0, 3), np.uint8)
+            return (
+                np.empty((0, 3), np.float32),
+                np.empty((0, 3), np.uint8),
+                np.empty((0, 2), np.int32),
+            )
         zm = z / 1000.0
         X = (us - K_color[0, 2]) * zm / K_color[0, 0]
         Y = (vs - K_color[1, 2]) * zm / K_color[1, 1]
@@ -171,7 +197,32 @@ def _camera_cloud(
     rgb = color_bgr[vi, ui][:, ::-1].copy()  # BGR → RGB
 
     world = pts @ T_world_cam[:3, :3].T + T_world_cam[:3, 3]
-    return world.astype(np.float32), rgb.astype(np.uint8)
+    color_uv = np.stack([ui, vi], axis=1).astype(np.int32)
+    return world.astype(np.float32), rgb.astype(np.uint8), color_uv
+
+
+def _camera_cloud(
+    color_bgr: np.ndarray,
+    depth_mm: np.ndarray,
+    stride: int,
+    K_color: np.ndarray | None,
+    cal,
+    T_world_cam: np.ndarray,
+    bg_mm: np.ndarray | None = None,
+    bg_tol_mm: float = 50.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compatibility wrapper for the Viewer cloud builder."""
+    xyz, rgb, _color_uv = _camera_samples(
+        color_bgr,
+        depth_mm,
+        stride,
+        K_color,
+        cal,
+        T_world_cam,
+        bg_mm=bg_mm,
+        bg_tol_mm=bg_tol_mm,
+    )
+    return xyz, rgb
 
 
 def _pack(xyz: np.ndarray, rgb: np.ndarray) -> bytes:

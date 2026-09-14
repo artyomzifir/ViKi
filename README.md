@@ -93,7 +93,7 @@ device, and a sync cable for multi-Kinect capture.
 |---|---|
 | OS | Linux (tested on Ubuntu) |
 | Runtime | Docker + Docker Compose |
-| GPU | optional; NVIDIA CUDA accelerates the RTMPose backend |
+| GPU | optional for the main pipeline; NVIDIA CUDA is required by the experimental SAM 2.1 image |
 | Cameras | Intel RealSense D435i and/or Azure Kinect DK |
 | Robot | a URDF from `robot_descriptions` — UR3/UR5/UR10/UR5e/UR10e, iiwa14 (default: `ur10`) |
 
@@ -113,6 +113,7 @@ produced on first use; some of it you have to go and get.
 | **Robot URDF descriptions** | `models/robot_descriptions/` | Downloaded at the **first retarget run** by the `robot_descriptions` package. Needs network access from inside the container. |
 | **Gripper URDFs** | `models/robot_descriptions/` | Same mechanism. Only **Robotiq 2F-85** is wired up; the other profiles refuse to load and state why (licence/packaging unverified). Supplying your own gripper is on you. |
 | **Hand-pose model weights** | `~/.cache/`, `models/` | MediaPipe HandLandmarker and RTMPose ONNX **auto-download** on first use. The `mmpose-heatmap` models (HRNetv2, Hourglass-52, SCNet-50, ResNet-50) are **not published as ONNX** — convert them yourself with `mmdeploy` or fetch from the OpenMMLab Deploee, then drop the `.onnx` into `models/`. |
+| **SAM 2.1 checkpoint** | `models/sam2/sam2.1_hiera_small.pt` | Optional, for experimental scene segmentation. Download the official Meta checkpoint; ViKi verifies its SHA-256 before inference. SAM 2 code and checkpoints are Apache-2.0 licensed. |
 | **Camera calibration** | `data/` | Produced by you, per rig, with the Calibration tab — intrinsics, extrinsics, world anchor. Calibration is rig-specific and varies between recording sessions; none is shipped. |
 | **Recordings / episodes** | `data/episodes/`, `data/datasets/` | Yours. Record them with ViKi, or import an existing dataset. |
 | **Configuration** | `data/user_configuration.json` | Copied from `default_configuration.json` on first run, then edited by you (robot, base offset, adapter, profiles). |
@@ -133,6 +134,7 @@ produced on first use; some of it you have to go and get.
 | record | [`viki/cameras`](viki/cameras/README.md) | works |
 | calibrate | [`viki/calibration`](viki/calibration/README.md) | works |
 | extract (skeleton) | [`viki/perception`](viki/perception/README.md) | works — accuracy tuning ongoing |
+| segment (instances + RGB-D lift) | [`viki/perception`](viki/perception/README.md#experimental-scene-segmentation) | **experimental** — prompted SAM 2.1 side artifact, not consumed by retarget yet |
 | prepare (fuse + smooth) | [`viki/prepare`](viki/prepare/README.md) | works — accuracy tuning ongoing |
 | retarget (IK) | [`viki/retarget`](viki/retarget/README.md) | works |
 | replay (hardware validation) | [`viki/replay`](viki/replay/README.md) | **stub** — no hardware validation |
@@ -175,6 +177,7 @@ The same stages are available headless:
 ```bash
 docker compose run --rm cli record   ...   # capture a synced RGB-D scene
 docker compose run --rm cli extract  ...   # raw/  -> rec.npz
+docker compose run --rm sam2 segment ...   # optional masks + semantic 3-D cloud
 docker compose run --rm cli prepare  ...   # rec.npz -> cln.npz
 docker compose run --rm cli retarget ...   # cln.npz -> plan.h5
 docker compose run --rm cli export   ...   # plan.h5 -> dataset
