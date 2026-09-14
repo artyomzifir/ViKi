@@ -8,6 +8,7 @@ server calls — the CLI just parses args and prints results.
     viki perceive <episode>             # stable fused + hand_fit by default
     viki extract  <episode>
     viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
+    viki auto-prompts <episode>        # calibrated foreground -> SAM prompts
     viki segment  <episode> ...        # prompted SAM 2.1 masks [+ RGB-D lift]
     viki object-model <episode>        # semantic cloud -> compact rigid models
     viki prepare  <episode>
@@ -91,6 +92,25 @@ def _cmd_cloud(a) -> None:
     from viki.perception.cloud import build_cloud
 
     print(build_cloud(_episode(a.episode)))
+
+
+def _cmd_auto_prompts(a) -> None:
+    from viki.perception import AutoPromptConfig, generate_auto_prompts
+
+    cfg = AutoPromptConfig(
+        frame=a.frame,
+        object_count=a.objects,
+        object_label=a.object_label,
+        depth_stride=a.depth_stride,
+        background_tolerance_mm=a.bg_tolerance_mm,
+        min_object_saturation=a.min_saturation,
+        max_object_extent_m=a.max_object_extent_mm / 1000.0,
+    )
+    print(generate_auto_prompts(
+        _episode(a.episode),
+        a.out,
+        config=cfg,
+    ))
 
 
 def _cmd_segment(a) -> None:
@@ -376,6 +396,25 @@ def _build_parser() -> argparse.ArgumentParser:
     pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
     pc.add_argument("episode")
     pc.set_defaults(func=_cmd_cloud)
+
+    pap = sub.add_parser(
+        "auto-prompts",
+        help="calibrated background foreground -> automatic SAM prompt proposals",
+    )
+    pap.add_argument("episode")
+    pap.add_argument("--out", default=None, help="output prompt JSON")
+    pap.add_argument("--frame", type=int, default=0)
+    pap.add_argument("--objects", type=int, default=3)
+    pap.add_argument(
+        "--object-label",
+        choices=["manipulated_object", "other_object", "other_dynamic"],
+        default="other_dynamic",
+    )
+    pap.add_argument("--depth-stride", type=int, default=2)
+    pap.add_argument("--bg-tolerance-mm", type=float, default=50.0)
+    pap.add_argument("--min-saturation", type=float, default=0.25)
+    pap.add_argument("--max-object-extent-mm", type=float, default=250.0)
+    pap.set_defaults(func=_cmd_auto_prompts)
 
     ps = sub.add_parser(
         "segment",

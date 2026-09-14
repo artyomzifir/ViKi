@@ -19,6 +19,10 @@ from viki.contracts import (  # noqa: F401
     SkeletonFrame,
 )
 from viki.perception.backends import HandPoseBackend, load_backend  # noqa: F401
+from viki.perception.auto_prompts import (  # noqa: F401
+    AutoPromptConfig,
+    generate_auto_prompts,
+)
 from viki.perception.object_model import (  # noqa: F401
     ObjectModelConfig,
     build_object_models,
@@ -32,6 +36,8 @@ __all__ = [
     "SkeletonFrame",
     "EndEffectorPose",
     "HandPoseBackend",
+    "AutoPromptConfig",
+    "generate_auto_prompts",
     "ObjectModelConfig",
     "build_object_models",
     "load_backend",

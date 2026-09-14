@@ -42,6 +42,22 @@ identity rotation.
 SAM 2.1 is intentionally isolated from the normal ViKi image because the
 PyTorch CUDA wheels are several gigabytes. Build/run the dedicated profile:
 
+For an episode recorded against a stored empty-scene depth plate, frame-zero
+prompts can first be proposed from fused 3-D foreground components:
+
+```bash
+docker compose run --rm cli auto-prompts episodes/<id> \
+  --objects 3 --out data/prompts/<scene>.json
+```
+
+The proposal generator treats the largest foreground component as the operator
+and compact, multi-view, colour-saturated components as object candidates. It
+projects the same selected 3-D components into every RGB camera to produce a
+box, a positive click, and negative clicks on the other components. Candidate
+objects default to `other_dynamic`: frame-zero geometry alone cannot determine
+their task role. Component measurements and thresholds remain in the prompt
+JSON for audit.
+
 ```bash
 docker compose build sam2
 docker compose run --rm sam2 segment episodes/<id> \
@@ -95,3 +111,6 @@ Measured results and known failure modes from the first two real scenes are in
 [`docs/2026-09-14-sam2-segmentation-probe.md`](../../docs/2026-09-14-sam2-segmentation-probe.md)
 and the follow-on core/shell experiment is recorded in
 [`docs/2026-09-14-object-model-filter-probe.md`](../../docs/2026-09-14-object-model-filter-probe.md).
+The calibrated background-to-prompt experiment on the complete `pyramid` scene
+is recorded in
+[`docs/2026-09-14-pyramid-auto-prompts.md`](../../docs/2026-09-14-pyramid-auto-prompts.md).
