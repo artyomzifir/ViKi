@@ -19,6 +19,10 @@ from viki.contracts import (  # noqa: F401
     SkeletonFrame,
 )
 from viki.perception.backends import HandPoseBackend, load_backend  # noqa: F401
+from viki.perception.object_model import (  # noqa: F401
+    ObjectModelConfig,
+    build_object_models,
+)
 
 __all__ = [
     "LM",
@@ -28,5 +32,7 @@ __all__ = [
     "SkeletonFrame",
     "EndEffectorPose",
     "HandPoseBackend",
+    "ObjectModelConfig",
+    "build_object_models",
     "load_backend",
 ]

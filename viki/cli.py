@@ -9,6 +9,7 @@ server calls — the CLI just parses args and prints results.
     viki extract  <episode>
     viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
     viki segment  <episode> ...        # prompted SAM 2.1 masks [+ RGB-D lift]
+    viki object-model <episode>        # semantic cloud -> compact rigid models
     viki prepare  <episode>
     viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
@@ -146,6 +147,31 @@ def _cmd_segment_lift(a) -> None:
         voxel_m=a.voxel_m,
         report=progress,
     ))
+
+
+def _cmd_object_model(a) -> None:
+    from viki.perception.object_model import ObjectModelConfig, build_object_models
+    from viki.perception.segmentation import SAM2_MODEL_KEY
+
+    def progress(**fields):
+        print(
+            f"{fields.get('stage', 'object-model')}: "
+            f"{fields.get('frame', 0)}/{fields.get('total', 0)} "
+            f"object={fields.get('object_id', '?')}"
+        )
+
+    ep = _episode(a.episode)
+    segmentation = (
+        Path(a.segmentation_dir)
+        if a.segmentation_dir
+        else ep.intermediates_dir / "segmentation" / SAM2_MODEL_KEY
+    )
+    config = ObjectModelConfig(
+        bootstrap_frames=a.bootstrap_frames,
+        component_radius_m=a.component_radius_mm / 1000.0,
+        inlier_distance_m=a.inlier_distance_mm / 1000.0,
+    )
+    print(build_object_models(segmentation, config=config, report=progress))
 
 
 def _cmd_prepare(a) -> None:
@@ -378,6 +404,17 @@ def _build_parser() -> argparse.ArgumentParser:
     psl.add_argument("--depth-stride", type=int, default=2)
     psl.add_argument("--voxel-m", type=float, default=0.004)
     psl.set_defaults(func=_cmd_segment_lift)
+
+    pom = sub.add_parser(
+        "object-model",
+        help="experimental semantic cloud -> compact rigid object models",
+    )
+    pom.add_argument("episode")
+    pom.add_argument("--segmentation-dir", default=None)
+    pom.add_argument("--bootstrap-frames", type=int, default=60)
+    pom.add_argument("--component-radius-mm", type=float, default=12.0)
+    pom.add_argument("--inlier-distance-mm", type=float, default=12.0)
+    pom.set_defaults(func=_cmd_object_model)
 
     phf = sub.add_parser("hand-fit", help="batch-fit a capsule hand trajectory and append hand_fit_* to cln.npz")
     phf.add_argument("episode")

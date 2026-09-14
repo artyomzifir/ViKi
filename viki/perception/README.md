@@ -17,6 +17,7 @@ is deferred to `viki.prepare`.
 | `camera_prep.py` | `prepare_frame` : `Frame` → `PreparedFrame` (RGB, depth in metres, depth K) |
 | `geometry.py` | `lift_to_3d` (2-D + depth → camera-frame 3-D), `camera_landmarks_to_world` (apply extrinsics) |
 | `segmentation.py` | optional prompted SAM 2.1 video masks and calibrated RGB-D lift; experimental artifacts only |
+| `object_model.py` | optional core/shell rigid models, robust SE(3) tracks, contact freeze and compact point decisions over a semantic cloud |
 | `hand_angles.py` | `compute_end_effector_pose` — the single site that derives the wrist SE(3) pose from landmarks (also used by `prepare`) |
 | `pipeline.py` | `SkeletonPipeline` — per-`SyncedFrameGroup` orchestration (kept for tooling; the offline path is `extract.py`) |
 | `models.py` | compat re-export of the perception DTOs from `viki.contracts` |
@@ -54,6 +55,12 @@ the masks without rerunning SAM:
 docker compose run --rm cli segment-lift episodes/<id>
 ```
 
+Build the non-destructive rigid object-model experiment after the 3-D lift:
+
+```bash
+docker compose run --rm cli object-model episodes/<id>
+```
+
 The official `sam2.1_hiera_small.pt` checkpoint goes in `models/sam2/`; its
 expected SHA-256 is
 `6d1aa6f30de5c92224f8172114de081d104bbd23dd9dc5c58996f0cad5dc4d38`.
@@ -75,5 +82,16 @@ used—mask-supported world-frame point clouds plus a provisional centroid and
 visible-dimensions track. Nothing downstream reads these artifacts implicitly.
 Missing or unlabelled points remain unknown, never free space.
 
+`object-model` adds `object_models.npz` beside those artifacts. It does not copy
+or rewrite XYZ/RGB. The archive holds a temporally supported canonical
+core/shell surface, `T_world_object(t)`, tracking residual/coverage/confidence,
+rotation information, an operator-proximity contact flag, and compact
+accepted/reassigned/rejected/ambiguous decisions referring to point indices in
+each source semantic-cloud frame. Shell promotion is disabled on contact
+frames. This remains an experimental perception artifact: retarget does not
+load it implicitly.
+
 Measured results and known failure modes from the first two real scenes are in
-[`docs/2026-09-14-sam2-segmentation-probe.md`](../../docs/2026-09-14-sam2-segmentation-probe.md).
+[`docs/2026-09-14-sam2-segmentation-probe.md`](../../docs/2026-09-14-sam2-segmentation-probe.md)
+and the follow-on core/shell experiment is recorded in
+[`docs/2026-09-14-object-model-filter-probe.md`](../../docs/2026-09-14-object-model-filter-probe.md).
