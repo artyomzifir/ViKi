@@ -52,6 +52,51 @@ def _color_K(entry: dict) -> np.ndarray | None:
     )
 
 
+def _depth_K(entry: dict) -> np.ndarray | None:
+    intr = (entry or {}).get("depth")
+    if not intr or "fx" not in intr:
+        return None
+    return np.array(
+        [[intr["fx"], 0, intr["cx"]], [0, intr["fy"], intr["cy"]], [0, 0, 1]],
+        dtype=np.float64,
+    )
+
+
+def _depth_edge_keep_mask(
+    depth_mm: np.ndarray,
+    K_depth: np.ndarray | None,
+    *,
+    radius_rad: float,
+    jump_mm: float,
+    jump_relative: float,
+) -> np.ndarray:
+    """Mark depth samples whose angular neighbourhood is one coherent surface.
+
+    Kinect mixed pixels occur around a depth discontinuity.  A pixel radius is
+    deliberately not a parameter: ``radius_rad * focal_length_px`` keeps the
+    same ray-space footprint when the recorded depth resolution changes.
+    Thresholds stay metric (millimetres plus a depth-relative allowance).
+    Missing intrinsics disable the filter rather than inventing a resolution-
+    dependent fallback.
+    """
+    depth = np.asarray(depth_mm)
+    valid = np.isfinite(depth) & (depth > 0)
+    if not valid.any() or K_depth is None or radius_rad <= 0:
+        return valid
+    focal_px = float(np.sqrt(abs(float(K_depth[0, 0] * K_depth[1, 1]))))
+    if not np.isfinite(focal_px) or focal_px <= 0:
+        return valid
+    radius_px = max(1, int(np.ceil(float(radius_rad) * focal_px)))
+    kernel = np.ones((2 * radius_px + 1, 2 * radius_px + 1), np.uint8)
+    values = depth.astype(np.float32, copy=False)
+    local_min = cv2.erode(np.where(valid, values, np.float32(1e9)), kernel)
+    local_max = cv2.dilate(np.where(valid, values, np.float32(0.0)), kernel)
+    span = local_max - local_min
+    allowed = np.maximum(float(jump_mm), float(jump_relative) * values)
+    coherent = (local_min < np.float32(1e8)) & (span <= allowed)
+    return valid & coherent
+
+
 def _fps_from_timestamps(raw: Path) -> float:
     ts = _read_json(raw / "timestamps.json")
     if not isinstance(ts, list) or len(ts) < 2:
@@ -133,6 +178,13 @@ def _camera_samples(
     T_world_cam: np.ndarray,
     bg_mm: np.ndarray | None = None,
     bg_tol_mm: float = 50.0,
+    *,
+    K_depth: np.ndarray | None = None,
+    edge_filter: bool = False,
+    edge_radius_rad: float = 0.004,
+    edge_jump_mm: float = 30.0,
+    edge_jump_relative: float = 0.02,
+    exact_color_projection: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """One camera frame → world points, RGB, and source colour pixels.
 
@@ -149,6 +201,15 @@ def _camera_samples(
     vs = vs.ravel()
     z = depth_mm[vs, us].astype(np.float64)
     keep = z > 0
+    if edge_filter:
+        edge_keep = _depth_edge_keep_mask(
+            depth_mm,
+            K_depth,
+            radius_rad=edge_radius_rad,
+            jump_mm=edge_jump_mm,
+            jump_relative=edge_jump_relative,
+        )
+        keep &= edge_keep[vs, us]
     if bg_mm is not None and bg_mm.shape == depth_mm.shape:
         bz = bg_mm[vs, us].astype(np.float64)
         # a pixel is static scene when the background has a reading there and the
@@ -194,7 +255,15 @@ def _camera_samples(
 
     ui = np.clip(np.round(uu), 0, cw - 1).astype(np.int64)
     vi = np.clip(np.round(vv), 0, ch - 1).astype(np.int64)
-    rgb = color_bgr[vi, ui][:, ::-1].copy()  # BGR → RGB
+    aligned_bgr = None
+    if exact_color_projection and cal is not None:
+        align = getattr(cal, "align_color_to_depth", None)
+        if align is not None:
+            aligned_bgr = align(color_bgr, depth_mm)
+    if aligned_bgr is not None and aligned_bgr.shape[:2] == depth_mm.shape:
+        rgb = aligned_bgr[vs, us][:, ::-1].copy()
+    else:
+        rgb = color_bgr[vi, ui][:, ::-1].copy()  # BGR → RGB
 
     world = pts @ T_world_cam[:3, :3].T + T_world_cam[:3, 3]
     color_uv = np.stack([ui, vi], axis=1).astype(np.int32)
@@ -210,6 +279,13 @@ def _camera_cloud(
     T_world_cam: np.ndarray,
     bg_mm: np.ndarray | None = None,
     bg_tol_mm: float = 50.0,
+    *,
+    K_depth: np.ndarray | None = None,
+    edge_filter: bool = False,
+    edge_radius_rad: float = 0.004,
+    edge_jump_mm: float = 30.0,
+    edge_jump_relative: float = 0.02,
+    exact_color_projection: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compatibility wrapper for the Viewer cloud builder."""
     xyz, rgb, _color_uv = _camera_samples(
@@ -221,6 +297,12 @@ def _camera_cloud(
         T_world_cam,
         bg_mm=bg_mm,
         bg_tol_mm=bg_tol_mm,
+        K_depth=K_depth,
+        edge_filter=edge_filter,
+        edge_radius_rad=edge_radius_rad,
+        edge_jump_mm=edge_jump_mm,
+        edge_jump_relative=edge_jump_relative,
+        exact_color_projection=exact_color_projection,
     )
     return xyz, rgb
 
@@ -243,12 +325,18 @@ def build_cloud(
     max_points: int | None = None,
     bg_subtract: bool | None = None,
     bg_tol_mm: float | None = None,
+    edge_filter: bool | None = None,
+    edge_radius_rad: float | None = None,
+    edge_jump_mm: float | None = None,
+    edge_jump_relative: float | None = None,
+    exact_color_projection: bool | None = None,
     report=None,
 ) -> str:
     """Write ``cloud/<i>.bin`` + ``cloud/meta.json`` for the episode. Returns the dir.
 
     ``stride`` / ``voxel`` / ``bbox`` / ``max_points`` / ``bg_subtract`` /
-    ``bg_tol_mm`` default to the ``CLOUD_*`` config keys.
+    ``bg_tol_mm`` / edge filtering / exact colour projection default to the
+    ``CLOUD_*`` config keys.
     ``bg_subtract`` drops points matching the calibration preset's empty-scene
     depth. ``report(stage="cloud", frame=i, total=N)`` drives a progress bar.
     """
@@ -264,9 +352,42 @@ def build_cloud(
     # the RIG (reference-camera) frame (T_world_display never touches the points,
     # spec §5). Carry the box into the rig frame for the crop test instead.
     bbox = _bbox_to_frame(bbox, _read_json(raw / "world_anchor.json").get("T_world_display"))
-    cap = int(max_points if max_points is not None else getattr(config, "CLOUD_MAX_POINTS_PER_FRAME", 40000))
-    bg_subtract = bool(getattr(config, "CLOUD_BG_SUBTRACT", True) if bg_subtract is None else bg_subtract)
-    bg_tol_mm = float(getattr(config, "CLOUD_BG_TOLERANCE_MM", 50.0) if bg_tol_mm is None else bg_tol_mm)
+    cap = int(
+        max_points
+        if max_points is not None
+        else getattr(config, "CLOUD_MAX_POINTS_PER_FRAME", 40000)
+    )
+    bg_subtract = bool(
+        getattr(config, "CLOUD_BG_SUBTRACT", True)
+        if bg_subtract is None
+        else bg_subtract
+    )
+    bg_tol_mm = float(
+        getattr(config, "CLOUD_BG_TOLERANCE_MM", 50.0)
+        if bg_tol_mm is None
+        else bg_tol_mm
+    )
+    edge_filter = bool(
+        getattr(config, "CLOUD_EDGE_FILTER", True)
+        if edge_filter is None
+        else edge_filter
+    )
+    edge_radius_rad = float(
+        getattr(config, "CLOUD_EDGE_RADIUS_RAD", 0.004)
+        if edge_radius_rad is None else edge_radius_rad
+    )
+    edge_jump_mm = float(
+        getattr(config, "CLOUD_EDGE_JUMP_MM", 30.0)
+        if edge_jump_mm is None else edge_jump_mm
+    )
+    edge_jump_relative = float(
+        getattr(config, "CLOUD_EDGE_JUMP_RELATIVE", 0.02)
+        if edge_jump_relative is None else edge_jump_relative
+    )
+    exact_color_projection = bool(
+        getattr(config, "CLOUD_EXACT_COLOR_PROJECTION", False)
+        if exact_color_projection is None else exact_color_projection
+    )
 
     preset = (meta_all or {}).get("calibration_preset")
     bg_by_dev: dict = {}
@@ -313,6 +434,7 @@ def build_cloud(
             "cap": cv2.VideoCapture(str(mp4)),
             "depth_dir": raw / f"{dev}_depth",
             "K": _color_K(intr_all.get(dev, {})),
+            "K_depth": _depth_K(intr_all.get(dev, {})),
             "cal": cal,
             "T": T,
             "bg": bg_by_dev.get(dev),
@@ -353,8 +475,22 @@ def build_cloud(
             depth_mm = np.load(dpath)
             if not depth_mm.any():
                 continue
-            x, r = _camera_cloud(bgr, depth_mm, stride, c["K"], c["cal"], c["T"],
-                                 bg_mm=c["bg"], bg_tol_mm=bg_tol_mm)
+            x, r = _camera_cloud(
+                bgr,
+                depth_mm,
+                stride,
+                c["K"],
+                c["cal"],
+                c["T"],
+                bg_mm=c["bg"],
+                bg_tol_mm=bg_tol_mm,
+                K_depth=c["K_depth"],
+                edge_filter=edge_filter,
+                edge_radius_rad=edge_radius_rad,
+                edge_jump_mm=edge_jump_mm,
+                edge_jump_relative=edge_jump_relative,
+                exact_color_projection=exact_color_projection,
+            )
             if len(x):
                 xyz_parts.append(x)
                 rgb_parts.append(r)
@@ -400,6 +536,11 @@ def build_cloud(
         "voxel": voxel,
         "stride": stride,
         "cameras": [c["dev"] for c in cams],
+        "edge_filter": edge_filter,
+        "edge_radius_rad": edge_radius_rad,
+        "edge_jump_mm": edge_jump_mm,
+        "edge_jump_relative": edge_jump_relative,
+        "exact_color_projection": exact_color_projection,
         "per_frame_points": per_frame,
     }, indent=2))
     mark_stage(ep, "cloud", frames=i, points=int(sum(per_frame)))

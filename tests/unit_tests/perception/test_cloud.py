@@ -14,6 +14,7 @@ from viki.episode import new_episode, stage_done
 from viki.perception.cloud import (
     _bbox_mask,
     _camera_samples,
+    _depth_edge_keep_mask,
     _voxel_downsample_indices,
     build_cloud,
 )
@@ -97,6 +98,38 @@ def test_camera_samples_retain_projected_colour_pixels():
     np.testing.assert_allclose(xyz, [[0.01, 0.0, 1.0]])
 
 
+def test_camera_samples_can_use_exact_color_to_depth_warp():
+    class Calibration:
+        def color_deproject_maps(self, height, width):
+            rays = np.zeros((height, width, 3), np.float64)
+            rays[:, :, 2] = 1.0
+            return rays, np.zeros_like(rays)
+
+        def align_color_to_depth(self, _color, depth):
+            aligned = np.zeros((*depth.shape, 3), np.uint8)
+            aligned[1, 1] = [11, 22, 33]
+            return aligned
+
+    color = np.zeros((2, 2, 3), np.uint8)
+    color[0, 0] = [1, 2, 3]
+    depth = np.zeros((2, 2), np.uint16)
+    depth[1, 1] = 1000
+    K = np.eye(3)
+
+    _xyz, rgb, uv = _camera_samples(
+        color,
+        depth,
+        1,
+        K,
+        Calibration(),
+        np.eye(4),
+        exact_color_projection=True,
+    )
+
+    np.testing.assert_array_equal(rgb, [[33, 22, 11]])
+    np.testing.assert_array_equal(uv, [[0, 0]])
+
+
 def test_voxel_downsample_indices_preserve_source_rows():
     xyz = np.array([[0.0, 0, 0], [0.001, 0, 0], [0.02, 0, 0]], np.float32)
     idx = _voxel_downsample_indices(xyz, 0.01)
@@ -107,3 +140,38 @@ def test_bbox_mask_keeps_only_workspace_points():
     xyz = np.array([[0.0, 0.0, 0.5], [2.0, 0.0, 0.5]], np.float32)
     keep = _bbox_mask(xyz, [-1, 1, -1, 1, 0, 1])
     np.testing.assert_array_equal(keep, [True, False])
+
+
+def test_depth_edge_filter_rejects_metric_discontinuity_not_flat_surface():
+    depth = np.full((9, 13), 1000, np.uint16)
+    depth[:, 7:] = 1400
+    K = np.array([[100.0, 0, 6.0], [0, 100.0, 4.0], [0, 0, 1.0]])
+
+    keep = _depth_edge_keep_mask(
+        depth, K, radius_rad=0.01, jump_mm=30.0, jump_relative=0.02
+    )
+
+    assert keep[:, :5].all()
+    assert not keep[:, 6:8].any()
+    assert keep[:, 8:].all()
+
+
+def test_depth_edge_filter_scales_pixel_radius_with_focal_length():
+    low = np.full((9, 13), 1000, np.uint16)
+    low[:, 7:] = 1400
+    high = np.repeat(np.repeat(low, 2, axis=0), 2, axis=1)
+    K_low = np.array([[100.0, 0, 6.0], [0, 100.0, 4.0], [0, 0, 1.0]])
+    K_high = K_low.copy()
+    K_high[:2] *= 2.0
+    K_high[2, 2] = 1.0
+
+    keep_low = _depth_edge_keep_mask(
+        low, K_low, radius_rad=0.01, jump_mm=30.0, jump_relative=0.02
+    )
+    keep_high = _depth_edge_keep_mask(
+        high, K_high, radius_rad=0.01, jump_mm=30.0, jump_relative=0.02
+    )
+
+    low_rejected = np.flatnonzero(~keep_low[4])
+    high_rejected = np.flatnonzero(~keep_high[8])
+    assert np.ptp(high_rejected) == 2 * np.ptp(low_rejected) + 1

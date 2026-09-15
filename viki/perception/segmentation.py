@@ -27,6 +27,7 @@ from viki.perception.cloud import (
     _bbox_to_frame,
     _camera_samples,
     _color_K,
+    _depth_K,
     _read_json,
     _voxel_downsample_indices,
 )
@@ -601,6 +602,7 @@ def lift_segmentation_to_3d(
             "cap": cv2.VideoCapture(str(ep.raw_dir / f"{camera}.mp4")),
             "depth": ep.raw_dir / f"{camera}_depth",
             "K": _color_K(intrinsics.get(camera, {})),
+            "K_depth": _depth_K(intrinsics.get(camera, {})),
             "cal": calibration,
             "T": transform,
             "frames": int(camera_meta["frames"]),
@@ -639,6 +641,17 @@ def lift_segmentation_to_3d(
                     camera["K"],
                     camera["cal"],
                     camera["T"],
+                    K_depth=camera["K_depth"],
+                    edge_filter=bool(getattr(config, "CLOUD_EDGE_FILTER", True)),
+                    edge_radius_rad=float(
+                        getattr(config, "CLOUD_EDGE_RADIUS_RAD", 0.004)
+                    ),
+                    edge_jump_mm=float(
+                        getattr(config, "CLOUD_EDGE_JUMP_MM", 30.0)
+                    ),
+                    edge_jump_relative=float(
+                        getattr(config, "CLOUD_EDGE_JUMP_RELATIVE", 0.02)
+                    ),
                 )
                 ids, labels, masks = archive.frame(camera["id"], frame_index)
                 membership = masks[:, uv[:, 1], uv[:, 0]]
@@ -726,6 +739,14 @@ def lift_segmentation_to_3d(
         "frames": total,
         "stride": stride,
         "voxel_m": voxel_m,
+        "edge_filter": bool(getattr(config, "CLOUD_EDGE_FILTER", True)),
+        "edge_radius_rad": float(
+            getattr(config, "CLOUD_EDGE_RADIUS_RAD", 0.004)
+        ),
+        "edge_jump_mm": float(getattr(config, "CLOUD_EDGE_JUMP_MM", 30.0)),
+        "edge_jump_relative": float(
+            getattr(config, "CLOUD_EDGE_JUMP_RELATIVE", 0.02)
+        ),
         "workspace_bbox_rig": bbox,
         "cameras": [camera["id"] for camera in cameras],
         "labels": LABEL_CODES,

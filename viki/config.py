@@ -38,6 +38,11 @@ CLOUD_WORKSPACE_BBOX: list[float]  # world AABB [xmin,xmax,ymin,ymax,zmin,zmax];
 CLOUD_MAX_POINTS_PER_FRAME: int
 CLOUD_BG_SUBTRACT: bool  # drop cloud points matching the calibrated empty-scene depth
 CLOUD_BG_TOLERANCE_MM: float  # |depth - background| below this = static scene, dropped
+CLOUD_EDGE_FILTER: bool  # reject mixed depth samples near ray-space discontinuities
+CLOUD_EDGE_RADIUS_RAD: float  # angular neighbourhood radius; resolution-independent
+CLOUD_EDGE_JUMP_MM: float  # absolute local depth discontinuity threshold
+CLOUD_EDGE_JUMP_RELATIVE: float  # additional threshold relative to sample depth
+CLOUD_EXACT_COLOR_PROJECTION: bool  # use libk4a color→depth warp when available
 PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
@@ -244,6 +249,11 @@ _DEFAULTS: dict[str, Any] = {
     "CLOUD_MAX_POINTS_PER_FRAME": 40000,
     "CLOUD_BG_SUBTRACT": True,
     "CLOUD_BG_TOLERANCE_MM": 50.0,
+    "CLOUD_EDGE_FILTER": True,
+    "CLOUD_EDGE_RADIUS_RAD": 0.004,
+    "CLOUD_EDGE_JUMP_MM": 30.0,
+    "CLOUD_EDGE_JUMP_RELATIVE": 0.02,
+    "CLOUD_EXACT_COLOR_PROJECTION": False,
     "PERCEPTION_TRACK_LM": list(range(21)),
     "PERCEPTION_INTERP_MAX_GAP": 0,
     "PERCEPTION_CONF_ALPHA": 1.0,

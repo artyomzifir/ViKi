@@ -30,6 +30,7 @@ from viki.perception.cloud import (
     _bbox_to_frame,
     _camera_samples,
     _color_K,
+    _depth_K,
     _read_json,
     _voxel_downsample_indices,
 )
@@ -273,6 +274,15 @@ def _read_camera_samples(ep, cfg: AutoPromptConfig) -> tuple[list[_CameraSamples
             transform,
             bg_mm=background,
             bg_tol_mm=cfg.background_tolerance_mm,
+            K_depth=_depth_K(intrinsics.get(camera, {})),
+            edge_filter=bool(getattr(viki_config, "CLOUD_EDGE_FILTER", True)),
+            edge_radius_rad=float(
+                getattr(viki_config, "CLOUD_EDGE_RADIUS_RAD", 0.004)
+            ),
+            edge_jump_mm=float(getattr(viki_config, "CLOUD_EDGE_JUMP_MM", 30.0)),
+            edge_jump_relative=float(
+                getattr(viki_config, "CLOUD_EDGE_JUMP_RELATIVE", 0.02)
+            ),
         )
         keep = _bbox_mask(xyz, bbox)
         cameras.append(_CameraSamples(

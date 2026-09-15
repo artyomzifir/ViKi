@@ -13,6 +13,7 @@ is deferred to `viki.prepare`.
 | file | what |
 |---|---|
 | `extract.py` | offline orchestrator: `raw/` → `rec.npz`. Assumes depth aligned to colour (identity colour→depth projector). |
+| `cloud.py` | offline Viewer cloud fusion with calibrated depth geometry, background subtraction, angular/metric depth-edge rejection, voxel deduplication and workspace crop |
 | `backends/` | `HandPoseBackend` ABC + implementations — see `backends/README.md` |
 | `camera_prep.py` | `prepare_frame` : `Frame` → `PreparedFrame` (RGB, depth in metres, depth K) |
 | `geometry.py` | `lift_to_3d` (2-D + depth → camera-frame 3-D), `camera_landmarks_to_world` (apply extrinsics) |
@@ -97,6 +98,15 @@ per-camera overlay videos, prompt/model provenance, and—when `--lift-3d` is
 used—mask-supported world-frame point clouds plus a provisional centroid and
 visible-dimensions track. Nothing downstream reads these artifacts implicitly.
 Missing or unlabelled points remain unknown, never free space.
+
+Both the Viewer cloud builder and the semantic RGB-D lift reject mixed depth
+samples near discontinuities. The neighbourhood is specified in ray angle
+(`CLOUD_EDGE_RADIUS_RAD`) and converted through the recorded depth focal length,
+so it keeps the same physical meaning when recording resolution changes. The
+depth jump itself is metric (`max(CLOUD_EDGE_JUMP_MM,
+CLOUD_EDGE_JUMP_RELATIVE * depth)`). Exact libk4a colour-to-depth warping is
+available as an opt-in diagnostic, but remains off by default because it affects
+colour association rather than XYZ geometry and is substantially slower.
 
 `object-model` adds `object_models.npz` beside those artifacts. It does not copy
 or rewrite XYZ/RGB. The archive holds a temporally supported canonical
