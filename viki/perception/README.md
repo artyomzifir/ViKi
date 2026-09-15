@@ -104,9 +104,12 @@ samples near discontinuities. The neighbourhood is specified in ray angle
 (`CLOUD_EDGE_RADIUS_RAD`) and converted through the recorded depth focal length,
 so it keeps the same physical meaning when recording resolution changes. The
 depth jump itself is metric (`max(CLOUD_EDGE_JUMP_MM,
-CLOUD_EDGE_JUMP_RELATIVE * depth)`). Exact libk4a colour-to-depth warping is
-available as an opt-in diagnostic, but remains off by default because it affects
-colour association rather than XYZ geometry and is substantially slower.
+CLOUD_EDGE_JUMP_RELATIVE * depth)`). Exact libk4a colour-to-depth warping is on
+by default so RGB and SAM masks are sampled at the same depth pixels used for
+XYZ. After its one-time SDK setup, measured warmed cost is about 4.9–6.7 ms per
+camera/frame. Semantic lift also applies the saved empty-scene depth plate when
+available; this prevents a correct 2-D mask from admitting static background
+behind the object.
 
 `object-model` adds `object_models.npz` beside those artifacts. It does not copy
 or rewrite XYZ/RGB. The archive holds a temporally supported canonical

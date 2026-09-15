@@ -67,6 +67,24 @@ class PromptSpec:
     source: dict[str, Any]
 
 
+def _sample_mask_membership(
+    masks: np.ndarray,
+    color_uv: np.ndarray,
+    depth_uv: np.ndarray,
+    depth_mm: np.ndarray,
+    calibration,
+) -> tuple[np.ndarray, str]:
+    """Read per-sample mask membership through the best available projection."""
+    align_masks = getattr(calibration, "align_masks_to_depth", None)
+    depth_masks = align_masks(masks, depth_mm) if align_masks is not None else None
+    if depth_masks is not None and depth_masks.shape[1:] == depth_mm.shape:
+        return (
+            depth_masks[:, depth_uv[:, 1], depth_uv[:, 0]],
+            "k4a_exact_color_to_depth",
+        )
+    return masks[:, color_uv[:, 1], color_uv[:, 0]], "color_pinhole_fallback"
+
+
 def _finite_vector(value: Any, length: int, name: str) -> np.ndarray:
     array = np.asarray(value, dtype=np.float32)
     if array.shape != (length,) or not np.isfinite(array).all():
@@ -575,6 +593,11 @@ def lift_segmentation_to_3d(
     intrinsics = _read_json(ep.raw_dir / "intrinsics.json")
     extrinsics = _read_json(ep.raw_dir / "extrinsics.json")
     episode_meta = _read_json(ep.meta_path)
+    background_enabled = bool(getattr(config, "CLOUD_BG_SUBTRACT", True))
+    background_tolerance_mm = float(
+        getattr(config, "CLOUD_BG_TOLERANCE_MM", 50.0)
+    )
+    calibration_preset = episode_meta.get("calibration_preset")
     bbox = list(getattr(config, "CLOUD_WORKSPACE_BBOX", []) or [])
     bbox = _bbox_to_frame(
         bbox,
@@ -583,6 +606,11 @@ def lift_segmentation_to_3d(
 
     from viki.perception.k4a_offline import K4ACalibration
     from viki.perception.rs_offline import RealSenseCalibration
+
+    if background_enabled and calibration_preset:
+        from viki.calibration import background_depth
+    else:
+        background_depth = None
 
     cameras = []
     for camera, camera_meta in archive.meta["cameras"].items():
@@ -605,6 +633,11 @@ def lift_segmentation_to_3d(
             "K_depth": _depth_K(intrinsics.get(camera, {})),
             "cal": calibration,
             "T": transform,
+            "background": (
+                background_depth(calibration_preset, camera)
+                if background_depth is not None
+                else None
+            ),
             "frames": int(camera_meta["frames"]),
         })
 
@@ -621,6 +654,7 @@ def lift_segmentation_to_3d(
         tracks_path.unlink()
     object_ids = np.asarray([item["id"] for item in archive.meta["objects"]], np.int32)
     labels_by_id = {int(item["id"]): item["label"] for item in archive.meta["objects"]}
+    mask_projection_modes: set[str] = set()
     track_count = np.zeros((total, len(object_ids)), np.int32)
     track_centroid = np.full((total, len(object_ids), 3), np.nan, np.float32)
     track_dimensions = np.full((total, len(object_ids), 3), np.nan, np.float32)
@@ -634,13 +668,16 @@ def lift_segmentation_to_3d(
                 if not ok or not depth_path.is_file():
                     continue
                 depth = np.load(depth_path)
-                xyz, rgb, uv = _camera_samples(
+                ids, labels, masks = archive.frame(camera["id"], frame_index)
+                xyz, rgb, uv, depth_uv = _camera_samples(
                     bgr,
                     depth,
                     stride,
                     camera["K"],
                     camera["cal"],
                     camera["T"],
+                    bg_mm=camera["background"],
+                    bg_tol_mm=background_tolerance_mm,
                     K_depth=camera["K_depth"],
                     edge_filter=bool(getattr(config, "CLOUD_EDGE_FILTER", True)),
                     edge_radius_rad=float(
@@ -652,9 +689,12 @@ def lift_segmentation_to_3d(
                     edge_jump_relative=float(
                         getattr(config, "CLOUD_EDGE_JUMP_RELATIVE", 0.02)
                     ),
+                    return_depth_uv=True,
                 )
-                ids, labels, masks = archive.frame(camera["id"], frame_index)
-                membership = masks[:, uv[:, 1], uv[:, 0]]
+                membership, projection_mode = _sample_mask_membership(
+                    masks, uv, depth_uv, depth, camera["cal"]
+                )
+                mask_projection_modes.add(projection_mode)
                 support = membership.sum(axis=0)
                 keep = (support > 0) & _bbox_mask(xyz, bbox)
                 if not keep.any():
@@ -747,6 +787,12 @@ def lift_segmentation_to_3d(
         "edge_jump_relative": float(
             getattr(config, "CLOUD_EDGE_JUMP_RELATIVE", 0.02)
         ),
+        "mask_projection": sorted(mask_projection_modes),
+        "background_subtract": background_enabled,
+        "background_tolerance_mm": background_tolerance_mm,
+        "background_cameras": [
+            camera["id"] for camera in cameras if camera["background"] is not None
+        ],
         "workspace_bbox_rig": bbox,
         "cameras": [camera["id"] for camera in cameras],
         "labels": LABEL_CODES,

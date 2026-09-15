@@ -91,9 +91,12 @@ def test_camera_samples_retain_projected_colour_pixels():
     depth[2, 3] = 1000
     K = np.array([[100.0, 0.0, 2.0], [0.0, 100.0, 2.0], [0.0, 0.0, 1.0]])
 
-    xyz, rgb, uv = _camera_samples(color, depth, 1, K, None, np.eye(4))
+    xyz, rgb, uv, depth_uv = _camera_samples(
+        color, depth, 1, K, None, np.eye(4), return_depth_uv=True
+    )
 
     np.testing.assert_array_equal(uv, [[3, 2]])
+    np.testing.assert_array_equal(depth_uv, [[3, 2]])
     np.testing.assert_array_equal(rgb, [[30, 20, 10]])
     np.testing.assert_allclose(xyz, [[0.01, 0.0, 1.0]])
 

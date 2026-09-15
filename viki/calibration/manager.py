@@ -524,6 +524,15 @@ class CalibrationManager:
             out[dev] = entry
         return out
 
+    def _color_ray_projectors(self) -> dict[str, object]:
+        """Active cameras exposing an exact colour-pixel → camera-ray model."""
+        out: dict[str, object] = {}
+        for dev in self._workers:
+            backend = self._mgr.get_backend(dev)
+            if callable(getattr(backend, "color_pixel_to_ray", None)):
+                out[dev] = backend
+        return out
+
     def readiness(self) -> dict:
         """Solve-ready criteria over the collected sets (spec §4.2)."""
         from viki import config
@@ -555,6 +564,7 @@ class CalibrationManager:
         out = solve_bundle(
             self._observation_sets(), self.intrinsics_payload(), board,
             reference_device=self._reference_device(),
+            color_ray_projectors=self._color_ray_projectors(),
         )
         try:  # drop any stale entries from a previous solve
             os.remove(path)
@@ -629,6 +639,7 @@ class CalibrationManager:
         T = artifacts.compute_world_display(
             observations, self.intrinsics_payload(), self.board_cfg() or {},
             self._rig_device_transforms(extr_path),
+            color_ray_projectors=self._color_ray_projectors(),
         )
         payload = {
             "schema": artifacts.WORLD_ANCHOR_SCHEMA,
@@ -830,14 +841,8 @@ class CalibrationManager:
         return board_params_to_dict(bp) if bp is not None else None
 
     def color_intrinsics_payload(self) -> dict[str, dict]:
-        """SDK-reported colour intrinsics for every active worker's camera."""
-        out: dict[str, dict] = {}
-        for dev in self._workers:
-            frame = self._mgr.latest_frame(dev)
-            ci = frame.color_intrinsics if frame else None
-            if ci is not None:
-                out[dev] = {"fx": ci.fx, "fy": ci.fy, "cx": ci.cx, "cy": ci.cy}
-        return out
+        """Compatibility alias for the complete saved colour intrinsics."""
+        return self.intrinsics_payload()
 
     def get_board_params(self):
         """Return board parameters from the first active worker, or None."""

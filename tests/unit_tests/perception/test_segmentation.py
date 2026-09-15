@@ -14,6 +14,7 @@ from viki.perception.segmentation import (
     PROMPT_SCHEMA,
     MaskArchive,
     _save_mask_chunk,
+    _sample_mask_membership,
     load_prompt_spec,
     unpack_mask_chunk,
 )
@@ -150,3 +151,40 @@ def test_bitpacked_mask_chunk_and_random_access_round_trip(tmp_path):
     np.testing.assert_array_equal(ids, [1, 2])
     np.testing.assert_array_equal(labels, ["operator", "manipulated_object"])
     np.testing.assert_array_equal(frame, masks[1])
+
+
+def test_semantic_membership_prefers_exact_color_to_depth_masks():
+    class Calibration:
+        def align_masks_to_depth(self, masks, depth):
+            aligned = np.zeros((len(masks), *depth.shape), bool)
+            aligned[0, 2, 3] = True
+            return aligned
+
+    masks = np.zeros((1, 4, 5), bool)
+    color_uv = np.array([[0, 0]], np.int32)
+    depth_uv = np.array([[3, 2]], np.int32)
+    membership, mode = _sample_mask_membership(
+        masks,
+        color_uv,
+        depth_uv,
+        np.full((4, 5), 1000, np.uint16),
+        Calibration(),
+    )
+
+    assert membership[0, 0]
+    assert mode == "k4a_exact_color_to_depth"
+
+
+def test_semantic_membership_retains_pinhole_fallback():
+    masks = np.zeros((1, 4, 5), bool)
+    masks[0, 1, 2] = True
+    membership, mode = _sample_mask_membership(
+        masks,
+        np.array([[2, 1]], np.int32),
+        np.array([[4, 3]], np.int32),
+        np.full((4, 5), 1000, np.uint16),
+        None,
+    )
+
+    assert membership[0, 0]
+    assert mode == "color_pinhole_fallback"

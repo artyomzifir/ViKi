@@ -601,6 +601,32 @@ class KinectBackend(CameraBackend):
         logger.debug(f"[{self._serial_str}] SDK 2d_to_2d result={res}, valid={valid.value} for UV=({u}, {v})")
         return None
 
+    def color_pixel_to_ray(self, u: float, v: float) -> np.ndarray | None:
+        """Colour pixel → exact SDK-undistorted colour-camera ray (``z=1``).
+
+        ChArUco calibration uses this instead of pretending the Kinect colour
+        lens is a zero-distortion pinhole.  The SDK applies the correct factory
+        model for the active colour resolution.
+        """
+        if not self._calibration:
+            return None
+        src = K4AFloat2(float(u), float(v))
+        dst = K4AFloat3()
+        valid = ctypes.c_int()
+        res = _lib.k4a_calibration_2d_to_3d(
+            self._calibration,
+            ctypes.byref(src),
+            1000.0,
+            K4A_CALIBRATION_TYPE_COLOR,
+            K4A_CALIBRATION_TYPE_COLOR,
+            ctypes.byref(dst),
+            ctypes.byref(valid),
+        )
+        if res == K4A_RESULT_SUCCEEDED and valid.value and abs(float(dst.z)) > 1e-9:
+            ray = np.array([dst.x / dst.z, dst.y / dst.z, 1.0], dtype=np.float64)
+            return ray if np.isfinite(ray).all() else None
+        return None
+
     def project_3d_to_2d(self, x: float, y: float, z: float, cam_type: int) -> tuple[float, float] | None:
         """Project a 3D point in camera space to a 2D pixel. Coordinates in metres."""
         if not self._calibration:

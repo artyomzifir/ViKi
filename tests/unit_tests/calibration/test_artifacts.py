@@ -83,6 +83,28 @@ def test_as_camera_extrinsics_matches_contract(store):
     np.testing.assert_allclose(tm, T_ref_cam, atol=1e-9)
 
 
+def test_replace_extrinsics_preserves_v2_preset_payload(store):
+    original = {
+        "version": 2,
+        "extrinsics": [{"device_id": "cam_a", "rvec": [1, 2, 3], "tvec": [4, 5, 6]}],
+        "sets": {"cam_a": [{"c_ids": [0, 1, 2, 3]}]},
+        "intrinsics": {"cam_a": {"fx": 600}},
+        "k4a_raw": {"cam_a": "opaque"},
+    }
+    presets.preset_path("rig").write_text(json.dumps(original))
+    replacement = [
+        {"device_id": "cam_a", "rvec": [0, 0, 0], "tvec": [0, 0, 0]}
+    ]
+
+    presets.replace_extrinsics("rig", replacement)
+
+    updated = json.loads(presets.preset_path("rig").read_text())
+    assert updated["extrinsics"] == replacement
+    assert updated["sets"] == original["sets"]
+    assert updated["intrinsics"] == original["intrinsics"]
+    assert updated["k4a_raw"] == original["k4a_raw"]
+
+
 def test_world_anchor_and_validation_staleness(store):
     artifacts.write_extrinsics(
         "rig", reference_device="cam_a", devices={"cam_a": np.eye(4)},

@@ -185,7 +185,8 @@ def _camera_samples(
     edge_jump_mm: float = 30.0,
     edge_jump_relative: float = 0.02,
     exact_color_projection: bool = False,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    return_depth_uv: bool = False,
+) -> tuple[np.ndarray, ...]:
     """One camera frame → world points, RGB, and source colour pixels.
 
     Fully vectorised. When a k4a calibration is available the depth→colour-3D
@@ -217,11 +218,12 @@ def _camera_samples(
         keep &= ~((bz > 0) & (np.abs(z - bz) <= float(bg_tol_mm)))
     us, vs, z = us[keep], vs[keep], z[keep]
     if us.size == 0:
-        return (
+        empty = (
             np.empty((0, 3), np.float32),
             np.empty((0, 3), np.uint8),
             np.empty((0, 2), np.int32),
         )
+        return (*empty, np.empty((0, 2), np.int32)) if return_depth_uv else empty
 
     ch, cw = color_bgr.shape[:2]
 
@@ -232,11 +234,12 @@ def _camera_samples(
         pts = pts[finite] / 1000.0  # mm → m
         us, vs = us[finite], vs[finite]
         if pts.size == 0:
-            return (
+            empty = (
                 np.empty((0, 3), np.float32),
                 np.empty((0, 3), np.uint8),
                 np.empty((0, 2), np.int32),
             )
+            return (*empty, np.empty((0, 2), np.int32)) if return_depth_uv else empty
         uu = pts[:, 0] / pts[:, 2] * K_color[0, 0] + K_color[0, 2]
         vv = pts[:, 1] / pts[:, 2] * K_color[1, 1] + K_color[1, 2]
     else:
@@ -267,7 +270,10 @@ def _camera_samples(
 
     world = pts @ T_world_cam[:3, :3].T + T_world_cam[:3, 3]
     color_uv = np.stack([ui, vi], axis=1).astype(np.int32)
-    return world.astype(np.float32), rgb.astype(np.uint8), color_uv
+    result = (world.astype(np.float32), rgb.astype(np.uint8), color_uv)
+    if return_depth_uv:
+        return (*result, np.stack([us, vs], axis=1).astype(np.int32))
+    return result
 
 
 def _camera_cloud(
@@ -385,7 +391,7 @@ def build_cloud(
         if edge_jump_relative is None else edge_jump_relative
     )
     exact_color_projection = bool(
-        getattr(config, "CLOUD_EXACT_COLOR_PROJECTION", False)
+        getattr(config, "CLOUD_EXACT_COLOR_PROJECTION", True)
         if exact_color_projection is None else exact_color_projection
     )
 

@@ -29,6 +29,8 @@ resolved.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 import cv2
 import numpy as np
@@ -74,6 +76,44 @@ def _dist(intr: dict) -> np.ndarray:
     return np.asarray(intr.get("dist_coeffs", [0, 0, 0, 0, 0]), float).reshape(-1)
 
 
+def _rectify_pixels(
+    uv: np.ndarray,
+    ids: np.ndarray,
+    K: np.ndarray,
+    projector: Any,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map distorted colour pixels to ideal pinhole pixels through camera rays.
+
+    Azure Kinect's factory lens model is richer than the zero-distortion
+    ``fx/fy/cx/cy`` approximation exposed by the legacy camera adapter.  The
+    SDK can nevertheless unproject every observed colour pixel to its exact
+    camera ray.  Re-expressing that ray through an arbitrary ideal ``K`` lets
+    the ordinary OpenCV bundle solver consume the observation without losing
+    the factory distortion model.  The chosen ``K`` only sets residual units;
+    it cannot change the recovered metric pose.
+    """
+    ray_fn = getattr(projector, "color_pixel_to_ray", None)
+    if not callable(ray_fn):
+        raise TypeError("colour-ray projector has no color_pixel_to_ray(u, v)")
+    rays: list[np.ndarray] = []
+    kept_ids: list[int] = []
+    for point_id, (u, v) in zip(ids, uv):
+        ray = ray_fn(float(u), float(v))
+        if ray is None:
+            continue
+        ray = np.asarray(ray, dtype=np.float64).reshape(-1)
+        if ray.size != 3 or not np.isfinite(ray).all() or abs(float(ray[2])) < 1e-12:
+            continue
+        rays.append(ray / ray[2])
+        kept_ids.append(int(point_id))
+    if not rays:
+        return np.empty(0, dtype=int), np.empty((0, 2), dtype=np.float64)
+    rays_arr = np.asarray(rays, dtype=np.float64)
+    ideal = rays_arr[:, :2] * np.asarray([K[0, 0], K[1, 1]])
+    ideal += np.asarray([K[0, 2], K[1, 2]])
+    return np.asarray(kept_ids, dtype=int), ideal
+
+
 # ── solve ──────────────────────────────────────────────────────────────
 
 
@@ -83,6 +123,7 @@ def solve_bundle(
     board_cfg: dict,
     *,
     reference_device: str | None = None,
+    color_ray_projectors: Mapping[str, Any] | None = None,
 ) -> dict:
     """``sets`` is a list of ``{observations: {dev: {charuco_ids, charuco_corners}}}``.
     Returns ``{"reference_device", "devices": {dev: T_ref_cam 4x4 list},
@@ -95,9 +136,14 @@ def solve_bundle(
     board = _charuco_board(board_cfg)
     obj_all = np.asarray(board.getChessboardCorners(), np.float64)  # (N, 3)
 
-    # observed corners per (set, dev)
+    color_ray_projectors = color_ray_projectors or {}
+
+    # observed corners per (set, dev).  Kinect observations are first moved
+    # through the exact SDK colour ray model; other cameras retain their OpenCV
+    # K + distortion representation.
     obs: list[dict[str, tuple[np.ndarray, np.ndarray]]] = []
     devs_seen: set[str] = set()
+    rectified_devs: set[str] = set()
     for s in sets:
         row: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         for dev, o in (s.get("observations") or {}).items():
@@ -107,6 +153,12 @@ def solve_bundle(
                 continue
             if dev not in intrinsics:
                 continue
+            projector = color_ray_projectors.get(dev)
+            if projector is not None:
+                ids, uv = _rectify_pixels(uv, ids, _K(intrinsics[dev]), projector)
+                rectified_devs.add(dev)
+                if ids.size < 4:
+                    continue
             row[dev] = (ids, uv)
             devs_seen.add(dev)
         if row:
@@ -121,7 +173,10 @@ def solve_bundle(
     other_devs = [d for d in all_devs if d != ref]
 
     K = {d: _K(intrinsics[d]) for d in all_devs}
-    D = {d: _dist(intrinsics[d]) for d in all_devs}
+    D = {
+        d: (np.zeros(5, dtype=np.float64) if d in rectified_devs else _dist(intrinsics[d]))
+        for d in all_devs
+    }
 
     # ── per-(set,dev) PnP for initialisation ──
     pnp: dict[tuple[int, str], np.ndarray] = {}  # (k, dev) -> T_cam_board (4x4)
@@ -265,6 +320,10 @@ def solve_bundle(
         "nfev": int(res.nfev),
         "degenerate": bool(degenerate),
         "stereo_check": stereo,
+        "projection_models": {
+            d: ("exact-color-ray" if d in rectified_devs else "opencv-intrinsics")
+            for d in all_devs
+        },
     }
     if degenerate:
         logger.warning(
