@@ -202,6 +202,7 @@ unless `pyproject.toml` changes.
 | | |
 |---|---|
 | [`docs/math.md`](docs/math.md) | the full mathematical description of the pipeline |
+| [`docs/roadmap.md`](docs/roadmap.md) | current shipped, experimental and remaining work |
 | [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md) | measurement protocols and results (E6–E14) |
 | [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why object-relative representation is not built yet |
 | [`docs/paper_code_divergences.md`](docs/paper_code_divergences.md) | where the thesis text and the code disagree, and why |
