@@ -27,6 +27,13 @@ from viki.perception.object_model import (  # noqa: F401
     ObjectModelConfig,
     build_object_models,
 )
+from viki.perception.scene import (  # noqa: F401
+    ScenePerceptionOpts,
+    build_object_models_episode,
+    lift_segmented_episode,
+    scene_perception_episode,
+    segment_episode,
+)
 
 __all__ = [
     "LM",
@@ -40,5 +47,10 @@ __all__ = [
     "generate_auto_prompts",
     "ObjectModelConfig",
     "build_object_models",
+    "ScenePerceptionOpts",
+    "segment_episode",
+    "lift_segmented_episode",
+    "build_object_models_episode",
+    "scene_perception_episode",
     "load_backend",
 ]

@@ -118,6 +118,8 @@ def _episode_summary(d: Path, dataset: str | None) -> dict:
             "raw": ep.raw_dir.is_dir(),
             "rec": ep.rec_npz.exists(),
             "cln": ep.cln_npz.exists(),
+            "segment": (ep.segmentation_dir / "semantic_cloud" / "meta.json").exists(),
+            "object_model": ep.object_models_npz.exists(),
             "plan": ep.plan_h5.exists(),
             "replay": ep.replay_h5.exists(),
         },

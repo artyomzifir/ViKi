@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,7 +45,7 @@ from viki.retarget.archive import load_archive
 logger = logging.getLogger(__name__)
 
 SCHEMA = "viki_trajectory_bundle"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Arrays copied verbatim from ``plan.h5``. Each is per-frame unless noted.
 _PLAN_ARRAYS = (
@@ -135,6 +136,14 @@ def _episode_bundle(ep: Episode) -> tuple[dict, dict]:
             "labelled": bool(labels.task.strip()),
             "outcome_rated": labels.outcome != "unrated",
         },
+        "scene_perception": {
+            "segment_run": bool(stage_done(ep, "segment")),
+            "object_model_run": bool(stage_done(ep, "object_model")),
+            "object_model_included": bool(
+                stage_done(ep, "object_model") and ep.object_models_npz.is_file()
+            ),
+            "object_model_stage": status.get("stages", {}).get("object_model"),
+        },
     })
     return arrays, record
 
@@ -172,6 +181,8 @@ def export_trajectories(
         dest = out / "episodes" / ep.id
         dest.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(dest / "trajectory.npz", **arrays)
+        if record["scene_perception"]["object_model_included"]:
+            shutil.copy2(ep.object_models_npz, dest / "object_models.npz")
         (dest / "meta.json").write_text(json.dumps(record, indent=2, sort_keys=True))
         index.append(record)
         logger.info("exported %s (%d frames, task=%r)", ep.id, record["frames"], record["task"])

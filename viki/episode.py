@@ -19,7 +19,18 @@ from typing import Any
 
 from viki.contracts import Episode
 
-_STAGES = ("record", "extract", "cloud", "prepare", "retarget", "replay", "label", "export")
+_STAGES = (
+    "record",
+    "extract",
+    "cloud",
+    "segment",
+    "object_model",
+    "prepare",
+    "retarget",
+    "replay",
+    "label",
+    "export",
+)
 
 
 def new_episode(episodes_dir: str | Path, meta: dict | None = None) -> Episode:
@@ -57,6 +68,15 @@ def mark_stage(ep: Episode, stage: str, **fields: Any) -> None:
     entry = status.setdefault("stages", {}).get(stage, {})
     entry.update({"done": True, "at": datetime.now().isoformat(), **fields})
     status["stages"][stage] = entry
+    ep.status_path.write_text(json.dumps(status, indent=2, default=str))
+
+
+def clear_stage(ep: Episode, stage: str) -> None:
+    """Remove a completed-stage claim after an upstream artifact changes."""
+    if stage not in _STAGES:
+        raise ValueError(f"unknown stage {stage!r}; known: {', '.join(_STAGES)}")
+    status = read_status(ep)
+    status.setdefault("stages", {}).pop(stage, None)
     ep.status_path.write_text(json.dumps(status, indent=2, default=str))
 
 

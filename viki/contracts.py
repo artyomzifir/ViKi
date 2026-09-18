@@ -477,6 +477,21 @@ class Episode:
         """Per-frame coloured point cloud (``<i:06d>.bin`` + ``meta.json``)."""
         return self.root / "cloud"
 
+    @property
+    def segmentation_dir(self) -> Path:
+        """Versioned scene-segmentation artifact used by the object stage."""
+        return self.intermediates_dir / "segmentation" / "sam2.1_hiera_small"
+
+    @property
+    def scene_prompts_path(self) -> Path:
+        """Auditable automatic/manual prompt manifest for scene segmentation."""
+        return self.intermediates_dir / "segmentation" / "auto_prompts.json"
+
+    @property
+    def object_models_npz(self) -> Path:
+        """Compact rigid-object models and tracks derived from semantic RGB-D."""
+        return self.segmentation_dir / "object_models.npz"
+
 
 # ──────────────────────── artifact schema keys ─────────────────────────
 # The exact array keys each stage writes. Writers and readers assert against

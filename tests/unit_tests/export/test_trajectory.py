@@ -47,6 +47,7 @@ def test_bundle_round_trips_the_plan(tmp_path):
 
     manifest = json.loads((tmp_path / "bundle" / "dataset.json").read_text())
     assert manifest["schema"] == "viki_trajectory_bundle"
+    assert manifest["schema_version"] == 2
     assert manifest["name"] == "v0-test"
     assert manifest["robots"] == ["ur10"]
     assert manifest["episode_count"] == 1 and manifest["total_frames"] == n
@@ -81,6 +82,24 @@ def test_manifest_admits_that_nothing_was_screened(tmp_path):
     assert screening["replay_run"] is False
     assert screening["replay_verdict"] is None
     assert screening["outcome_rated"] is False
+
+
+def test_bundle_carries_completed_object_model_sidecar(tmp_path):
+    ep, _ = _planned_episode(tmp_path / "ep")
+    ep.object_models_npz.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(ep.object_models_npz, schema=np.asarray("viki_object_models_v1"))
+    mark_stage(ep, "segment", lifted_3d=True)
+    mark_stage(ep, "object_model", objects=1, artifact="object_models.npz")
+
+    export_trajectories([str(ep.root)], tmp_path / "bundle")
+    exported = tmp_path / "bundle" / "episodes" / ep.id
+    assert (exported / "object_models.npz").is_file()
+    record = json.loads((exported / "meta.json").read_text())
+    scene = record["scene_perception"]
+    assert scene["segment_run"] is True
+    assert scene["object_model_run"] is True
+    assert scene["object_model_included"] is True
+    assert scene["object_model_stage"]["objects"] == 1
 
 
 def test_unretargeted_episode_is_skipped_not_fatal(tmp_path):

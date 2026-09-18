@@ -11,13 +11,14 @@ server calls — the CLI just parses args and prints results.
     viki auto-prompts <episode>        # calibrated foreground -> SAM prompts
     viki segment  <episode> ...        # prompted SAM 2.1 masks [+ RGB-D lift]
     viki object-model <episode>        # semantic cloud -> compact rigid models
+    viki scene <episode>               # auto-prompts -> masks -> 3-D -> models
     viki prepare  <episode>
     viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
     viki replay   <episode> [--driver dryrun|ur3]
     viki label    <episode> --task "..." --outcome good
     viki export   --out data/datasets/pick <episode>...
-    viki run      <episode>            # extract -> prepare -> retarget -> replay
+    viki run      <episode>            # core pipeline; --scene-objects adds scene branch
 """
 
 from __future__ import annotations
@@ -114,17 +115,14 @@ def _cmd_auto_prompts(a) -> None:
 
 
 def _cmd_segment(a) -> None:
-    from viki.perception.segmentation import (
-        lift_segmentation_to_3d,
-        segment_episode_sam2,
-    )
+    from viki.perception.scene import lift_segmented_episode, segment_episode
 
     def progress(**fields):
         camera = f" {fields['camera']}" if "camera" in fields else ""
         print(f"segment{camera}: {fields.get('frame', 0)}/{fields.get('total', 0)}")
 
     ep = _episode(a.episode)
-    masks = segment_episode_sam2(
+    masks = segment_episode(
         ep,
         a.prompts,
         checkpoint=a.checkpoint,
@@ -135,7 +133,7 @@ def _cmd_segment(a) -> None:
     )
     print(f"masks: {masks}")
     if a.lift_3d:
-        cloud = lift_segmentation_to_3d(
+        cloud = lift_segmented_episode(
             ep,
             masks,
             stride=a.depth_stride,
@@ -146,10 +144,7 @@ def _cmd_segment(a) -> None:
 
 
 def _cmd_segment_lift(a) -> None:
-    from viki.perception.segmentation import (
-        SAM2_MODEL_KEY,
-        lift_segmentation_to_3d,
-    )
+    from viki.perception.scene import lift_segmented_episode
 
     def progress(**fields):
         print(f"segment-lift: {fields.get('frame', 0)}/{fields.get('total', 0)}")
@@ -158,9 +153,9 @@ def _cmd_segment_lift(a) -> None:
     masks = (
         Path(a.segmentation_dir)
         if a.segmentation_dir
-        else ep.intermediates_dir / "segmentation" / SAM2_MODEL_KEY
+        else ep.segmentation_dir
     )
-    print(lift_segmentation_to_3d(
+    print(lift_segmented_episode(
         ep,
         masks,
         stride=a.depth_stride,
@@ -170,8 +165,8 @@ def _cmd_segment_lift(a) -> None:
 
 
 def _cmd_object_model(a) -> None:
-    from viki.perception.object_model import ObjectModelConfig, build_object_models
-    from viki.perception.segmentation import SAM2_MODEL_KEY
+    from viki.perception.object_model import ObjectModelConfig
+    from viki.perception.scene import build_object_models_episode
 
     def progress(**fields):
         print(
@@ -184,14 +179,51 @@ def _cmd_object_model(a) -> None:
     segmentation = (
         Path(a.segmentation_dir)
         if a.segmentation_dir
-        else ep.intermediates_dir / "segmentation" / SAM2_MODEL_KEY
+        else ep.segmentation_dir
     )
     config = ObjectModelConfig(
         bootstrap_frames=a.bootstrap_frames,
         component_radius_m=a.component_radius_mm / 1000.0,
         inlier_distance_m=a.inlier_distance_mm / 1000.0,
     )
-    print(build_object_models(segmentation, config=config, report=progress))
+    print(build_object_models_episode(
+        ep,
+        segmentation,
+        config=config,
+        report=progress,
+    ))
+
+
+def _cmd_scene(a) -> None:
+    from viki.perception.object_model import ObjectModelConfig
+    from viki.perception.scene import ScenePerceptionOpts, scene_perception_episode
+
+    def progress(**fields):
+        camera = f" camera={fields['camera']}" if fields.get("camera") else ""
+        obj = f" object={fields['object_id']}" if fields.get("object_id") else ""
+        print(
+            f"{fields.get('stage', 'scene')}: "
+            f"{fields.get('frame', 0)}/{fields.get('total', 0)}{camera}{obj}"
+        )
+
+    opts = ScenePerceptionOpts(
+        prompts=a.prompts,
+        object_count=a.objects,
+        object_label=a.object_label,
+        checkpoint=a.checkpoint,
+        chunk_frames=a.chunk_frames,
+        render_overlay=not a.no_overlay,
+        depth_stride=a.depth_stride,
+        voxel_m=a.voxel_m,
+        object_model=ObjectModelConfig(
+            bootstrap_frames=a.bootstrap_frames,
+            component_radius_m=a.component_radius_mm / 1000.0,
+            inlier_distance_m=a.inlier_distance_mm / 1000.0,
+        ),
+    )
+    print(scene_perception_episode(
+        _episode(a.episode), opts, force=a.force, report=progress,
+    ))
 
 
 def _cmd_prepare(a) -> None:
@@ -319,11 +351,29 @@ def _cmd_run(a) -> None:
     steps = [
         ("extract", lambda: extract_episode(ep, backend=a.backend)),
         ("prepare", lambda: prepare_episode(ep, profile=DEFAULT_PERCEPTION_PROFILE)),
+    ]
+    if a.scene_objects > 0 or a.scene_prompts is not None:
+        from viki.perception.scene import ScenePerceptionOpts, scene_perception_episode
+
+        scene_options = ScenePerceptionOpts(
+            prompts=a.scene_prompts,
+            object_count=max(1, a.scene_objects),
+            checkpoint=a.scene_checkpoint,
+            chunk_frames=a.scene_chunk_frames,
+        )
+        steps.append((
+            "scene",
+            lambda: scene_perception_episode(ep, scene_options, force=a.force),
+        ))
+    steps.extend([
         ("retarget", lambda: retarget_episode(ep, robot=a.robot)),
         ("replay", lambda: replay_episode(ep, driver=a.driver)),
-    ]
+    ])
     for name, fn in steps:
-        if stage_done(ep, name) and not a.force:
+        # The scene branch owns two resumable stages and validates their
+        # artifacts internally; there is intentionally no synthetic `scene`
+        # completion bit that could mask a missing segment or object model.
+        if name != "scene" and stage_done(ep, name) and not a.force:
             print(f"= {name}: already done, skipping")
             continue
         print(f"→ {name}")
@@ -455,6 +505,29 @@ def _build_parser() -> argparse.ArgumentParser:
     pom.add_argument("--inlier-distance-mm", type=float, default=12.0)
     pom.set_defaults(func=_cmd_object_model)
 
+    pscene = sub.add_parser(
+        "scene",
+        help="scene RGB-D -> prompts -> SAM masks -> semantic cloud -> object models",
+    )
+    pscene.add_argument("episode")
+    pscene.add_argument("--prompts", default=None, help="prompt JSON; default: derive from background")
+    pscene.add_argument("--objects", type=int, default=1, help="non-operator objects for auto prompts")
+    pscene.add_argument(
+        "--object-label",
+        choices=["manipulated_object", "other_object", "other_dynamic"],
+        default="other_dynamic",
+    )
+    pscene.add_argument("--checkpoint", default="models/sam2/sam2.1_hiera_small.pt")
+    pscene.add_argument("--chunk-frames", type=int, default=100)
+    pscene.add_argument("--no-overlay", action="store_true")
+    pscene.add_argument("--depth-stride", type=int, default=2)
+    pscene.add_argument("--voxel-m", type=float, default=0.004)
+    pscene.add_argument("--bootstrap-frames", type=int, default=60)
+    pscene.add_argument("--component-radius-mm", type=float, default=12.0)
+    pscene.add_argument("--inlier-distance-mm", type=float, default=12.0)
+    pscene.add_argument("--force", action="store_true", help="rebuild completed scene stages")
+    pscene.set_defaults(func=_cmd_scene)
+
     phf = sub.add_parser("hand-fit", help="batch-fit a capsule hand trajectory and append hand_fit_* to cln.npz")
     phf.add_argument("episode")
     phf.set_defaults(func=_cmd_hand_fit)
@@ -577,11 +650,30 @@ def _build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--out", default=None, help="PNG path (default: <episode>/viz-<stage>.png)")
     pv.set_defaults(func=_cmd_viz)
 
-    prn = sub.add_parser("run", help="extract -> prepare -> retarget -> replay")
+    prn = sub.add_parser(
+        "run",
+        help="extract -> prepare -> [scene perception] -> retarget -> replay",
+    )
     prn.add_argument("episode")
     prn.add_argument("--robot", default=None)
     prn.add_argument("--backend", default=None)
     prn.add_argument("--driver", default="dryrun", choices=["dryrun", "ur3"])
+    prn.add_argument(
+        "--scene-objects",
+        type=int,
+        default=0,
+        help="also build scene/object artifacts for this many non-operator objects",
+    )
+    prn.add_argument(
+        "--scene-prompts",
+        default=None,
+        help="prompt JSON for the scene branch (implies scene perception)",
+    )
+    prn.add_argument(
+        "--scene-checkpoint",
+        default="models/sam2/sam2.1_hiera_small.pt",
+    )
+    prn.add_argument("--scene-chunk-frames", type=int, default=100)
     prn.add_argument("--force", action="store_true", help="rerun done stages")
     prn.set_defaults(func=_cmd_run)
 
