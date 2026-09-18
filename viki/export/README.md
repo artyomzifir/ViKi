@@ -1,4 +1,4 @@
-# viki.export — datasets  · v0.0.1
+# viki.export — datasets
 
 **Stage 6** · retargeted episodes → a dataset · paper §3.9
 
@@ -23,11 +23,16 @@ viki export <episode>... --out data/pick --format lerobot    # LeRobot
 <out>/dataset.json                    manifest: schema, units, frames, provenance, index
 <out>/episodes/<id>/trajectory.npz    the arrays
 <out>/episodes/<id>/meta.json         that episode's provenance
+<out>/episodes/<id>/object_models.npz optional completed scene-perception sidecar
 ```
 
 Units are metres, radians, seconds and microseconds. Poses are in the
 **calibration** frame (ChArUco board origin) unless the key ends `_rig`, and the
 manifest says so rather than leaving it to be assumed.
+
+Bundle schema v2 records the `segment` / `object_model` provenance in episode
+metadata and copies `object_models.npz` only when the tracked object-model stage
+is complete. The trajectory arrays remain unchanged.
 
 | array | what |
 |---|---|

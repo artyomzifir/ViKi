@@ -17,8 +17,9 @@ is deferred to `viki.prepare`.
 | `backends/` | `HandPoseBackend` ABC + implementations — see `backends/README.md` |
 | `camera_prep.py` | `prepare_frame` : `Frame` → `PreparedFrame` (RGB, depth in metres, depth K) |
 | `geometry.py` | `lift_to_3d` (2-D + depth → camera-frame 3-D), `camera_landmarks_to_world` (apply extrinsics) |
-| `segmentation.py` | optional prompted SAM 2.1 video masks and calibrated RGB-D lift; experimental artifacts only |
-| `object_model.py` | optional core/shell rigid models, robust SE(3) tracks, contact freeze and compact point decisions over a semantic cloud |
+| `segmentation.py` | prompted SAM 2.1 video masks and calibrated RGB-D lift |
+| `object_model.py` | core/shell rigid models, robust SE(3) tracks, contact freeze and compact point decisions over a semantic cloud |
+| `scene.py` | resumable episode stage: prompts → masks → semantic cloud → object models |
 | `hand_angles.py` | `compute_end_effector_pose` — the single site that derives the wrist SE(3) pose from landmarks (also used by `prepare`) |
 | `pipeline.py` | `SkeletonPipeline` — per-`SyncedFrameGroup` orchestration (kept for tooling; the offline path is `extract.py`) |
 | `models.py` | compat re-export of the perception DTOs from `viki.contracts` |
@@ -38,10 +39,28 @@ spread (INDEX→PINKY), **not** the thumb: `x = norm(MIDDLE_MCP − WRIST)`,
 landmark falls back to the centroid of the available palm landmarks with an
 identity rotation.
 
-## Experimental scene segmentation
+## Scene perception
 
 SAM 2.1 is intentionally isolated from the normal ViKi image because the
 PyTorch CUDA wheels are several gigabytes. Build/run the dedicated profile:
+
+The complete supported branch is one resumable command. It records `segment`
+and `object_model` in `status.json`; rerunning it skips durable completed stages:
+
+```bash
+docker compose run --rm sam2 scene episodes/<id> --objects 3
+```
+
+It can also be included in the complete episode pipeline:
+
+```bash
+docker compose run --rm sam2 run episodes/<id> --scene-objects 3
+```
+
+The explicit object count and dedicated image are deliberate: recordings may
+contain no manipulable object, and the normal hand/IK path must not acquire a
+multi-gigabyte CUDA dependency. The individual commands below remain available
+for correction, inspection and recovery.
 
 For an episode recorded against a stored empty-scene depth plate, frame-zero
 prompts can first be proposed from fused 3-D foreground components:
@@ -72,7 +91,7 @@ the masks without rerunning SAM:
 docker compose run --rm cli segment-lift episodes/<id>
 ```
 
-Build the non-destructive rigid object-model experiment after the 3-D lift:
+Build the non-destructive rigid object model after the 3-D lift:
 
 ```bash
 docker compose run --rm cli object-model episodes/<id>
@@ -117,8 +136,11 @@ core/shell surface, `T_world_object(t)`, tracking residual/coverage/confidence,
 rotation information, an operator-proximity contact flag, and compact
 accepted/reassigned/rejected/ambiguous decisions referring to point indices in
 each source semantic-cloud frame. Shell promotion is disabled on contact
-frames. This remains an experimental perception artifact: retarget does not
-load it implicitly.
+frames. This is a supported perception artifact with explicit limitations, not
+an unconditional source of physical truth: retarget does not load it
+implicitly. Trajectory export copies a completed `object_models.npz` as a
+sidecar and records its stage provenance. Object-relative IK remains separately
+gated until pose observability and contact phases have acceptance tests.
 
 Measured results and known failure modes from the first two real scenes are in
 [`docs/2026-09-14-sam2-segmentation-probe.md`](../../docs/2026-09-14-sam2-segmentation-probe.md)

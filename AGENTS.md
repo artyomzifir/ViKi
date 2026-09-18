@@ -24,6 +24,8 @@ stage writes a durable artifact into an **episode directory**:
 record     cameras/      live RGB-D  ->  episodes/<id>/raw/
 extract    perception/   raw/        ->  rec.npz     per-camera hand landmark trajectories
 prepare    prepare/      rec.npz     ->  cln.npz     fused + smoothed + palm pose + gripper
+segment    perception/   raw/        ->  intermediates/segmentation/  masks + semantic cloud
+object     perception/   segmentation -> object_models.npz  rigid core/shell + pose/confidence
 retarget   retarget/     cln.npz     ->  plan.h5     targets -> adapter -> TCP -> robot joints
 replay     replay/       plan.h5     ->  replay.h5   proprioception on hardware        [stub]
 label      labeling.py   ->  meta.json["labels"]     task / phase segments / outcome
@@ -73,8 +75,9 @@ viki retarget <episode>           # cln.npz -> plan.h5
 viki replay   <episode>           # plan.h5 -> replay.h5            [stub]
 viki label    <episode> ...       # get/set episode labels
 viki export   <episode>... --out <dir> [--format trajectory|lerobot]
-viki run      <episode>           # extract -> prepare -> retarget -> replay
+viki run      <episode>           # extract -> prepare -> [scene] -> retarget -> replay
 viki cloud    <episode>           # raw/ -> cloud/ (viewer artifact only)
+viki scene    <episode>           # auto-prompts -> SAM -> semantic 3-D -> object models
 viki hand-fit <episode>           # batch capsule-hand fit, appends hand_fit_* to cln.npz
 viki viz      <episode>           # headless 3-D figure (rec|cln)
 ```

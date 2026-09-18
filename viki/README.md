@@ -8,6 +8,8 @@ artifacts inside an **episode directory**.
 record        cameras/      live RGB-D  ->  episodes/<id>/raw/
 extract       perception/   raw/        ->  rec.npz      per-camera hand landmark trajectories
 prepare       prepare/      rec.npz     ->  cln.npz      fused + smoothed landmarks + palm pose + gripper
+segment       perception/   raw/        ->  intermediates/segmentation/  instance masks + semantic cloud
+object        perception/   segmentation -> object_models.npz  rigid core/shell + pose/confidence
 retarget      retarget/     cln.npz     ->  plan.h5      pinch/palm target -> adapter -> gripper TCP -> robot joints
 replay        replay/       plan.h5     ->  replay.h5    proprioception attained on hardware   [stub]
 label         labeling.py   -> meta.json["labels"]       task string / phase segments / outcome
@@ -16,7 +18,7 @@ export        export/       episodes/*  ->  datasets/<name>/   trajectory bundle
 calibration/  intrinsics + extrinsics (board -> world), a side input to perception
 render/       depth colourise, MJPEG, 3-D matplotlib views — no FastAPI, no hardware
 server/       transport only: FastAPI over the offline stages + camera preview
-cli.py        `viki record|extract|prepare|retarget|replay|label|export|run`
+cli.py        `viki record|extract|scene|prepare|retarget|replay|label|export|run`
 ```
 
 ## Cross-cutting
