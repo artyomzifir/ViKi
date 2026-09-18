@@ -710,13 +710,13 @@ def solve_trajectory(
         # preserves the convex inter-frame velocity constraints. An initially
         # infeasible barrier is left to the QP to repair; once feasible, it can
         # never regress below zero again.
-        current_floor = (
-            _trajectory_min_floor_margin(kinematics, q) if floor_rows else np.inf
-        )
-        current_collision = (
-            _trajectory_min_collision_margin(kinematics, q)
-            if collision_rows_present else np.inf
-        )
+        # Both linearisations return the exact barrier value at the current q
+        # alongside its Jacobian. Re-sweeping the complete trajectory here used
+        # to repeat the most expensive operation in every iteration without
+        # adding any safety evidence. Candidate steps and the final trajectory
+        # still receive independent exact full-trajectory checks below.
+        current_floor = min_floor if floor_rows else np.inf
+        current_collision = min_collision if collision_rows_present else np.inf
         preserve_floor = bool(floor_rows) and current_floor >= -1e-9
         preserve_collision = collision_rows_present and current_collision >= -1e-9
         preserve_objective = (
@@ -732,14 +732,6 @@ def solve_trajectory(
                     kinematics.integrate(q[t], scale * delta[t])
                     for t in range(n_frames)
                 ])
-                floor_ok = (
-                    not preserve_floor
-                    or _trajectory_min_floor_margin(kinematics, candidate) >= -1e-9
-                )
-                collision_ok = (
-                    not preserve_collision
-                    or _trajectory_min_collision_margin(kinematics, candidate) >= -1e-9
-                )
                 candidate_terms = _objective_terms(
                     kinematics,
                     candidate,
@@ -756,6 +748,19 @@ def solve_trajectory(
                     not preserve_objective
                     or candidate_terms["total"]
                     <= objective + max(1e-12, 1e-10 * abs(objective))
+                )
+                # Pose/objective evaluation is cheap relative to collision.
+                # Reject a non-descent step before paying for exact geometry.
+                if not objective_ok:
+                    scale *= 0.5
+                    continue
+                floor_ok = (
+                    not preserve_floor
+                    or _trajectory_min_floor_margin(kinematics, candidate) >= -1e-9
+                )
+                collision_ok = (
+                    not preserve_collision
+                    or _trajectory_min_collision_margin(kinematics, candidate) >= -1e-9
                 )
                 if floor_ok and collision_ok and objective_ok:
                     feasible_step_found = True
@@ -1197,6 +1202,7 @@ class PinocchioKinematics:
         self.collision_model = getattr(robot, "collision_model", None)
         self.collision_data = None
         self.collision_barrier = None
+        self._collision_configuration_cache = None
         self._floor_geometry_specs: tuple[
             tuple[int, np.ndarray, np.ndarray, tuple[str, object]], ...
         ] = ()
@@ -1361,13 +1367,22 @@ class PinocchioKinematics:
         )
 
     def _collision_configuration(self, q: np.ndarray):
-        return self.Configuration(
-            self.model,
-            self.model.createData(),
-            self._configuration(q),
-            collision_model=self.collision_model,
-            collision_data=self.collision_model.createData(),
-        )
+        values = self._configuration(q)
+        if self._collision_configuration_cache is None:
+            # Pink copies Pinocchio model data by default. Collision queries are
+            # synchronous and never retain configurations, so a dedicated pair
+            # of mutable data objects can be safely reused across frames.
+            self._collision_configuration_cache = self.Configuration(
+                self.model,
+                self.model.createData(),
+                values,
+                copy_data=False,
+                collision_model=self.collision_model,
+                collision_data=self.collision_data,
+            )
+        else:
+            self._collision_configuration_cache.update(values)
+        return self._collision_configuration_cache
 
     def collision_margins(self, q: np.ndarray) -> np.ndarray:
         if self.collision_barrier is None:
