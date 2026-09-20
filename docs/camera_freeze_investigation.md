@@ -361,3 +361,64 @@ separate boots, and the failure has never once occurred with a single camera.
 Caveat, as always: one run per configuration. This is elimination by single
 counter-example, which is sound for killing a hypothesis and weak for confirming
 one.
+
+## "But recording used to work" — what actually differs (2026-09-20, 23:00)
+
+The operator's objection is fair and worth answering with evidence: two-camera
+recording ran fine in early September. Everything that could have changed since
+was checked, and almost nothing did.
+
+| | September takes | tonight |
+|---|---|---|
+| kernel | `7.0.0-28-generic` — running from 2026-09-02 | `7.0.0-28-generic` (and 6.17, which also died) |
+| colour | 1280x720 @ 30 | 1280x720 @ 30 |
+| depth | 640x576, NFOV_UNBINNED | 640x576, NFOV_UNBINNED |
+| cameras | two, HW-synced | two, HW-synced |
+| NVIDIA driver | 610.43.02, installed 2026-07-24 | same |
+| `web` container GPU env | `gpus: all`, caps `compute,utility` | same until 21:59 tonight |
+
+So: **not a kernel regression, not a settings change, not a driver update.** The
+kernel now blamed was already running during the successful recordings. Package
+upgrades in the window are routine security updates, nothing touching USB, xHCI
+or NVIDIA. The only committed change to `docker-compose.yml` since is an
+optional `sam2` tools-profile service, which `up` never starts. The
+`NVIDIA_DRIVER_CAPABILITIES` extension to `graphics,display` was made at 21:59
+tonight — *after* four of the evening's freezes — so it cannot explain them
+either. The one camera-touching commit in the window, `1b399d3`, adds a pure
+calibration-maths helper and does not go near the USB start path.
+
+### What is different: nothing ever ran for long
+
+Every recording on disk, measured from the mp4s:
+
+```
+2026-09-01  1920x1080  599 frames  ~20 s   2 cameras
+2026-09-02  1280x720   610         ~20 s   3 cameras
+2026-09-02  1280x720   898         ~30 s   3 cameras
+2026-09-03  1280x720   899/898/199/660/898 ~7-30 s   2 cameras
+2026-09-04  1280x720   898/897/898 ~30 s   2 cameras
+2026-09-09  1280x720   897         ~30 s   2 cameras
+```
+
+**The longest two-camera stream ever recorded on this rig is 30 seconds**, and
+almost every take sits exactly at that cap. Tonight's 6.17 failure arrived at
+**45 seconds** — past the duration of every take ever made here.
+
+So "it used to work" is consistent with a latent fault that short takes simply
+outran: record, stop, twenty to thirty seconds at a time, never a long hold. The
+difference tonight is the usage pattern, not the configuration — the rig was
+held open indefinitely instead of being released after half a minute.
+
+### Where that explanation stops
+
+It does not cover the 7.0 run, which died about **two seconds** after both
+cameras came up. A pure duration threshold cannot produce both a 2 s and a 45 s
+failure. The honest shape is a probabilistic hazard, concentrated near start-up
+and accumulating with time, rather than a fixed cliff — which also fits five
+freezes tonight at widely different intervals.
+
+**Practical consequence.** Short takes are not a fix, but they are measurably
+what the rig has survived. Until the controller question is settled, keeping
+two-camera streaming to sub-30-second bursts matches every successful recording
+in the dataset, and the segmented-recording change (still unimplemented, see
+above) would cap the loss when a burst does not survive.
