@@ -64,16 +64,14 @@ SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="097d", MODE="0666", 
 SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="097e", MODE="0666", GROUP="plugdev"
 RULES
 
-# ── 3b. udev rules: keep uvcvideo off the Kinect colour camera ───────────────
-# The k4a SDK drives 045e:097d over libusb/usbfs. If the kernel's uvcvideo also
-# binds its UVC interfaces, pipewire/wireplumber probe the Kinect as an ordinary
-# webcam and the two owners fight over the same control endpoint — the kernel
-# logs "uvcvideo: Failed to set UVC probe control : -32" and, on this rig, every
-# observed host freeze followed one of those within minutes. Unbind on plug-in.
-info "Installing Kinect uvcvideo-exclusion rule..."
-cat > /etc/udev/rules.d/99-k4a-no-uvcvideo.rules << 'RULES'
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="097d", RUN+="/bin/sh -c 'echo %k > /sys/bus/usb/drivers/uvcvideo/unbind 2>/dev/null || true'"
-RULES
+# Cleanup for the retracted 2026-09-20 workaround. libk4a performs the kernel
+# driver detach itself; leaving this udev rule behind adds an unnecessary race
+# during enumeration. Keep the migration here so upgraded hosts do not retain it.
+OBSOLETE_K4A_UVC_RULE=/etc/udev/rules.d/99-k4a-no-uvcvideo.rules
+if [ -e "$OBSOLETE_K4A_UVC_RULE" ]; then
+  rm -f -- "$OBSOLETE_K4A_UVC_RULE"
+  info "Removed obsolete Kinect uvcvideo-exclusion rule."
+fi
 
 # ── 4. udev rules: DRI (GPU access for Kinect depth engine) ──────────────────
 info "Installing DRI udev rules..."
@@ -84,23 +82,6 @@ RULES
 udevadm control --reload-rules
 udevadm trigger
 info "udev rules installed."
-
-# The rule above fires on plug-in. Detach anything uvcvideo is already holding so
-# the fix applies to Kinects that are connected right now, without a replug.
-if [ -d /sys/bus/usb/drivers/uvcvideo ]; then
-  for iface in /sys/bus/usb/drivers/uvcvideo/*:*; do
-    [ -e "$iface" ] || continue
-    name=$(basename "$iface")
-    dev=${name%%:*}
-    vid=$(cat "/sys/bus/usb/devices/$dev/idVendor" 2>/dev/null || echo)
-    pid=$(cat "/sys/bus/usb/devices/$dev/idProduct" 2>/dev/null || echo)
-    if [ "$vid" = "045e" ] && [ "$pid" = "097d" ]; then
-      echo "$name" > /sys/bus/usb/drivers/uvcvideo/unbind 2>/dev/null \
-        && info "Detached Kinect colour interface $name from uvcvideo." \
-        || true
-    fi
-  done
-fi
 
 # ── 4b. USB DMA memory limit for the Kinect pair ─────────────────────────────
 # Two high-bandwidth Kinects hit the default 16 MB usbfs cap (ENOMEM, errno 12).

@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import os
 import cv2
 import numpy as np
 
-from .base import CameraBackend, CameraIntrinsics, Frame
+from .base import CameraBackend, CameraIntrinsics, CameraStreamError, Frame
 from .hw_sync import (
     HardwareSyncError,
     SyncRole,
@@ -46,7 +45,8 @@ _lib = _load_libk4a()
 
 K4A_RESULT_SUCCEEDED = 0
 K4A_WAIT_RESULT_SUCCEEDED = 0
-K4A_WAIT_RESULT_TIMEOUT = 1
+K4A_WAIT_RESULT_FAILED = 1
+K4A_WAIT_RESULT_TIMEOUT = 2
 
 # k4a_buffer_result_t
 K4A_BUFFER_RESULT_SUCCEEDED = 0
@@ -298,49 +298,6 @@ _FPS_MAP = {
 # ── Backend ───────────────────────────────────────────────────────────────────
 
 
-#: USB product id of the Kinect's colour camera — the one uvcvideo will claim.
-KINECT_COLOR_PID = "097d"
-_UVCVIDEO_DRIVER_DIR = "/sys/bus/usb/drivers/uvcvideo"
-_USB_DEVICES_DIR = "/sys/bus/usb/devices"
-
-
-def uvcvideo_claimed_kinect_interfaces(
-    driver_dir: str = _UVCVIDEO_DRIVER_DIR,
-    devices_dir: str = _USB_DEVICES_DIR,
-) -> list[str]:
-    """USB interfaces of a Kinect colour camera currently bound to ``uvcvideo``.
-
-    The k4a SDK drives the camera over libusb/usbfs. When ``uvcvideo`` also holds
-    its UVC interfaces, pipewire probes the Kinect as a webcam and the two owners
-    collide on the same control endpoint — the kernel logs ``Failed to set UVC
-    probe control : -32``. On this rig every observed host freeze followed one of
-    those, so it is worth naming loudly rather than discovering afterwards.
-
-    Read-only, and safe where sysfs is absent or unreadable (returns ``[]``) —
-    the container mounts ``/sys`` read-only, so this can warn but never fix.
-    """
-    claimed: list[str] = []
-    try:
-        entries = os.listdir(driver_dir)
-    except OSError:  # no sysfs (non-Linux, or a stripped container)
-        return claimed
-    for name in entries:
-        # interfaces look like "2-3.1:1.0"; the device is the part before ":"
-        dev = name.split(":")[0]
-        if dev == name:  # "bind"/"unbind"/"module" and friends
-            continue
-        try:
-            with open(f"{devices_dir}/{dev}/idProduct") as fh:
-                pid = fh.read().strip()
-            with open(f"{devices_dir}/{dev}/idVendor") as fh:
-                vid = fh.read().strip()
-        except OSError:
-            continue
-        if vid == "045e" and pid == KINECT_COLOR_PID:
-            claimed.append(name)
-    return sorted(claimed)
-
-
 class KinectBackend(CameraBackend):
     """
     Azure Kinect DK backend via ctypes over libk4a.so.
@@ -434,27 +391,13 @@ class KinectBackend(CameraBackend):
                 "Configure KINECT_SYNC and start the hardware-synchronised rig."
             )
 
-        # The host must have kept uvcvideo off the colour camera; we can see the
-        # conflict but not fix it (sysfs is read-only in the container).
-        claimed = uvcvideo_claimed_kinect_interfaces()
-        if claimed:
-            logger.warning(
-                "uvcvideo has claimed Kinect colour interface(s) %s — pipewire will "
-                "probe the device as a webcam and fight libk4a for it. Run "
-                "`sudo ./scripts/host_setup.sh` to install the exclusion rule, then "
-                "replug the cameras.",
-                ", ".join(claimed),
-            )
-
         # Open device
         res = _lib.k4a_device_open(self._device_index, ctypes.byref(self._handle))
         if res != K4A_RESULT_SUCCEEDED:
-            hint = (
-                " uvcvideo currently holds " + ", ".join(claimed) + "; that conflict "
-                "is the likely cause — see scripts/host_setup.sh."
-                if claimed else " Check udev rules and USB permissions."
+            raise RuntimeError(
+                f"k4a_device_open failed (result={res}). "
+                "Check udev rules and USB permissions."
             )
-            raise RuntimeError(f"k4a_device_open failed (result={res})." + hint)
 
         # Read serial number
         size = ctypes.c_size_t(64)
@@ -546,8 +489,16 @@ class KinectBackend(CameraBackend):
         )
         if res == K4A_WAIT_RESULT_TIMEOUT:
             raise TimeoutError("Kinect capture timed out.")
+        if res == K4A_WAIT_RESULT_FAILED:
+            raise CameraStreamError(
+                f"[{self._serial_str}] k4a_device_get_capture failed; "
+                "the current camera stream must be stopped"
+            )
         if res != K4A_WAIT_RESULT_SUCCEEDED:
-            raise RuntimeError(f"k4a_device_get_capture failed (result={res})")
+            raise CameraStreamError(
+                f"[{self._serial_str}] k4a_device_get_capture returned "
+                f"unknown result={res}; refusing to retry the stream"
+            )
 
         try:
             color_img = _lib.k4a_capture_get_color_image(capture)

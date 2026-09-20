@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 import numpy as np
 from viki.cameras.manager import CameraManager
-from viki.cameras.base import CameraBackend, Frame
+from viki.cameras.base import CameraBackend, CameraStreamError, Frame
 
 
 class MockBackend(CameraBackend):
@@ -137,6 +137,62 @@ def test_manager_nearest_frame():
         assert manager.nearest_frame("mock_dev", 5000).timestamp_us == f3.timestamp_us
 
         manager.stop("mock_dev")
+
+
+def test_fatal_stream_failure_stops_worker_and_surfaces_error():
+    """An SDK-declared dead stream must not be retried against the USB stack."""
+    import threading
+
+    stopped = threading.Event()
+
+    class FailedBackend(MockBackend):
+        def get_frame(self):
+            raise CameraStreamError("device stream ended")
+
+        def stop(self):
+            super().stop()
+            stopped.set()
+
+    manager = CameraManager()
+    with patch.object(
+        CameraManager, "_make_backend", return_value=FailedBackend("mock_dev")
+    ):
+        manager.start("mock_dev")
+        assert stopped.wait(timeout=1.0)
+
+    assert "mock_dev" not in manager.active_device_ids()
+    assert manager.latest_frame("mock_dev") is None
+    assert manager.get_info("mock_dev") == {
+        "device_id": "mock_dev",
+        "running": False,
+        "has_frame": False,
+        "config": {},
+        "last_error": "device stream ended",
+    }
+    manager.stop("mock_dev")
+    assert manager.get_info("mock_dev") is None
+
+
+def test_stop_refuses_to_orphan_worker_that_did_not_join():
+    class StuckWorker:
+        backend = MockBackend("mock_dev")
+        is_alive = True
+        is_healthy = False
+
+        def stop(self):
+            pass
+
+        def join(self, timeout=8.0):
+            pass
+
+    manager = CameraManager()
+    worker = StuckWorker()
+    manager._workers["mock_dev"] = worker
+
+    with pytest.raises(RuntimeError, match="refusing to open another camera handle"):
+        manager.stop("mock_dev")
+
+    assert manager._workers["mock_dev"] is worker
 
 
 def test_concurrent_start_stop_never_orphans_a_backend():

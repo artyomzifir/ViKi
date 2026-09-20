@@ -18,7 +18,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 from concurrent.futures import ThreadPoolExecutor
 
-from viki.cameras.base import Frame, CameraBackend
+from viki.cameras.base import CameraBackend, CameraStreamError, Frame
 from viki.cameras.hw_sync import (
     HardwareSyncError,
     SyncRole,
@@ -49,6 +49,7 @@ class _CameraWorker:
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._last_error: str | None = None
 
     def start(self) -> None:
         self.backend.start()
@@ -63,6 +64,23 @@ class _CameraWorker:
     def join(self, timeout: float = 8.0) -> None:
         """Wait for the loop thread and backend cleanup to finish."""
         self._thread.join(timeout=timeout)
+
+    @property
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
+
+    @property
+    def is_healthy(self) -> bool:
+        """True only while this worker may safely serve camera frames."""
+        return (
+            self.is_alive
+            and self._last_error is None
+            and not self._stop_event.is_set()
+        )
+
+    @property
+    def last_error(self) -> str | None:
+        return self._last_error
 
     def latest(self) -> Optional[Frame]:
         with self._lock:
@@ -97,6 +115,18 @@ class _CameraWorker:
                         "[%s] get_frame timed out — frame dropped",
                         self.backend.device_id,
                     )
+                except CameraStreamError as exc:
+                    # The SDK has declared this streaming session dead. Retrying
+                    # a failed K4A handle can turn one USB failure into a tight
+                    # loop against an already wedged xHCI controller.
+                    self._last_error = str(exc)
+                    self._stop_event.set()
+                    logger.error(
+                        "[%s] fatal camera stream error — stopping worker: %s",
+                        self.backend.device_id,
+                        exc,
+                    )
+                    break
                 except Exception as exc:
                     print(f"[worker:{self.backend.device_id}] error: {exc}")
                     time.sleep(0.1)
@@ -141,14 +171,18 @@ class CameraManager:
 
     def active_device_ids(self) -> list:
         """Return the device IDs of all currently running cameras."""
-        return list(self._workers.keys())
+        return [
+            device_id
+            for device_id, worker in self._workers.items()
+            if getattr(worker, "is_healthy", True)
+        ]
 
     def list_devices(self) -> dict:
         """Return all detected camera device IDs grouped by type."""
         devices: dict = {
             "realsense": [],
             "kinect": [],
-            "active": list(self._workers.keys()),
+            "active": self.active_device_ids(),
         }
 
         try:
@@ -424,19 +458,24 @@ class CameraManager:
             })
         with self._dev_lock(device_id):
             existing = self._workers.get(device_id)
+            replacing = existing is not None
             if existing is not None:
-                have = existing.backend.config
-                # only the keys we set here, and only where the backend actually
-                # reports one — a ``None`` means "this backend has no such knob"
-                # (RealSense has no depth-mode enum), so it must not force a restart.
-                if all(
-                    have.get(k) == v
-                    for k, v in want.items()
-                    if k in have and have.get(k) is not None
-                ):
-                    return "unchanged"
-                # config changed → restart so the request actually takes effect
-                self.stop(device_id)
+                if not getattr(existing, "is_healthy", True):
+                    # Retain a failed worker for diagnostics, but fully reap it
+                    # before creating another backend for the same USB device.
+                    self.stop(device_id)
+                else:
+                    have = existing.backend.config
+                    # Only compare keys reported by this backend. A ``None``
+                    # means that the backend has no such setting.
+                    if all(
+                        have.get(k) == v
+                        for k, v in want.items()
+                        if k in have and have.get(k) is not None
+                    ):
+                        return "unchanged"
+                    # Config changed: release the old handle before rebuilding.
+                    self.stop(device_id)
 
             backend = self._make_backend(
                 device_id, fps, color_width, color_height, depth_mode, **kwargs
@@ -444,7 +483,7 @@ class CameraManager:
             worker = _CameraWorker(backend)
             worker.start()
             self._workers[device_id] = worker
-            return "restarted" if existing is not None else "started"
+            return "restarted" if replacing else "started"
 
     def start_kinect_sync(
         self,
@@ -653,10 +692,19 @@ class CameraManager:
         # its handle, or KinectBackend.start() hits k4a_device_open=1. Different
         # devices have different locks, so stop_all() still tears down in parallel.
         with self._dev_lock(device_id):
-            worker = self._workers.pop(device_id, None)
+            worker = self._workers.get(device_id)
             if worker:
                 worker.stop()
                 worker.join()
+                if getattr(worker, "is_alive", False):
+                    # Keep the worker registered. Forgetting it here would let a
+                    # later start open a second handle while libk4a still owns
+                    # the first one.
+                    raise RuntimeError(
+                        f"{device_id} did not stop within 8 seconds; refusing to "
+                        "open another camera handle while teardown is still running"
+                    )
+                self._workers.pop(device_id, None)
 
     def stop_all(self) -> None:
         with ThreadPoolExecutor() as executor:
@@ -667,11 +715,15 @@ class CameraManager:
     def nearest_frame(self, device_id: str, host_timestamp_us: int) -> Optional[Frame]:
         """Return the buffered frame from device_id nearest to host_timestamp_us."""
         worker = self._workers.get(device_id)
-        return worker.nearest_to(host_timestamp_us) if worker else None
+        if worker is None or not getattr(worker, "is_healthy", True):
+            return None
+        return worker.nearest_to(host_timestamp_us)
 
     def latest_frame(self, device_id: str) -> Optional[Frame]:
         worker = self._workers.get(device_id)
-        return worker.latest() if worker else None
+        if worker is None or not getattr(worker, "is_healthy", True):
+            return None
+        return worker.latest()
 
     def get_backend(self, device_id: str) -> Optional[CameraBackend]:
         """Return the backend instance for the given device_id."""
@@ -683,13 +735,17 @@ class CameraManager:
         if not worker:
             return None
         frame = worker.latest()
+        running = bool(getattr(worker, "is_healthy", True))
         info: dict = {
             "device_id": device_id,
-            "running": True,
-            "has_frame": frame is not None,
+            "running": running,
+            "has_frame": frame is not None and running,
             "config": worker.backend.config,  # what it was actually started with
         }
-        if frame:
+        last_error = getattr(worker, "last_error", None)
+        if last_error:
+            info["last_error"] = last_error
+        if frame and running:
             info["color_shape"] = list(frame.color.shape)
             info["depth_shape"] = list(frame.depth.shape)
             info["timestamp_us"] = frame.timestamp_us
