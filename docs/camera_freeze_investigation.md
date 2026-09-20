@@ -122,3 +122,64 @@ remote SSH monitoring:
 Persist kernel, libk4a trace, one-second CPU/memory/I/O samples, and network
 liveness during each run. Pstore is working and must remain enabled; retain its
 dump after any further failure.
+
+## Verified follow-up: kernel 6.17 is **not** a fix (2026-09-20 22:05)
+
+The isolation matrix above was run and stopped at step 2. Result, with timestamps
+from the journal:
+
+| step | configuration | outcome |
+|---|---|---|
+| 1 | one Kinect, 1280x720/30, standalone | **stable** — started 22:03:50, streamed, host healthy |
+| 2 | two Kinects, 1280x720/15, HW-synced rig | **host hard-locked** — rig started 22:04:16, journal stopped 22:05:01 |
+
+The crashed boot ran `6.17.0-40-generic` (Ubuntu 6.17.13), confirmed from its own
+`Linux version` banner, so **the kernel downgrade does not remove the failure**.
+The 7.x-regression reading is therefore too narrow: 6.17 hard-locks too, roughly
+45 seconds after the second camera is opened.
+
+The last kernel line before silence is the second Kinect being claimed:
+
+```
+usb 2-1.1: Found UVC 1.00 device Azure Kinect 4K Camera (045e:097d)
+usb 2-1.1: usbfs: process 20294 (uvicorn) did not claim interface 0 before use
+```
+
+and, on the first camera moments earlier, the isochronous endpoint being clamped:
+
+```
+usb 2-3.1: Isoc endpoint with wBytesPerInterval of 1024 ... ep 129: setting to 944
+```
+
+No pstore record survived this one, so there is no stack for it; the diagnosis
+rests on the four archived dumps from the 7.x runs plus this reproduction.
+
+**Caveat on the trigger.** The sequence was start-one → stop → start-both inside
+30 seconds, so this run cannot separate "two cameras on one controller" from
+"URB teardown immediately followed by re-enumeration". Both are on the suspect
+path. A clean next run should power-cycle, then open two cameras once, with no
+prior stop.
+
+### What this leaves as the actual fix
+
+The remaining explanation is the one the earlier research already pointed at and
+the kernel version does not change: **both Kinects, the keyboard and the mouse
+share the one Intel Alder Lake-S PCH xHCI controller**. Microsoft's multi-Kinect
+guidance calls for separate USB root ports, and working multi-camera rigs use a
+discrete PCIe USB card; Azure Kinect issue #1905 reports this same full-system
+lockup with no useful log. Different sockets on the case are not different
+controllers.
+
+So:
+
+1. **Fix:** give the second Kinect its own host controller — a PCIe USB 3.x card
+   with a dedicated lane. That is the only measure that addresses the shared
+   controller, and it is what the vendor documents for this configuration.
+2. **Meanwhile, one Kinect is usable** — step 1 above passed. Single-camera
+   capture, calibration and playback can proceed on this host today.
+3. **Reduce exposure, do not mistake it for a cure:** every stop/start cancels
+   isochronous URBs, which is the path the archived dumps deadlock on. The
+   fail-closed lifecycle from `3894e71` helps ViKi not pile calls onto an
+   already-sick controller, but cannot make that kernel path safe.
+4. Keep pstore enabled; it captured four of the five dumps and is the only
+   instrument that has ever produced a stack here.
