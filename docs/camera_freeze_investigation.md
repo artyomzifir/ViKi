@@ -422,3 +422,57 @@ what the rig has survived. Until the controller question is settled, keeping
 two-camera streaming to sub-30-second bursts matches every successful recording
 in the dataset, and the segmented-recording change (still unimplemented, see
 above) would cap the loss when a burst does not survive.
+
+## The duration theory is dead too — and that points at hardware
+
+The operator objected that calibration used to run for a long time, and that the
+first freezes today came during calibration. Correct on both counts, and the
+journal still holds the evidence: it reaches back to 2026-09-02.
+
+**Boot `-20`, 2026-09-09.** Kinects plugged in at 14:35:36, calibration preset
+`skrip` written at 14:50, boot continued until 15:27:45. That is roughly fifteen
+minutes of two-camera work — a full calibration session — followed by another
+half hour of uptime. On `7.0.0-28-generic`, at 1280x720/30, on USB ports `2-1`
+and `2-3`.
+
+Tonight the same rig dies in two seconds. So the "short takes outran a latent
+fault" explanation is withdrawn: this rig has demonstrably streamed two cameras
+for a quarter of an hour.
+
+### Everything software-side is identical
+
+Checked and matching between the working Sept 9 session and tonight:
+
+- kernel `7.0.0-28-generic` — the same boot-to-boot;
+- colour 1280x720/30, depth NFOV_UNBINNED;
+- USB topology: both Kinects on `2-1` and `2-3`, the very same ports;
+- NVIDIA driver 610.43.02 from July;
+- `web` container GPU environment, until a change made at 21:59 tonight that
+  postdates four of the freezes;
+- no camera-code change reaching the USB start path;
+- and the `uvcvideo` / pipewire noise is *equally present in both* — 345
+  uvcvideo lines and 280 `spa.v4l2` errors during the successful Sept 9 session.
+  That is now a third independent reason to consider that hypothesis closed.
+
+### What that leaves
+
+No software or configuration variable distinguishes a rig that calibrated for
+fifteen minutes from one that dies in two seconds. What remains is the physical
+layer degrading between 2026-09-09 and 2026-09-20: a cable, a connector, a hub,
+a camera's external power supply, the PSU, or the controller itself. The
+operator's instinct that this "is not natural" is the right reading of it.
+
+### The next test is cheap and decisive
+
+Run **each camera alone** for fifteen minutes, one after the other, at
+1280x720/30:
+
+- one of them kills the host → that camera, its cable or its PSU is the fault,
+  and it is identified without buying anything;
+- both survive alone but the pair dies → the shared path (controller, hub, or
+  total power draw) is implicated, and the PCIe card becomes the justified buy;
+- both survive alone *and* together → the fault is intermittent and the search
+  moves to what differs on the failing runs.
+
+Single-camera operation has never once failed here, across every boot tested, so
+this test is also the low-risk one.
