@@ -1,6 +1,6 @@
 # Multi-Kinect host freeze investigation
 
-Status: open; the original `uvcvideo` explanation is retracted.
+Status: root cause captured; the original `uvcvideo` explanation is retracted.
 
 ## Observed failure
 
@@ -13,8 +13,9 @@ MCE, thermal event, watchdog report, lockup report, or panic in the retained
 logs. Docker reported `OOMKilled=false`.
 
 The host remained reachable remotely for a short time after local interaction
-failed. This makes an initial USB/xHCI failure more likely than an immediate
-whole-host failure.
+failed. EFI pstore from the later reproductions now proves that the failure is
+inside the host's xHCI kernel path, rather than merely being correlated with
+USB traffic.
 
 Both Kinects (`2-1` and `2-3`), the keyboard, mouse, and all other USB devices
 share the machine's only USB controller, Intel Alder Lake-S PCH xHCI
@@ -59,17 +60,65 @@ This prevents an SDK-level stream failure from becoming a repeated call loop
 against an already unhealthy USB controller. It does not prove that ViKi
 caused the original xHCI failure.
 
+## Confirmed kernel failure
+
+The 21:34 reproduction on Ubuntu kernel `7.0.0-28-generic` produced a complete
+EFI pstore trace. A libusb thread in the ViKi `uvicorn` process issued an
+USBDEVFS URB cancellation. The kernel then waited forever for the global xHCI
+spinlock:
+
+```
+native_queued_spin_lock_slowpath
+  xhci_urb_dequeue
+    usb_hcd_unlink_urb
+      usb_kill_urb
+        usbdev_do_ioctl
+```
+
+The NMI watchdog reported a hard lockup on CPU 2. Two seconds later the MCE
+broadcast could not stop CPUs 8-9 and the kernel panicked. This is why the
+desktop and USB input failed first, remote access survived briefly, and no
+ordinary journal error preceded the reset.
+
+The archived pstore records explain the earlier resets as well:
+
+- three other runs locked in the same xHCI spinlock from `uvicorn`, two in
+  `xhci_urb_dequeue` and one in `xhci_urb_enqueue`;
+- one run retained only an NVIDIA Xid 16/vblank-stall trace before the final
+  MCE timeout, so its initiating CPU lock is not recoverable;
+- none were container OOMs or Python exceptions.
+
+The final reproduction happened while frames were flowing normally at
+1280x720/30 fps, roughly two minutes after a 15-to-30 fps reopen. It was not
+caused by the unit-test container: that container did not receive USB devices,
+finished normally 33 seconds before the watchdog report, and the blocked task
+in pstore belongs to the web server's libusb thread.
+
+After the panic, a warm reboot did not power-cycle the Kinects. Both colour
+devices remained unresponsive: UVC control requests timed out with `-110`, USB
+U1 transitions failed, and probe ended with `-71`. Physically disconnecting
+both cameras removed that poisoned device state.
+
+This is a kernel/host-controller deadlock exposed by normal libusb URB
+cancellation. Application fail-closed handling is still useful, but cannot
+make the affected xHCI kernel path safe. Repeated stop/start operations merely
+increase exposure to URB teardown; avoiding them is not a complete fix because
+the latest lockup occurred during steady streaming.
+
 ## Next hardware isolation run
 
-Run with remote SSH monitoring so local USB-input loss can be distinguished
-from a whole-host lockup:
+Do not reconnect the Kinects on `7.0.0-28-generic`. The machine already has
+`6.17.0-40-generic`, its initramfs, and the matching NVIDIA 610.43.02 DKMS
+modules installed. Boot that kernel, power-cycle the cameras, and run with
+remote SSH monitoring:
 
 1. One Kinect physically connected, 1280x720/30 fps.
 2. Two Kinects, 1280x720/15 fps, then 30 fps.
 3. Two Kinects, 2048x1536/30 fps.
 4. Repeat with one Kinect on an independent PCIe USB controller.
-5. If needed, repeat on the installed 6.17 kernel instead of 7.0.
+5. Do not return to a 7.x kernel until the relevant xHCI regression is fixed or
+   the same matrix has passed on a patched build.
 
 Persist kernel, libk4a trace, one-second CPU/memory/I/O samples, and network
-liveness during each run. If the host becomes unreachable rather than merely
-losing local USB, enable pstore/kdump or netconsole before further reproduction.
+liveness during each run. Pstore is working and must remain enabled; retain its
+dump after any further failure.
