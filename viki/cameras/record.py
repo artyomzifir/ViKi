@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime, timezone
 import queue
 import shutil
 import threading
@@ -69,6 +70,12 @@ class SceneRecorder:
         self._timestamps: list[dict] = []
         self._n = 0
         self._dropped = 0
+        # Crash insurance. The canonical timestamps.json is only written at the
+        # end, so a host lock-up mid-episode loses the whole take. This sidecar
+        # is appended and flushed as frames arrive; recover_timestamps() rebuilds
+        # the canonical file from it.
+        self._ts_stream = None
+        self._ts_flush_every = 15
 
     def record(self, seconds: float, fps: int = 15, stop_event=None) -> Episode:
         """Write every synced group until ``seconds`` elapse or ``stop_event``
@@ -82,6 +89,8 @@ class SceneRecorder:
         self._hardware_sync = self._mgr.require_hardware_sync_ready()
         sync = MultiCameraSync(self._mgr, sync_fps=fps)
         self._write_sensor_meta()
+        self._open_timestamp_stream()
+        self._mark_recording(complete=False)
 
         q: queue.Queue = queue.Queue(maxsize=max(4, fps * 3))
         self._dropped = 0
@@ -153,7 +162,7 @@ class SceneRecorder:
             # zeros placeholder, which downstream must not treat as measured
             if frame.has_depth() and frame.depth.any():
                 np.save(self._depth_dirs[dev_id] / f"{self._n:06d}.npy", frame.depth)
-        self._timestamps.append(
+        self._append_timestamp(
             {
                 "sync_us": group.sync_timestamp_us,
                 "offsets_us": group.offsets_us,
@@ -166,6 +175,57 @@ class SceneRecorder:
             }
         )
         self._n += 1
+
+    # ── crash insurance ───────────────────────────────────────────────────
+
+    def _open_timestamp_stream(self) -> None:
+        try:
+            self._ts_stream = open(self._raw() / "timestamps.jsonl", "w")
+        except OSError:
+            logger.warning("record: timestamp sidecar unavailable", exc_info=True)
+            self._ts_stream = None
+
+    def _append_timestamp(self, row: dict) -> None:
+        """Keep the in-memory row (the canonical file is still written at the
+        end) and mirror it to the sidecar, flushed periodically."""
+        self._timestamps.append(row)
+        if self._ts_stream is None:
+            return
+        try:
+            self._ts_stream.write(json.dumps(row) + "\n")
+            if self._n % self._ts_flush_every == 0:
+                self._ts_stream.flush()
+                os.fsync(self._ts_stream.fileno())
+        except (OSError, ValueError):
+            logger.warning("record: timestamp sidecar write failed", exc_info=True)
+            self._ts_stream = None
+
+    def _close_timestamp_stream(self) -> None:
+        if self._ts_stream is None:
+            return
+        try:
+            self._ts_stream.flush()
+            os.fsync(self._ts_stream.fileno())
+            self._ts_stream.close()
+        except (OSError, ValueError):
+            pass
+        self._ts_stream = None
+
+    def _mark_recording(self, *, complete: bool) -> None:
+        """``raw/recording_state.json`` — false while frames are being written.
+
+        An episode left with ``complete: false`` was interrupted, not finished;
+        without this a truncated take is indistinguishable from a short one.
+        """
+        state = {
+            "complete": complete,
+            "frames": self._n,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            (self._raw() / "recording_state.json").write_text(json.dumps(state, indent=2))
+        except OSError:
+            logger.warning("record: recording_state not written", exc_info=True)
 
     @staticmethod
     def _intr_dict(intr) -> dict | None:
@@ -331,9 +391,11 @@ class SceneRecorder:
     def _finish(self, fps: int) -> None:
         for w in self._writers.values():
             w.release()
+        self._close_timestamp_stream()
         (self._raw() / "timestamps.json").write_text(json.dumps(self._timestamps, indent=2))
         stats = _sync_stats(self._timestamps)
         (self._raw() / "sync_stats.json").write_text(json.dumps(stats, indent=2))
+        self._mark_recording(complete=True)
         logger.info(
             "sync: %s (%s)",
             "bounded drift" if stats["bounded"] else "DRIFT EXCEEDS BOUND",
@@ -393,3 +455,29 @@ def _sync_stats(timestamps: list[dict]) -> dict:
         "drift_bound_ms_per_min": _DRIFT_BOUND_MS_PER_MIN,
         "bounded": worst_drift <= _DRIFT_BOUND_MS_PER_MIN,
     }
+
+
+def recover_timestamps(raw_dir) -> int:
+    """Rebuild ``timestamps.json`` from the crash sidecar. Returns the row count.
+
+    A recording killed by a host lock-up never reaches ``_finish``, so the
+    canonical file is missing while ``timestamps.jsonl`` holds everything that
+    was flushed. This turns a lost episode into a slightly short one. Rows are
+    parsed defensively: a half-written final line is dropped, not fatal.
+    """
+    raw = Path(raw_dir)
+    src = raw / "timestamps.jsonl"
+    if not src.exists():
+        raise FileNotFoundError(f"no timestamp sidecar in {raw}")
+    rows = []
+    for line in src.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            logger.warning("recover_timestamps: dropping a truncated final row")
+            break
+    (raw / "timestamps.json").write_text(json.dumps(rows, indent=2))
+    return len(rows)
