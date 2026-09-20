@@ -270,5 +270,6 @@ For manipulation tasks at 0.5–1.5m: `NFOV_UNBINNED` gives the best depth accur
 | RealSense fails: `Couldn't resolve requests` | Unsupported resolution/fps | Use 640×480 or 1280×720; avoid 4K |
 | RealSense: very low framerate or timeouts | USB 2.0 port or shared hub | Connect to a USB 3.0 port directly on the motherboard |
 | Depth stream black in UI | ID conflict resolved, but browser cached old state | Hard-refresh the page (Ctrl+Shift+R) |
+| Host freezes while the cameras run; kernel logged `uvcvideo: Failed to set UVC probe control : -32` | `uvcvideo` claimed the Kinect colour camera, so pipewire probes it as a webcam and fights libk4a for the same control endpoint | Re-run `sudo ./scripts/host_setup.sh` — it installs `99-k4a-no-uvcvideo.rules` and detaches any interface already bound. ViKi warns at camera start when the conflict is still present |
 | `Authorization required` in logs | `xhost` not set | Add `xhost +local:` to `~/.bashrc` |
 | Container exits with code 139 (segfault) | Kinect buffer read issue | Update to latest `kinect.py` which uses `ctypes.string_at` for safe buffer copy |
