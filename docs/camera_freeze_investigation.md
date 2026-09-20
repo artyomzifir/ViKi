@@ -304,3 +304,60 @@ PCIe card is justified. Fails on one camera → the controller or board is fault
   `complete: false` and flip it at the end, and cut episodes into 20-30 s
   segments so a freeze costs one segment rather than the session. (`sensor_meta`
   is already written up front.)
+
+## Controlled run, 2026-09-20 22:43 — the two cheap hypotheses are dead
+
+Same kernel as the four archived dumps, one variable changed. Conditions, all
+verified from `/proc/cmdline` and sysfs before the run:
+
+| | |
+|---|---|
+| kernel | `7.0.0-28-generic` — the one the dumps came from |
+| `usbcore.autosuspend` | **-1** (the #221103 workaround) |
+| `usbcore.usbfs_memory_mb` | 1000 |
+| controller runtime PM | `auto`, but `runtime_suspended_time = 0` for the whole boot |
+| method | **one** open of both cameras, no prior stop, no re-enumeration |
+
+Timeline:
+
+```
+22:43:39  POST start rig, 1280x720/30
+22:43:41  both active, hardware_sync verified, offset 144 us (expected 160, spread 33)
+22:43:41  kernel journal stops
+22:43:46  the 1 Hz sampler is still writing, api=200 — userspace outlives the journal
+22:45:18  next boot
+```
+
+The rig came up **healthy** — a good sync, offset inside tolerance — and the host
+was gone about two seconds later. No pstore record. On 6.17 the same step took
+45 seconds; here it took two.
+
+### What this eliminates
+
+1. **#221103 / runtime-suspend is not our bug.** Its confirmed workaround was in
+   force and did not prevent the lock-up. Independently, the controller never
+   entered runtime suspend at any point in that boot
+   (`runtime_suspended_time = 0`), so the "xHC resumes too fast, registers read
+   0xffffffff" mechanism never had an opportunity to fire. The affected-range
+   argument that explained away the 6.17 reproduction is therefore withdrawn:
+   both kernels crash, and not for that reason.
+2. **URB teardown is not required.** This run contained no stop, no
+   re-enumeration and no second open — the whole rig came up in one transaction,
+   subordinate then master. The caveat that had stood since the first matrix run
+   is now resolved: teardown is not necessary to trigger the failure.
+
+### What survives
+
+**Two Kinects streaming concurrently through one xHCI controller.** It is the
+only suspect left standing after the two above were removed, and it is the one
+Microsoft's multi-camera guidance addresses directly. Note this does not promote
+it to proven: #1905 still reports the same hang across different controllers on
+Windows, so a discrete PCIe card is the best-supported next action rather than a
+guaranteed cure.
+
+Also worth recording: one camera has now streamed without incident in two
+separate boots, and the failure has never once occurred with a single camera.
+
+Caveat, as always: one run per configuration. This is elimination by single
+counter-example, which is sound for killing a hypothesis and weak for confirming
+one.
