@@ -274,9 +274,18 @@ PCIe card is justified. Fails on one camera → the controller or board is fault
   pulses.
 - `depth_delay_off_color_usec=0` is hardcoded (`kinect.py:428`); fine for two
   cameras, needs to move into config for a third.
-- Already correct and not a suspect: `usbcore.usbfs_memory_mb=1000` is set by
-  `scripts/host_setup.sh`, well above the documented minimum, so "ENOMEM on URB
-  submit → cancel → deadlock" is ruled out. The subordinate-before-master start
+- **Correction (2026-09-20 22:40): the ENOMEM dismissal above was wrong.**
+  `scripts/host_setup.sh` persisted the limit through
+  `/etc/modprobe.d/viki-usbfs.conf`, but **`usbcore` is built into the Ubuntu
+  kernel, not a module**, so that file is inert — only the kernel command line
+  sets it. The value was 1000 on this machine solely because the cmdline had
+  been edited by hand. A boot without that parameter falls back to the default
+  **16 MB**, which is below the documented minimum for two Kinects and is exactly
+  the ENOMEM-on-URB-submit condition the script's own comment warns about.
+  Verified live in the 22:37 recovery-mode boot: `usbfs_memory_mb = 16`.
+  `host_setup.sh` now writes the GRUB cmdline and warns when the running kernel
+  disagrees. Any two-camera measurement taken while this reads 16 is measuring a
+  degraded rig, not the defect under study. The subordinate-before-master start
   order is per documentation.
 - Already fixed on this branch: the `K4A_WAIT_RESULT_TIMEOUT` enum. The review
   read `main` (`c39782b`), which still carries the old value; `3894e71` is not

@@ -87,10 +87,37 @@ info "udev rules installed."
 # Two high-bandwidth Kinects hit the default 16 MB usbfs cap (ENOMEM, errno 12).
 # Persist it here instead of poking /sys from the container (that needs
 # privileged / CAP_SYS_ADMIN, which the container no longer has).
-info "Setting usbcore.usbfs_memory_mb=1000 (modprobe.d + live)..."
+# usbcore is built into the Ubuntu kernel, not a module, so an options line in
+# modprobe.d is inert — the value survives a reboot only from the kernel command
+# line. Set the cmdline; keep the modprobe.d file for a kernel that does build
+# usbcore as a module, and write the live value so this boot benefits too.
+info "Setting usbcore.usbfs_memory_mb=1000 (cmdline + live)..."
 echo "options usbcore usbfs_memory_mb=1000" > /etc/modprobe.d/viki-usbfs.conf
 echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb 2>/dev/null || \
-    warn "could not set live usbfs_memory_mb (usbcore built-in?) — reboot applies the modprobe.d value"
+    warn "could not set usbfs_memory_mb for the running kernel; the cmdline below covers the next boot"
+
+GRUB_FILE=/etc/default/grub
+if [ -f "$GRUB_FILE" ]; then
+  if grep -q "usbcore.usbfs_memory_mb=" "$GRUB_FILE"; then
+    sed -i 's/usbcore\.usbfs_memory_mb=[0-9]*/usbcore.usbfs_memory_mb=1000/g' "$GRUB_FILE"
+  else
+    sed -i 's/^\(GRUB_CMDLINE_LINUX_DEFAULT="\)/\1usbcore.usbfs_memory_mb=1000 /' "$GRUB_FILE"
+  fi
+  if command -v update-grub >/dev/null 2>&1; then
+    update-grub >/dev/null 2>&1 && info "GRUB updated; the limit persists from the next boot."
+  else
+    warn "update-grub not found — run your bootloader update manually."
+  fi
+  grep -n "GRUB_CMDLINE_LINUX_DEFAULT" "$GRUB_FILE"
+else
+  warn "$GRUB_FILE not found — set usbcore.usbfs_memory_mb=1000 on the kernel cmdline yourself."
+fi
+
+LIVE_USBFS=$(cat /sys/module/usbcore/parameters/usbfs_memory_mb 2>/dev/null || echo "?")
+if [ "$LIVE_USBFS" != "1000" ]; then
+  warn "usbfs_memory_mb is $LIVE_USBFS for the running kernel (want 1000)."
+  warn "Two Kinects on the default 16 MB hit ENOMEM on URB submit. Reboot before a two-camera run."
+fi
 
 # ── 5. Add user to plugdev + video ───────────────────────────────────────────
 info "Adding '$CURRENT_USER' to plugdev, video, render groups..."
