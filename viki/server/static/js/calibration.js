@@ -32,9 +32,9 @@ function template() {
   const s = sessionGet('calibBoard', null);
   const b = s || {
     type: 'aruco',
-    cols: c.aruco.boardSize?.[0] ?? 8, rows: c.aruco.boardSize?.[1] ?? 10,
-    square: c.aruco.squareSize ?? 0.05, marker: c.aruco.markerSize ?? 0.035,
-    dict: c.aruco.defaultDict,
+    cols: c.aruco.boardSize?.[0] ?? 11, rows: c.aruco.boardSize?.[1] ?? 7,
+    square: c.aruco.squareSize ?? 0.025, marker: c.aruco.markerSize ?? 0.01875,
+    dict: ARUCO_DICTS[c.aruco.dictId] ?? 'DICT_5X5_100',
   };
   const arucoOpts = ARUCO_DICTS.map(n =>
     `<option ${n === b.dict ? 'selected' : ''}>${n}</option>`).join('');
@@ -201,7 +201,7 @@ function persistBoard() {
   sessionSet('calibBoard', {
     type: boardType(),
     cols: p.board_size[0], rows: p.board_size[1], square: p.square_size,
-    marker: p.marker_size ?? 0.035, dict: p.aruco_dict ?? view.querySelector('#aruco-dict').value,
+    marker: p.marker_size ?? 0.01875, dict: p.aruco_dict ?? view.querySelector('#aruco-dict').value,
   });
 }
 

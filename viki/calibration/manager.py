@@ -120,7 +120,9 @@ class CalibrationManager:
         board_type : str
             "chess" or "aruco".
         board_size : Optional[Tuple[int, int]]
-            Number of internal corners (width, height) of the board.
+            Chessboard: number of internal corners (width, height).
+            ChArUco: number of *squares* (width, height) — it is handed
+            straight to ``cv2.aruco.CharucoBoard``, which counts squares.
         square_size : Optional[float]
             Physical size of a square (in meters or mm).
         marker_size : Optional[float]

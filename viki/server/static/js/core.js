@@ -98,7 +98,7 @@ export async function initializeFrontendConfig(config) {
         boardSize: config.CALIB_ARUCO_BOARD_SIZE,
         squareSize: config.CALIB_ARUCO_SQUARE_SIZE,
         markerSize: config.CALIB_ARUCO_MARKER_SIZE,
-        defaultDict: 'DICT_5X5_50', // This is hardcoded as a string for UI, mapping to ID 4
+        dictId: config.CALIB_ARUCO_DICT, // cv2.aruco enum id; the UI maps it to a name
       }
     },
     recording: {
