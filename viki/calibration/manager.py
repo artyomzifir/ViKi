@@ -93,6 +93,9 @@ class CalibrationManager:
         self._logger = logging.getLogger(__name__)
         self._extrinsics: Dict[str, CalibrationExtrinsics] = {}
         self._workers: Dict[str, _CalibrationWorker] = {}
+        # Set when a solve was forced past unmet readiness gates, so save-as can
+        # record it on the preset. A forced solve must never look like a clean one.
+        self.last_readiness_override: dict | None = None
 
     def start(
         self,

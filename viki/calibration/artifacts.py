@@ -165,6 +165,23 @@ def write_extrinsics(
     return payload
 
 
+def annotate_solve(name: str, **fields) -> dict | None:
+    """Merge ``fields`` into a preset's stored ``solve`` dict, in place.
+
+    Used to record facts the solver itself does not know — chiefly that the
+    operator forced the solve past unmet readiness gates. Returns the updated
+    payload, or ``None`` when the preset has no ``extrinsics.json`` yet.
+    """
+    data = read_extrinsics(name)
+    if not data:
+        return None
+    solve = dict(data.get("solve") or {})
+    solve.update(fields)
+    data["solve"] = solve
+    _dump(_extrinsics_path(name), data)
+    return data
+
+
 def resolve_from_observations(name: str, *, reference_device: str | None = None) -> dict:
     """Re-run the bundle solve from the ``sets`` / ``intrinsics`` / ``board``
     stored in ``extrinsics.json`` and rewrite it in place. Used after a set is

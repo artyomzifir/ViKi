@@ -352,3 +352,30 @@ def test_compute_world_display_puts_the_board_at_origin_z_up(store):
     assert abs(Xworld[:, 2]).max() < 1e-6       # board lies exactly on world Z = 0
     # centred to within the canonical_board_extrinsics half-square rounding
     assert np.linalg.norm(Xworld[:, :2].mean(axis=0)) < board["square_size"]
+
+
+def test_annotate_solve_records_a_forced_override(store):
+    """A solve forced past unmet gates must be visible on the preset forever."""
+    artifacts.write_extrinsics(
+        "rig", reference_device="cam_a",
+        devices={"cam_a": np.eye(4), "cam_b": _rand_T(3)},
+        sets=[{"set_id": "s0", "captured_at": None, "observations": {}}],
+        solve={"method": "bundle", "rms_reproj_px": {"cam_a": 0.4}},
+    )
+    override = {
+        "forced": True,
+        "at": "2026-09-20T18:00:00+00:00",
+        "unmet": [{"name": "frame_coverage", "value": 0.31, "need": 0.45}],
+    }
+
+    out = artifacts.annotate_solve("rig", readiness_override=override)
+
+    assert out["solve"]["readiness_override"] == override
+    # the solver's own fields survive the annotation
+    assert out["solve"]["rms_reproj_px"] == {"cam_a": 0.4}
+    # and it is on disk, not just in the returned dict
+    assert artifacts.read_extrinsics("rig")["solve"]["readiness_override"] == override
+
+
+def test_annotate_solve_is_a_no_op_without_a_preset(store):
+    assert artifacts.annotate_solve("never-solved", readiness_override={}) is None

@@ -23,6 +23,7 @@ let openedPreset = null;   // name of the preset whose sets are shown, or null (
 // "current, unsaved" (a fresh solve, will Save as a NEW preset); "<name>" = a
 // specific preset the user picked.
 let presetChoice = null;
+let lastReadiness = null;
 
 // ── template ──────────────────────────────────────────────────────────────
 
@@ -111,6 +112,13 @@ function template() {
           <button id="calib-start-session" class="primary">Start session</button>
           <button id="calib-capture-all" class="primary">Capture set</button>
           <div id="calib-readiness" class="wiz-crit"></div>
+          <label class="hint" style="display:block;margin:.4em 0">
+            <input type="checkbox" id="calib-force" ${sessionGet('calibForce', false) ? 'checked' : ''}>
+            Solve anyway — ignore unmet gates. For a rig where a gate is
+            <b>unreachable</b>, not just unmet (a small board at a fixed distance
+            can never cover enough of the frame). The override is recorded on the
+            preset.
+          </label>
           <button id="calib-solve" class="primary" disabled>Solve (bundle)</button>
         </div>
 
@@ -243,8 +251,13 @@ async function captureAll() {
 
 async function solve() {
   log('Bundle solve…');
+  const force = forceOn();
   try {
-    const r = await api('POST', '/api/calibration/solve');
+    const r = await api('POST', '/api/calibration/solve' + (force ? '?force=true' : ''));
+    const ov = r.solve?.readiness_override;
+    if (ov) log('⚠ Solved with gates overridden: '
+      + ov.unmet.map(c => `${c.name.replace(/_/g, ' ')} ${c.value}/${c.need}`).join(', ')
+      + ' — recorded on the preset', 'error');
     const rms = Object.entries(r.solve?.rms_reproj_px || {})
       .map(([d, v]) => `${d} ${(+v).toFixed(2)}px`).join(', ');
     log(`Extrinsics solved (ref ${r.reference_device}; ${rms})`
@@ -301,7 +314,10 @@ function setStepState(step, txt, cls) {
   if (el) { el.textContent = txt; el.className = 'wiz-state ' + (cls || ''); }
 }
 
+function forceOn() { return !!view?.querySelector('#calib-force')?.checked; }
+
 function renderReadiness(rd) {
+  lastReadiness = rd || null;
   const box = view?.querySelector('#calib-readiness');
   if (!box) return;
   if (!rd || !rd.criteria) { box.innerHTML = ''; return; }
@@ -309,7 +325,13 @@ function renderReadiness(rd) {
     `<div class="crit ${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓' : '·'} ${c.name.replace(/_/g, ' ')}
       <span>${c.value} / ${c.need}</span></div>`).join('');
   const solveBtn = view.querySelector('#calib-solve');
-  if (solveBtn) solveBtn.disabled = !rd.ready;
+  if (solveBtn) solveBtn.disabled = !rd.ready && !forceOn();
+}
+
+// Re-evaluate the Solve button without refetching readiness.
+function syncSolveEnabled() {
+  const solveBtn = view?.querySelector('#calib-solve');
+  if (solveBtn) solveBtn.disabled = !(lastReadiness?.ready || forceOn());
 }
 
 function renderValidation(v) {
@@ -613,7 +635,13 @@ function onClick(e) {
 
 function onChange(e) {
   const el = e.target;
-  if (el.id === 'board-type') { syncBoardFieldVisibility(); syncParams(); }
+  if (el.id === 'calib-force') {
+    sessionSet('calibForce', el.checked);
+    syncSolveEnabled();
+    if (el.checked) log('Readiness gates will be overridden on the next solve — '
+      + 'the preset records which ones', 'error');
+  }
+  else if (el.id === 'board-type') { syncBoardFieldVisibility(); syncParams(); }
   else if (['board-width', 'board-height', 'square-size', 'marker-size'].includes(el.id)
     || el.id === 'aruco-dict') { syncParams(); }
   else if (el.id === 'calib-preset') {
