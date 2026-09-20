@@ -160,7 +160,7 @@ rests on the four archived dumps from the 7.x runs plus this reproduction.
 path. A clean next run should power-cycle, then open two cameras once, with no
 prior stop.
 
-### What this leaves as the actual fix
+### What this leaves (superseded — see the external review below)
 
 The remaining explanation is the one the earlier research already pointed at and
 the kernel version does not change: **both Kinects, the keyboard and the mouse
@@ -183,3 +183,115 @@ So:
    already-sick controller, but cannot make that kernel path safe.
 4. Keep pstore enabled; it captured four of the five dumps and is the only
    instrument that has ever produced a stack here.
+
+## External review, 2026-09-20: the "separate controller" conclusion is overstated
+
+A second review supplied upstream references that change the reading above. The
+bug reports are cited as received, not independently reproduced here; the
+repository claims below were re-verified against `v0.0.2`.
+
+### Why the downgrade changed nothing
+
+**kernel bugzilla #221103** — `xhci_hcd: System lockup`, opened February 2026 and
+still live in August 2026: full hard-lock, no stack, no panic, no journal.
+Trigger is usbfs open/close under load; the root cause given is the xHC coming
+out of runtime-suspend too fast, its registers reading back `0xffffffff`, then
+`Controller not ready at resume -19` → HC died. **Affected range 6.12–7.0 covers
+both kernels tested here**, which explains the 6.17 reproduction directly: the
+downgrade never left the window.
+
+That also supplies a mechanism for our stack. If the controller stops answering
+MMIO, whoever holds `xhci->lock` spins in `xhci_handshake` on a long timeout
+while every other CPU piles into `native_queued_spin_lock_slowpath` — which is
+what the archived dumps show, and it matches the desktop and USB input dying
+first while SSH lived a little longer.
+
+Confirmed workaround in that report: **`usbcore.autosuspend=-1`** plus
+`power/control=on` on the controller. One cmdline line, one run — and it is the
+cheapest test available, so it comes before any hardware purchase.
+
+Related isochronous reports: a linux-usb thread (August 2026) on repeated URB
+cancel against a UVC status interrupt endpoint desynchronising the isoc ring on
+Intel xHCI — old bug, not a regression, partially helped by `uvcvideo
+quirks=0x80` (FIX_BANDWIDTH); and **#220748**, xHCI ignoring `start_frame` and
+always assuming `URB_ISO_ASAP`. Our own log line
+`Isoc endpoint with wBytesPerInterval of 1024 ... setting to 944` sits in that
+same territory.
+
+### Why "separate controller" is not yet the answer
+
+**Azure Kinect #1905** was cited above as evidence for the shared-controller
+theory. Read properly it weakens it: that report is on Windows 11, and the
+reporter states the lockups occur across *different ports and different
+controllers*. If the same hang reaches a Windows stack, the problem is closer to
+how the Kinect drives isochronous streams than to Linux xHCI specifically. (That
+report also ran the cameras on USB-C power with no mains PSU, an independent
+source of instability, and the repository was archived in August 2024 with no
+vendor answer.)
+
+So the honest formulation is: **a separate controller removes one of two
+suspects, and not the one all four archived dumps sit on.** It is still worth
+doing — the vendor documents it, and #1401 recommends cards with a real
+controller per port (Renesas µPD720202, FL1100) — but it is insurance, not a
+diagnosis.
+
+### The decisive experiment, still unrun and still free
+
+Step 2 above did start-one → stop → start-both inside 30 seconds, so it never
+separated "two cameras on one controller" from "URB teardown immediately before
+re-enumeration". Until this is run, no purchase is justified by evidence:
+
+1. Unplug both cameras; add `usbcore.autosuspend=-1` to the cmdline; reboot.
+2. `echo on > /sys/bus/pci/devices/0000:00:14.0/power/control`.
+3. Reconnect both cameras, on their mains PSUs.
+4. Open **once**: subordinate, then master, 1280x720/30. No stop/start afterwards.
+5. Hold 30 minutes under load with SSH monitoring, pstore and netconsole armed
+   (#221103 needed netconsole on the runs where pstore stayed empty).
+
+Passes → the killer is teardown/re-enumeration, and the operating discipline
+below fixes it outright. Fails → two cameras on one controller is real and the
+PCIe card is justified. Fails on one camera → the controller or board is faulty.
+
+### Repository findings from the same review (verified on `v0.0.2`)
+
+- **`color_format=K4A_IMAGE_FORMAT_COLOR_BGRA32`** (`kinect.py:423`). BGRA32 is
+  not a native device mode; at 2048x1536 the camera emits **MJPEG only**, and the
+  SDK converts on the host CPU. So JPEG is already in the path — switching to
+  `COLOR_MJPG` with lazy decode loses no data at all and drops a constant
+  full-rate conversion for both cameras inside the process that runs the libusb
+  event thread. #221103 names CPU load as a reproduction condition, so this is
+  the second one-line change worth trying.
+- **Manual exposure is never set** — `color_control` appears nowhere in `viki/`.
+  The multi-camera sync documentation requires manual exposure, because auto
+  "causes dynamic timing changes that push cameras out of sync", and it should be
+  set once rather than per capture. This is a plausible explanation for the
+  timestamp-offset spread recorded in the accuracy audit (median 0.503 ms, P90
+  4.5 ms, >10 ms on 4.23% of frames) where a hard trigger should give a near
+  constant ~160 us: the Kinect timestamp is the centre of exposure, so a floating
+  exposure moves it even under a perfect trigger.
+- `timeout_ms` defaults to **1000** (`kinect.py:327`) while its docstring says
+  5000 (`kinect.py:318`) — tight for a subordinate waiting on the master's first
+  pulses.
+- `depth_delay_off_color_usec=0` is hardcoded (`kinect.py:428`); fine for two
+  cameras, needs to move into config for a third.
+- Already correct and not a suspect: `usbcore.usbfs_memory_mb=1000` is set by
+  `scripts/host_setup.sh`, well above the documented minimum, so "ENOMEM on URB
+  submit → cancel → deadlock" is ruled out. The subordinate-before-master start
+  order is per documentation.
+- Already fixed on this branch: the `K4A_WAIT_RESULT_TIMEOUT` enum. The review
+  read `main` (`c39782b`), which still carries the old value; `3894e71` is not
+  pushed there.
+
+### Operating discipline, independent of the cause
+
+- **Take camera lifecycle out of the web UI.** Every HTTP start/stop cancels
+  isochronous URBs, and a recording session does dozens. Open the cameras once
+  per session and keep them streaming; let the UI toggle only whether the writer
+  persists frames. Same features, one teardown instead of many.
+- **Make a freeze cheap.** `record.py` keeps `_timestamps` in a RAM list
+  (line 69) and writes the manifest at the end (line 284), so a lock-up mid
+  episode loses the lot — an mp4 without its moov atom is unreadable. Write
+  timestamps as JSONL with periodic flush, write the manifest up front with
+  `complete: false` and flip it at the end, and cut episodes into 20-30 s
+  segments so a freeze costs one segment rather than the session. (`sensor_meta`
+  is already written up front.)
