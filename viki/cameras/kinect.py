@@ -80,6 +80,16 @@ K4A_WIRED_SYNC_MODE_SUBORDINATE = WIRED_SUBORDINATE
 K4A_IMAGE_FORMAT_COLOR_BGRA32 = 0
 K4A_IMAGE_FORMAT_DEPTH16 = 3
 
+# Colour control (k4a_color_control_command_t / k4a_color_control_mode_t).
+# Multi-device sync requires MANUAL exposure: auto exposure "causes dynamic
+# timing changes that push cameras out of sync", and the Kinect timestamp is the
+# *centre* of exposure, so a floating exposure moves it even under a hard
+# trigger. Set once after start_cameras, never inside the capture loop.
+K4A_COLOR_CONTROL_EXPOSURE_TIME_ABSOLUTE = 0
+K4A_COLOR_CONTROL_WHITEBALANCE = 6
+K4A_COLOR_CONTROL_MODE_AUTO = 0
+K4A_COLOR_CONTROL_MODE_MANUAL = 1
+
 K4A_CALIBRATION_TYPE_COLOR = 1
 K4A_CALIBRATION_TYPE_DEPTH = 0
 
@@ -129,6 +139,14 @@ _lib.k4a_device_start_cameras.argtypes = [K4ADevice, ctypes.POINTER(K4ADeviceCon
 
 _lib.k4a_device_stop_cameras.restype = None
 _lib.k4a_device_stop_cameras.argtypes = [K4ADevice]
+
+_lib.k4a_device_set_color_control.restype = ctypes.c_int
+_lib.k4a_device_set_color_control.argtypes = [
+    K4ADevice,
+    ctypes.c_int,      # command
+    ctypes.c_int,      # mode
+    ctypes.c_int32,    # value
+]
 
 _lib.k4a_device_get_capture.restype = ctypes.c_int
 _lib.k4a_device_get_capture.argtypes = [
@@ -324,11 +342,14 @@ class KinectBackend(CameraBackend):
         color_resolution: tuple[int, int] = (1280, 720),
         depth_mode: str = "NFOV_UNBINNED",
         fps: int = 30,
-        timeout_ms: int = 1000,
+        timeout_ms: int = 5000,
         align_depth_to_color: bool = False,  # bugged
         wired_sync_mode: int = K4A_WIRED_SYNC_MODE_STANDALONE,
         subordinate_delay_us: int = 0,
         synchronized_images_only: bool = True,
+        manual_color_control: bool | None = None,
+        exposure_time_us: int | None = None,
+        whitebalance_k: int | None = None,
     ) -> None:
         if tuple(color_resolution) not in _COLOR_RES_MAP:
             raise ValueError(
@@ -366,6 +387,20 @@ class KinectBackend(CameraBackend):
         self._wired_sync_mode = wired_sync_mode
         self._subordinate_delay_us = subordinate_delay_us
         self._synchronized_images_only = synchronized_images_only
+        # Colour control: explicit argument wins, else the configured default.
+        from viki import config as _cfg
+        self._manual_color_control = (
+            getattr(_cfg, "KINECT_MANUAL_COLOR_CONTROL", True)
+            if manual_color_control is None else manual_color_control
+        )
+        self._exposure_time_us = (
+            int(getattr(_cfg, "KINECT_EXPOSURE_TIME_US", 8330))
+            if exposure_time_us is None else int(exposure_time_us)
+        )
+        self._whitebalance_k = (
+            int(getattr(_cfg, "KINECT_WHITEBALANCE_K", 4500))
+            if whitebalance_k is None else int(whitebalance_k)
+        )
         self._sync_in_connected = False
         self._sync_out_connected = False
         self._handle: K4ADevice = K4ADevice(None)
@@ -435,6 +470,8 @@ class KinectBackend(CameraBackend):
         if res != K4A_RESULT_SUCCEEDED:
             _lib.k4a_device_close(self._handle)
             raise RuntimeError(f"k4a_device_start_cameras failed (result={res})")
+
+        self._apply_manual_color_control()
 
         # Get calibration for reprojection and alignment
         cal_buf = ctypes.create_string_buffer(8192)
@@ -811,6 +848,37 @@ class KinectBackend(CameraBackend):
         _lib.k4a_image_release(transformed)
         return result
 
+
+    def _apply_manual_color_control(self) -> None:
+        """Pin exposure and white balance, per the multi-device sync guidance.
+
+        Auto exposure changes frame timing, and because a Kinect timestamp marks
+        the *centre* of exposure, a floating exposure shifts it even when the
+        hardware trigger is perfect — which shows up downstream as a wandering
+        inter-camera offset rather than the constant ``subordinate_delay_us``.
+
+        Applied once, after ``start_cameras``, never per capture. A refusal is
+        logged and tolerated: a camera that will not take the setting still
+        streams, it just keeps the SDK default.
+        """
+        if not self._manual_color_control:
+            logger.info("kinect[%d]: manual colour control disabled by config",
+                        self._device_index)
+            return
+        for command, value, label in (
+            (K4A_COLOR_CONTROL_EXPOSURE_TIME_ABSOLUTE, self._exposure_time_us, "exposure_us"),
+            (K4A_COLOR_CONTROL_WHITEBALANCE, self._whitebalance_k, "whitebalance_k"),
+        ):
+            res = _lib.k4a_device_set_color_control(
+                self._handle, command, K4A_COLOR_CONTROL_MODE_MANUAL, ctypes.c_int32(value)
+            )
+            if res != K4A_RESULT_SUCCEEDED:
+                logger.warning(
+                    "kinect[%d]: could not pin %s=%d (result=%d); leaving the SDK default",
+                    self._device_index, label, value, res,
+                )
+            else:
+                logger.info("kinect[%d]: %s pinned to %d", self._device_index, label, value)
 
     @staticmethod
     def _image_to_numpy_bgr(img: K4AImage) -> np.ndarray:

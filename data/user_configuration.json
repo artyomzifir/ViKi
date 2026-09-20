@@ -168,6 +168,9 @@
     ],
     "subordinate_delay_us": 160
   },
+  "KINECT_MANUAL_COLOR_CONTROL": true,
+  "KINECT_EXPOSURE_TIME_US": 8330,
+  "KINECT_WHITEBALANCE_K": 4500,
   "SKELETON_COORDINATE_FRAME": "rig",
   "SKELETON_RECS_DIR": "data/skeleton_recs",
   "SKELETON_SMOOTHED_DIR": "data/skeleton_smoothed",

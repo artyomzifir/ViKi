@@ -85,6 +85,9 @@ PERCEPTION_HAND_FIT_WORKERS: int  # window-solver threads; 0 = auto (min(4, cpu/
 PERCEPTION_HAND_FIT_WARM_START_MAD_K: float  # wrist warm-start spike gate (robust MAD units)
 PERCEPTION_HAND_FIT_DEADLINE_S: float  # wall-clock guard per fit_trajectory call; 0 = off
 KINECT_SYNC: dict  # exact multi-Kinect roles; {} is allowed only with fewer than 2 connected Kinects
+KINECT_MANUAL_COLOR_CONTROL: bool  # pin exposure/white balance after start (multi-cam sync needs manual)
+KINECT_EXPOSURE_TIME_US: int       # manual exposure, microseconds
+KINECT_WHITEBALANCE_K: int         # manual white balance, Kelvin (multiple of 10)
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
 SKELETON_COORDINATE_FRAME: str
@@ -296,6 +299,9 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_WARM_START_MAD_K": 6.0,
     "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
+    "KINECT_MANUAL_COLOR_CONTROL": True,
+    "KINECT_EXPOSURE_TIME_US": 8330,
+    "KINECT_WHITEBALANCE_K": 4500,
     "WORLD_ANCHOR_FILENAME": "data/world_anchor.json",
     "CALIB_POSE_MIN_ANGLE_DEG": 8.0,
     "CALIB_POSE_MIN_TRANSLATION_M": 0.05,
