@@ -169,6 +169,7 @@
     ],
     "subordinate_delay_us": 160
   },
+  "KINECT_COLOR_FORMAT": "mjpg",
   "KINECT_MANUAL_COLOR_CONTROL": true,
   "KINECT_EXPOSURE_TIME_US": 8330,
   "KINECT_WHITEBALANCE_K": 4500,

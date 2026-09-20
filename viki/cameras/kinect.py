@@ -77,8 +77,20 @@ K4A_WIRED_SYNC_MODE_STANDALONE = WIRED_STANDALONE
 K4A_WIRED_SYNC_MODE_MASTER = WIRED_MASTER
 K4A_WIRED_SYNC_MODE_SUBORDINATE = WIRED_SUBORDINATE
 
-K4A_IMAGE_FORMAT_COLOR_BGRA32 = 0
-K4A_IMAGE_FORMAT_DEPTH16 = 3
+K4A_IMAGE_FORMAT_COLOR_MJPG = 0
+K4A_IMAGE_FORMAT_COLOR_NV12 = 1
+K4A_IMAGE_FORMAT_COLOR_YUY2 = 2
+K4A_IMAGE_FORMAT_COLOR_BGRA32 = 3
+
+#: Wire format the device streams. BGRA32 is *not* a native device mode — the
+#: SDK converts on the host CPU, and the uncompressed frame costs far more
+#: isochronous USB bandwidth than MJPG. On a shared controller with two Kinects
+#: that difference is the whole budget, so it is selectable.
+_COLOR_FORMAT_MAP = {
+    "bgra32": K4A_IMAGE_FORMAT_COLOR_BGRA32,
+    "mjpg": K4A_IMAGE_FORMAT_COLOR_MJPG,
+}
+K4A_IMAGE_FORMAT_DEPTH16 = 4
 
 # Colour control (k4a_color_control_command_t / k4a_color_control_mode_t).
 # Multi-device sync requires MANUAL exposure: auto exposure "causes dynamic
@@ -347,6 +359,7 @@ class KinectBackend(CameraBackend):
         wired_sync_mode: int = K4A_WIRED_SYNC_MODE_STANDALONE,
         subordinate_delay_us: int = 0,
         synchronized_images_only: bool = True,
+        color_format: str | None = None,
         manual_color_control: bool | None = None,
         exposure_time_us: int | None = None,
         whitebalance_k: int | None = None,
@@ -387,8 +400,19 @@ class KinectBackend(CameraBackend):
         self._wired_sync_mode = wired_sync_mode
         self._subordinate_delay_us = subordinate_delay_us
         self._synchronized_images_only = synchronized_images_only
-        # Colour control: explicit argument wins, else the configured default.
+
+        # Explicit argument wins, else the configured default.
         from viki import config as _cfg
+
+        _fmt = str(
+            color_format if color_format is not None
+            else getattr(_cfg, "KINECT_COLOR_FORMAT", "mjpg")
+        ).lower()
+        if _fmt not in _COLOR_FORMAT_MAP:
+            raise ValueError(
+                f"unknown color_format {_fmt!r}; supported: {sorted(_COLOR_FORMAT_MAP)}"
+            )
+        self._color_format = _fmt
         self._manual_color_control = (
             getattr(_cfg, "KINECT_MANUAL_COLOR_CONTROL", True)
             if manual_color_control is None else manual_color_control
@@ -455,7 +479,7 @@ class KinectBackend(CameraBackend):
 
         # Build config
         config = K4ADeviceConfig(
-            color_format=K4A_IMAGE_FORMAT_COLOR_BGRA32,
+            color_format=_COLOR_FORMAT_MAP[self._color_format],
             color_resolution=_COLOR_RES_MAP[self._color_resolution],
             depth_mode=_DEPTH_MODE_MAP[self._depth_mode],
             camera_fps=_FPS_MAP[self._fps],
