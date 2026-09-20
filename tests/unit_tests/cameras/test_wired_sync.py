@@ -119,6 +119,22 @@ def test_hw_sync_verified_when_subordinate_offset_is_locked():
     assert alignment["offsets"]["kinect_0"]["spread_us"] <= 500
 
 
+def test_hw_sync_refused_until_multiple_aligned_frames_exist():
+    from viki.cameras.manager import CameraManager
+
+    mgr = CameraManager()
+    # A single startup frame can be matched to the adjacent frame period.  It
+    # says nothing about whether the inter-device offset is actually stable.
+    mgr._workers = {
+        "kinect_1": _TsWorker(1_000_000),
+        "kinect_0": _TsWorker(966_667),
+    }
+    alignment = mgr._hardware_timestamp_alignment(_sync_plan_k1_master())
+    assert alignment["verified"] is False
+    assert alignment["offsets"]["kinect_0"]["samples"] == 1
+    assert "need 3" in alignment["error"]
+
+
 def test_hw_sync_refused_when_offset_drifts_across_frames():
     from viki.cameras.manager import CameraManager
 
@@ -182,10 +198,17 @@ def test_manager_starts_whole_rig_subordinate_first(monkeypatch):
 
         def start(self):
             self.backend.start()
-            timestamp_us = (
+            first_timestamp_us = (
                 1_000_000 + int(self.backend.config.get("subordinate_delay_us", 0))
             )
-            self._frames = [type("Frame", (), {"timestamp_us": timestamp_us})()]
+            period_us = round(1_000_000 / int(self.backend.config["fps"]))
+            self._frames = [
+                type(
+                    "Frame", (),
+                    {"timestamp_us": first_timestamp_us + i * period_us},
+                )()
+                for i in range(3)
+            ]
 
         def stop(self):
             self.backend.stop()

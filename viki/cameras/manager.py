@@ -38,6 +38,7 @@ from viki.config import (
 # Frames kept per camera for timestamp-based sync queries.
 _FRAME_BUFFER_SIZE = FRAME_BUFFER_SIZE
 _HW_SYNC_TIMESTAMP_TOLERANCE_US = 500
+_HW_SYNC_MIN_ALIGNMENT_SAMPLES = 3
 
 
 class _CameraWorker:
@@ -373,7 +374,18 @@ class CameraManager:
                 "spread_us": int(spread),
                 "samples": len(inliers),
             }
-            if len(inliers) >= 2 and spread > _HW_SYNC_TIMESTAMP_TOLERANCE_US:
+            if len(inliers) < _HW_SYNC_MIN_ALIGNMENT_SAMPLES:
+                return {
+                    "verified": False,
+                    "tolerance_us": _HW_SYNC_TIMESTAMP_TOLERANCE_US,
+                    "offsets": offsets,
+                    "error": (
+                        f"{subordinate_id} has only {len(inliers)} aligned "
+                        f"frame(s); need {_HW_SYNC_MIN_ALIGNMENT_SAMPLES} "
+                        "before declaring hardware sync ready"
+                    ),
+                }
+            if spread > _HW_SYNC_TIMESTAMP_TOLERANCE_US:
                 return {
                     "verified": False,
                     "tolerance_us": _HW_SYNC_TIMESTAMP_TOLERANCE_US,
