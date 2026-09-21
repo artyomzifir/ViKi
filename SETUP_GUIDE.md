@@ -38,8 +38,26 @@ This guide covers the complete one-time setup for running ViKi on a fresh Ubuntu
 | Device | Role | USB requirement |
 |---|---|---|
 | Intel RealSense D435i | Observation camera (policy input) | USB 3.0 (5 Gbps) |
-| Azure Kinect DK | Kinematics extraction | USB 3.2 Gen 2 (10 Gbps) per device |
+| Azure Kinect DK | Kinematics extraction | USB 3.2 Gen 2 (10 Gbps) per device — **one per host controller**, see the warning below |
 | 3.5mm mono cable | Hardware sync between Kinects | Any length under ~3m |
+
+> ### ⚠ Two Kinects on one controller hard-lock the host
+>
+> On this rig both Kinects, the keyboard and the mouse hang off a single Intel
+> Alder Lake-S PCH xHCI controller. Starting both cameras freezes the machine —
+> picture first, then black screen, then gone — with no panic and usually no
+> crash dump. Reproduced on kernels `6.17.0-40` and `7.0.0-28`, with and without
+> `usbcore.autosuspend=-1`, with and without a prior stop/start. Lowering the
+> load only buys time: full rate died in 2 seconds, MJPG at 15 fps with binned
+> depth lasted 3.5 minutes.
+>
+> **A single Kinect has never failed.** Run one Kinect plus a RealSense until a
+> PCIe USB card giving each camera its own controller is fitted (Renesas
+> µPD720202 or FL1100 — untested here). Different sockets on the case are not
+> different controllers: check with `lspci | grep -i usb`.
+>
+> After a freeze the cameras stay unresponsive until physically unplugged,
+> power included — a warm reboot does not clear it.
 
 ### USB bandwidth requirements
 

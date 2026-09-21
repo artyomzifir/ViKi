@@ -476,3 +476,29 @@ Run **each camera alone** for fifteen minutes, one after the other, at
 
 Single-camera operation has never once failed here, across every boot tested, so
 this test is also the low-risk one.
+
+## Reduced load buys time, it does not fix it (2026-09-20 23:10)
+
+Last run of the evening. Both cameras, one open, no prior stop, on
+`7.0.0-28-generic` with `usbcore.autosuspend=-1`:
+
+- colour **MJPG** 1280x720 (what the device streams anyway — see the
+  image-format constant fix)
+- **15 fps** instead of 30
+- depth **NFOV_2X2BINNED** (320x288) instead of NFOV_UNBINNED (640x576)
+
+Roughly a fivefold cut in isochronous bandwidth. The rig came up with sync
+verified and an offset of 100 us. Started 23:10:37, journal ended 23:14:14 —
+**3.5 minutes**, against 2 seconds at full rate.
+
+So load is a *modulator*, not the cause: less of it postpones the lock-up
+proportionally without removing it. That is consistent with everything else —
+one camera never fails, two always eventually do.
+
+### Decision
+
+Two Kinects are retired on this host. The rig moves to **one Kinect plus a
+RealSense D435i** for the second view, which loses hardware sync on that pair
+but keeps the machine alive. The limitation is recorded in `README.md`,
+`SETUP_GUIDE.md` and `bugs.md` so it is not rediscovered. A PCIe USB card with a
+dedicated controller per port remains the untested candidate fix.

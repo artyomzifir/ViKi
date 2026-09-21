@@ -229,6 +229,7 @@ standing between a refactor and a silently broken stage. Check any touched JS wi
 
 | | |
 |---|---|
+| [`bugs.md`](bugs.md) | narrow traps: off-by-one constants, settings that do nothing, hardware that does not work — read before debugging the rig |
 | [`docs/math.md`](docs/math.md) | the full mathematical description of the pipeline |
 | [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md) | measurement protocols and results (E6–E14) |
 | [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why object-relative representation is not built yet |

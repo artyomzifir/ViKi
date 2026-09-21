@@ -89,6 +89,13 @@ Read [SETUP_GUIDE.md](SETUP_GUIDE.md) **before** plugging in cameras — Azure
 Kinect needs a GRUB `usbfs` bump, `xhost +local:`, a separate 10 Gbps USB hub per
 device, and a sync cable for multi-Kinect capture.
 
+> **Two Azure Kinects on one USB host controller hard-lock the machine.**
+> Reproduced on this rig across two kernels, with and without every documented
+> workaround; each camera alone is fine. Until a PCIe USB card with a dedicated
+> controller per port is in place, run **one Kinect plus a RealSense** for the
+> second view. See [`bugs.md`](bugs.md) row 1 and
+> [`docs/camera_freeze_investigation.md`](docs/camera_freeze_investigation.md).
+
 ### Requirements
 
 | | |
@@ -96,7 +103,7 @@ device, and a sync cable for multi-Kinect capture.
 | OS | Linux (tested on Ubuntu) |
 | Runtime | Docker + Docker Compose |
 | GPU | optional for the hand/retarget path; NVIDIA CUDA is required by the scene-perception SAM 2.1 image |
-| Cameras | Intel RealSense D435i and/or Azure Kinect DK |
+| Cameras | Intel RealSense D435i and/or Azure Kinect DK — **one Kinect per host**, see below |
 | Robot | a URDF from `robot_descriptions` — UR3/UR5/UR10/UR5e/UR10e, iiwa14 (default: `ur10`) |
 
 You can run the perception stages on pre-recorded episodes with no cameras

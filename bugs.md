@@ -1,0 +1,40 @@
+# bugs.md — narrow traps, and what they cost
+
+A running table of the small, specific defects that are expensive to rediscover:
+off-by-one constants, settings that silently do nothing, hardware combinations
+that do not work. Long investigations live in `docs/`; this file is the index a
+tired person reads at midnight.
+
+Add a row when you lose more than an hour to something a single line would have
+told you.
+
+## Open
+
+| # | Symptom | Where | Notes |
+|---|---|---|---|
+| 1 | **Two Azure Kinects on this host hard-lock the machine.** Picture freezes, then black screen, then the host is gone; SSH survives a few seconds longer. No panic, no journal, usually no pstore. | rig hardware — Intel Alder Lake-S PCH xHCI `0000:00:14.0` | Both Kinects, keyboard and mouse share that one controller. Reproduced on kernels `6.17.0-40` and `7.0.0-28`, with and without `usbcore.autosuspend=-1`, with and without a prior stop/start. **Each camera alone is fine** — 6 min and 4 min clean, and every recording ever made here was two-camera but ≤30 s. Reducing load extends survival, it does not fix it: full rate died in 2 s, MJPG + 15 fps + `NFOV_2X2BINNED` lasted 3.5 min. Full story: [`docs/camera_freeze_investigation.md`](docs/camera_freeze_investigation.md). **Workaround: run one Kinect (+ a RealSense for the second view).** A PCIe USB card with a real controller per port (Renesas µPD720202, FL1100) is the untested candidate fix. |
+| 2 | After such a freeze the Kinects stay poisoned — `k4a_device_open` fails with `LIBUSB_ERROR_IO` on the BOS read, UVC control times out `-110`, probe ends `-71`. | host USB state | A warm reboot does **not** clear it. Physically unplug both cameras, power included. |
+| 3 | `GET /api/calibration/readiness` answers **400 about every 1.5 s** while the Calibration tab is open, filling the journal. | `viki/server/routes/calibration.py` | Cosmetic, but it buries real messages in the log exactly when you are reading it. |
+| 4 | A rig start that fails leaves the subordinate reporting `running=True` while it can never produce a frame (no master pulses). | `viki/cameras/manager.py`, `/api/cameras/*/info` | The API does not distinguish "streaming" from "up but starved". |
+
+## Fixed — kept because the *shape* of the mistake repeats
+
+| # | What was wrong | Where | Fixed by |
+|---|---|---|---|
+| 5 | **k4a image-format constants were off by one position.** Code said `BGRA32=0, DEPTH16=3`; the SDK says `MJPG=0, NV12=1, YUY2=2, BGRA32=3, DEPTH16=4`. Every device config ever written asked for **MJPG** while the source said BGRA32. Correcting the constant *alone* would have silently switched both cameras to uncompressed. | `viki/cameras/kinect.py` | `47a5720` — values match the SDK; format selected by name via `KINECT_COLOR_FORMAT`, default `mjpg` (unchanged behaviour). |
+| 6 | **`usbfs_memory_mb` was never actually persisted.** It was set through `/etc/modprobe.d/`, but `usbcore` is built into the Ubuntu kernel, so that file is inert — only the kernel cmdline works. The script's own warning said the opposite. A boot without the cmdline parameter falls back to 16 MB, below the documented minimum for two Kinects. | `scripts/host_setup.sh` | `4a1c37a` — edits `GRUB_CMDLINE_LINUX_DEFAULT`, runs `update-grub`, warns when the running kernel disagrees. |
+| 7 | `K4A_WAIT_RESULT_TIMEOUT` was `1`; the SDK defines `FAILED=1`, `TIMEOUT=2`. A normal subordinate timeout was logged as a failure, and a real stream failure was retried as a timeout. | `viki/cameras/kinect.py` | `3894e71` — lifecycle is fail-closed. |
+| 8 | **The UI ignored `CALIB_ARUCO_DICT` entirely** — the dictionary was a literal `'DICT_5X5_50'` in the frontend, so changing it in configuration did nothing visible. | `viki/server/static/js/core.js` | `0aecc86` — publishes the configured enum id; the 17-entry name list is verified against the cv2 enum. |
+| 9 | Manual exposure was never set: `k4a_device_set_color_control` appeared nowhere. Multi-camera sync documentation forbids auto exposure, because a Kinect timestamp marks the *centre* of exposure, so a floating exposure walks the inter-camera offset. | `viki/cameras/kinect.py` | `7cad836` — exposure and white balance pinned once after `start_cameras`. |
+| 10 | `timeout_ms` defaulted to 1000 ms while its own docstring promised 5000 — the tighter budget landing on the subordinate, which is the one that waits. | `viki/cameras/kinect.py` | `7cad836` |
+| 11 | A host lock-up mid-episode lost the entire take: timestamps lived in a RAM list, the manifest was written at the end, and an mp4 without its moov atom is unreadable. | `viki/cameras/record.py` | `aee2f77` — `raw/timestamps.jsonl` flushed as frames arrive, `recover_timestamps()`, and `recording_state.json` marking an interrupted take. |
+
+## Retracted — wrong conclusions, kept so they are not re-derived
+
+| # | The theory | Why it died |
+|---|---|---|
+| 12 | `uvcvideo` + pipewire fighting libk4a for the Kinect colour interface causes the freezes. | libk4a calls `libusb_detach_kernel_driver()` and claims the interface itself, so a bound `uvcvideo` is the normal lifecycle. The same messages appear in a boot that shut down cleanly, and in the **successful** 15-minute calibration of 2026-09-09 — 345 `uvcvideo` lines and 280 `spa.v4l2` errors. |
+| 13 | Kernel 7.x regression; 6.17 is safe. | 6.17 hard-locked too, 45 s in. |
+| 14 | kernel bugzilla #221103 (xHC leaving runtime-suspend too fast). | Its confirmed workaround was in force and did not prevent the lock-up; the controller never entered runtime suspend in that boot at all (`runtime_suspended_time = 0`). |
+| 15 | URB teardown (stop→start) is required to trigger it. | A run that opened both cameras once, with no prior stop, died two seconds later. |
+| 16 | Short takes outran a latent fault, so "it used to work" was luck. | The journal shows a full 15-minute two-camera calibration succeeding on 2026-09-09, on the same kernel, ports and settings. |
