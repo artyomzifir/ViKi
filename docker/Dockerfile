@@ -29,7 +29,15 @@ RUN mkdir -p /etc/apt/keyrings && \
         librealsense2 librealsense2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Azure Kinect SDK (libk4a) ─────────────────────────────────────────────────
+# ── Azure Kinect SDK (libk4a + k4a-tools) ────────────────────────────────────
+# k4a-tools carries `k4arecorder`, the vendor capture binary. Two Kinects driven
+# through ViKi's own libusb path hard-lock this host (see bugs.md row 1), and one
+# recorder process per camera is the documented multi-device route: separate
+# libusb contexts, MJPEG written straight to MKV with no BGRA32 conversion, and
+# one teardown per episode instead of dozens of HTTP start/stops.
+# k4a-tools wants libsoundio1 for the microphone array; 24.04 dropped it, so
+# it comes from the Ubuntu universe pool. The recorder will not load without
+# the .so even when audio is never recorded.
 # Packages only exist for ubuntu/18.04 on Microsoft's repo.
 # EULA must be pre-accepted via debconf for non-interactive install.
 # Source: https://github.com/microsoft/Azure-Kinect-Sensor-SDK/issues/1190
@@ -41,9 +49,13 @@ RUN echo 'libk4a1.4 libk4a1.4/accepted-eula-hash string 0f5d5c5de396e4fee4c0753a
         https://packages.microsoft.com/ubuntu/18.04/prod/pool/main/libk/libk4a1.4/libk4a1.4_1.4.1_amd64.deb && \
     wget -qO /tmp/libk4a-dev.deb \
         https://packages.microsoft.com/ubuntu/18.04/prod/pool/main/libk/libk4a1.4-dev/libk4a1.4-dev_1.4.1_amd64.deb && \
+    wget -qO /tmp/k4a-tools.deb \
+        https://packages.microsoft.com/ubuntu/18.04/prod/pool/main/k/k4a-tools/k4a-tools_1.4.1_amd64.deb && \
+    wget -qO /tmp/libsoundio1.deb \
+        http://archive.ubuntu.com/ubuntu/pool/universe/libs/libsoundio/libsoundio1_1.1.0-1_amd64.deb && \
     apt-get update && apt-get install -y --no-install-recommends \
-        /tmp/libk4a.deb /tmp/libk4a-dev.deb && \
-    rm -f /tmp/libk4a*.deb && \
+        /tmp/libk4a.deb /tmp/libk4a-dev.deb /tmp/libsoundio1.deb /tmp/k4a-tools.deb && \
+    rm -f /tmp/libk4a*.deb /tmp/k4a-tools.deb /tmp/libsoundio1.deb && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Python deps ───────────────────────────────────────────────────────────────
