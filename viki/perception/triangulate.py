@@ -122,6 +122,19 @@ class TriConfig:
             return float(values.get(attr, getattr(config, config_key, default)))
 
         self.min_score = number("min_score", "TRI_MIN_SCORE", 0.30)
+        # Free-running cameras are not simultaneous. Each row already carries its
+        # own capture time (`host_timestamp_us` = group tick + that camera's
+        # offset); until now triangulation only mentioned that in a comment and
+        # treated a group as one instant. Resampling each camera's 2-D track onto
+        # the group tick removes the first-order `v*dt` error, which on this rig
+        # is ~25 mm at 1 m/s. Off by default: it changes triangulation output, so
+        # a profile has to ask for it.
+        self.time_align = bool(
+            values.get("time_align", getattr(config, "TRI_TIME_ALIGN", False))
+        )
+        self.time_align_max_gap_ms = number(
+            "time_align_max_gap_ms", "TRI_TIME_ALIGN_MAX_GAP_MS", 50.0,
+        )
         self.min_ray_deg = number("min_ray_deg", "TRI_MIN_RAY_DEG", 5.0)
         self.reproj_inlier_px = number(
             "reproj_inlier_px", "TRI_REPROJ_INLIER_PX", 4.0,
@@ -167,6 +180,9 @@ class TriConfig:
             "ray_ref_deg": self.ray_ref_deg,
             "geometry_cameras": self.geometry_cameras,
         }
+        if self.time_align:
+            out["time_align"] = True
+            out["time_align_max_gap_ms"] = self.time_align_max_gap_ms
         if self.quality_detector_score:
             out["quality_detector_score"] = True
         return out
@@ -285,6 +301,84 @@ def triangulate_joint(views: list[dict], cams: dict[str, _Cam], lm: int, cfg: Tr
 # ── episode driver ──────────────────────────────────────────────────────
 
 
+def _time_align_uv(uv, cam_ids, frame_idx, host_ts, frames, sync_us, max_gap_us):
+    """Resample each camera's 2-D landmarks onto its group's canonical tick.
+
+    A "synced group" is index-aligned, not simultaneous: free-running cameras sit
+    at their own phase, and `host_ts` records where each one actually was. For a
+    row captured at ``t`` whose group tick is ``T``, the landmark is carried to
+    ``T`` by linear interpolation against that camera's neighbouring frame on the
+    correct side. Removing the first-order ``v*dt`` term is the whole point; what
+    is left is ``~a*dt^2/2``, sub-millimetre for hand motion.
+
+    A row is left untouched when the bracketing neighbour is missing, further
+    away than ``max_gap_us``, or not finite — extrapolating past a tracking gap
+    invents motion, which is worse than the offset it would correct.
+
+    Returns ``(uv_aligned, stats)``; the input is never modified.
+    """
+    out = np.array(uv, dtype=np.float64, copy=True)
+
+    # Target the group's own centre of mass in time, not the recorder's tick.
+    # Both cameras of a wired pair sit ~20 ms off that tick together, and a
+    # common offset is harmless — what bends a ray pair is the *relative* skew.
+    # Aiming at the tick would drag both of them 20 ms for no gain, paying
+    # interpolation error to fix nothing; aiming at their median moves nobody
+    # when they are already together, and splits the difference when they are
+    # not.
+    per_frame_times: dict[int, list[int]] = {}
+    for r, f in enumerate(frame_idx.tolist()):
+        per_frame_times.setdefault(int(f), []).append(int(host_ts[r]))
+    tick = {f: int(np.median(v)) for f, v in per_frame_times.items()}
+    for f, t in zip(frames, sync_us):        # groups with no rows keep the tick
+        tick.setdefault(int(f), int(t))
+
+    # per camera: frame index -> row
+    per_cam: dict[str, dict[int, int]] = {}
+    for r, (c, f) in enumerate(zip(cam_ids, frame_idx.tolist())):
+        per_cam.setdefault(str(c), {})[int(f)] = r
+
+    shifted = 0
+    skipped = 0
+    dts: list[float] = []
+    for cam, rows in per_cam.items():
+        for f, r in rows.items():
+            target = tick.get(f)
+            if target is None:
+                continue
+            t_r = int(host_ts[r])
+            dt = target - t_r
+            if dt == 0:
+                continue
+            # the neighbour on the side the target lies
+            nb = rows.get(f + 1) if dt > 0 else rows.get(f - 1)
+            if nb is None:
+                skipped += 1
+                continue
+            t_n = int(host_ts[nb])
+            span = t_n - t_r
+            if span == 0 or abs(span) > max_gap_us or abs(dt) > abs(span):
+                skipped += 1
+                continue
+            w = dt / span                      # 0 at this row, 1 at the neighbour
+            a, b = uv[r], uv[nb]
+            good = np.isfinite(a).all(axis=-1) & np.isfinite(b).all(axis=-1)
+            if not good.any():
+                skipped += 1
+                continue
+            out[r][good] = a[good] + w * (b[good] - a[good])
+            shifted += 1
+            dts.append(abs(dt) / 1000.0)
+
+    stats = {
+        "rows_shifted": shifted,
+        "rows_left_as_is": skipped,
+        "abs_dt_ms_median": float(np.median(dts)) if dts else 0.0,
+        "abs_dt_ms_p95": float(np.percentile(dts, 95)) if dts else 0.0,
+    }
+    return out.astype(uv.dtype, copy=False), stats
+
+
 def triangulate_episode(
     raw: Path, *, write: bool = True, cfg: TriConfig | None = None,
 ) -> dict:
@@ -331,6 +425,20 @@ def triangulate_episode(
         sync_us = [_sync[f] if 0 <= f < len(_sync) else int(f) for f in frames]
     except Exception:  # noqa: BLE001
         sync_us = list(frames)
+    align_stats = None
+    if cfg.time_align:
+        host_ts = obs["host_timestamp_us"].astype(np.int64)
+        uv, align_stats = _time_align_uv(
+            uv, cam_ids, frame_idx, host_ts, frames, sync_us,
+            max_gap_us=int(cfg.time_align_max_gap_ms * 1000.0),
+        )
+        logger.info(
+            "triangulate: time-aligned %d row(s), left %d as-is; |dt| median "
+            "%.1f ms, P95 %.1f ms",
+            align_stats["rows_shifted"], align_stats["rows_left_as_is"],
+            align_stats["abs_dt_ms_median"], align_stats["abs_dt_ms_p95"],
+        )
+
     out_xyz = np.full((T, HAND_LM_COUNT, 3), np.nan, np.float32)
     out_q = np.zeros((T, HAND_LM_COUNT), np.float32)
     out_nv = np.zeros((T, HAND_LM_COUNT), np.int8)
@@ -369,6 +477,8 @@ def triangulate_episode(
         "quality_median": float(np.median(out_q[out_q > 0])) if (out_q > 0).any() else 0.0,
         "config": cfg.as_dict(),
     }
+    if align_stats is not None:
+        summary["time_align"] = align_stats
     if write:
         np.savez(
             raw / "joints3d.npz", schema=np.int32(1),

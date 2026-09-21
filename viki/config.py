@@ -57,6 +57,8 @@ TRI_DEPTH_DELTA_M: float        # skin->joint-centre offset for fingertips (scal
 TRI_DEPTH_SPREAD_SCALE_M: float # depth weight decays exp(-local_std / this)
 TRI_RAY_REF_DEG: float          # ray angle at which the quality score's angle term saturates
 TRI_LOSS: str                   # scipy least_squares loss for the joint refine (soft_l1 | huber)
+TRI_TIME_ALIGN: bool            # resample each camera's 2-D track onto the group tick (free-running rigs)
+TRI_TIME_ALIGN_MAX_GAP_MS: float # refuse to interpolate across a neighbour further than this
 TRI_GEOMETRY_CAMERAS: list[str] # which cameras feed geometry; [] = all in observations_meta
 PERCEPTION_HAND_POSE_SOURCE: str  # landmarks | hand_fit; consumers select without overwriting cln pose
 PERCEPTION_HAND_FIT_ROI_MARGIN_M: float  # adaptive capsule-union ROI padding (m)
@@ -274,6 +276,8 @@ _DEFAULTS: dict[str, Any] = {
     "TRI_RAY_REF_DEG": 20.0,
     "TRI_LOSS": "soft_l1",
     "TRI_GEOMETRY_CAMERAS": [],
+    "TRI_TIME_ALIGN": False,
+    "TRI_TIME_ALIGN_MAX_GAP_MS": 50.0,
     "PERCEPTION_HAND_POSE_SOURCE": "hand_fit",
     "PERCEPTION_HAND_FIT_ROI_MARGIN_M": 0.030,
     "PERCEPTION_HAND_FIT_FOREARM_CUT_M": 0.010,
