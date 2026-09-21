@@ -502,3 +502,53 @@ RealSense D435i** for the second view, which loses hardware sync on that pair
 but keeps the machine alive. The limitation is recorded in `README.md`,
 `SETUP_GUIDE.md` and `bugs.md` so it is not rediscovered. A PCIe USB card with a
 dedicated controller per port remains the untested candidate fix.
+
+## Vendor recorder and a four-year BIOS jump: both excluded (2026-09-21)
+
+Two more candidates removed, both by experiment rather than argument.
+
+**The vendor binary does not help.** `k4arecorder`, one process per camera —
+separate libusb contexts, separate event threads, MJPEG written straight to MKV
+with no BGRA32 conversion, one teardown per episode — was installed from
+`k4a-tools` and driven by `scripts/record_k4a_pair.py` with roles taken from the
+sync jacks. Three runs:
+
+| run | outcome |
+|---|---|
+| 1 | full 300 s recorded, 29.1 GB per camera; host died ~4.5 min later, while the recorders were still closing the files |
+| 2 | died ~1 min in, both recorders streaming |
+| 3 (after the BIOS update) | died at **41 s**, both recorders streaming, load 0.36 |
+
+So it is not ViKi's libusb usage. Two independent vendor processes on the
+vendor's own documented multi-device path fail the same way, at wildly different
+times — the failure is probabilistic, not a fixed threshold.
+
+**The BIOS was four years stale and it made no difference.** The board ran
+Gigabyte F20b from 2022-10-07; F34a (2026-07-29) is the latest for this Z690 UD
+DDR4 and was flashed cleanly. Kernel command line survived, Secure Boot stayed
+off, and CPU microcode stayed at 0x3e — expected, since the microcode revisions
+in the intermediate changelogs (0x12B, 0x12F) are for 13th/14th gen, not this
+12th-gen part. First two-camera run on the new firmware lasted 41 seconds.
+
+**Instrumentation note.** `kernel.dmesg_restrict` resets to 1 on every boot
+unless persisted, so the live `dmesg` capture only worked for one of these runs.
+That run is still the informative one: with the follower live and fsyncing, the
+kernel emitted **nothing** in the minute before the freeze and nothing at the
+freeze. There is no userspace-readable trace to find — the lock-up happens with
+interrupts disabled, which is what the archived pstore stacks already showed.
+
+### What is left
+
+Every software-side variable has now been excluded by measurement: bandwidth,
+ViKi's capture path, the vendor's capture path, kernel version, runtime suspend,
+URB teardown, uvcvideo/pipewire, usbfs memory, depth scale, resolution, and now
+platform firmware. One camera has never failed; two always eventually do.
+
+The only untested items are hardware or near-hardware:
+
+1. **`usbcore.quirks=045e:097a:k,045e:097c:k,045e:097d:k`** (USB_QUIRK_NO_LPM) —
+   one cmdline token, still free, and the post-panic logs did show U1 link-state
+   failures. Worth doing before spending money.
+2. **A discrete PCIe USB controller**, a real controller per port (Renesas
+   µPD720202, FL1100), so the second Kinect stops sharing
+   `0000:00:14.0` with the first, the keyboard and the mouse.
