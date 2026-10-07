@@ -629,3 +629,4 @@ button.scene-legend-row:focus-visible { outline: 1px solid var(--accent); outlin
 .wiz-crit .crit.ok { color: #4ade80; }
 .wiz-crit .crit.bad { color: #f87171; }
 .wiz-crit .crit.green { color: #4ade80; } .wiz-crit .crit.amber { color: #fbbf24; } .wiz-crit .crit.red { color: #f87171; }
+.wiz-crit .crit.warn, .wiz-crit .crit.unknown { color: #fbbf24; }  /* not scored — not the same as wrong */

@@ -3,7 +3,7 @@
 This module deliberately sits *after* :mod:`viki.perception.segmentation`.
 It never rewrites the semantic cloud: the output contains a compact canonical
 surface, an SE(3) track, and decisions referring back to point indices in each
-source frame.  Retarget does not consume this artifact yet.
+source frame.  The cube-aware retarget mode consumes a labelled manipulated-object track.
 
 The model has two parts.  A conservative ``core`` is bootstrapped from a short
 stationary prefix using a spatial component and temporal voxel consensus.  A
@@ -30,7 +30,11 @@ from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
 
-OBJECT_MODEL_SCHEMA = "viki_object_models_v1"
+# v2: ``rotation_world_object`` / ``translation_world`` now ship the smoothed
+# pose and the quality columns describe *that* pose. The raw fit is kept
+# alongside under the ``*_raw`` keys. A v1 artifact means something different
+# under the same key names, so it is deliberately not accepted.
+OBJECT_MODEL_SCHEMA = "viki_object_models_v2"
 
 POINT_REJECTED = np.uint8(0)
 POINT_ACCEPTED = np.uint8(1)
@@ -67,6 +71,15 @@ class ObjectModelConfig:
     contact_distance_m: float = 0.012
     contact_fraction: float = 0.05
     assignment_margin_m: float = 0.003
+    # Per-frame ICP fits a different subset of a partial model each frame — on
+    # the 40mm-cubes-play set only 30-56 % of model points match in any one
+    # frame, and which part matches shifts as the hand occludes faces. The pose
+    # therefore travels 7-28x further than the object actually turns. Nothing
+    # else here filters it: the clamps bound an excursion, not a random walk.
+    # These artifacts are offline, so the smoothing is non-causal.
+    # ``pose_smoothing_window <= 1`` disables it.
+    pose_smoothing_window: int = 15
+    pose_smoothing_polyorder: int = 2
 
 
 @dataclass
@@ -97,8 +110,14 @@ class _Model:
     xyz: np.ndarray
     support: np.ndarray
     kind: np.ndarray
-    track: _Track
+    track: _Track          # the pose that ships: smoothed, then re-scored
     contact: np.ndarray
+    # as fitted, kept so the smoothing stays auditable; None = never smoothed
+    raw_track: _Track | None = None
+
+    @property
+    def fitted(self) -> _Track:
+        return self.raw_track if self.raw_track is not None else self.track
 
 
 def _radius_components(points: np.ndarray, radius_m: float) -> list[np.ndarray]:
@@ -445,6 +464,95 @@ def _pose_metrics(
     return inlier, median, p95, coverage, retained, float(confidence)
 
 
+def _rescore_track(
+    frames: list[_Frame],
+    object_id: int,
+    model: np.ndarray,
+    rotation: np.ndarray,
+    translation: np.ndarray,
+    cfg: ObjectModelConfig,
+) -> _Track:
+    """Per-frame fit quality of a pose track that was not produced by fitting.
+
+    A smoothed pose ships with the model, so the numbers that ship have to
+    describe *it*: measuring the smoothed track with the raw track's residuals
+    would be reporting a fit nobody will use.
+    """
+    total = len(frames)
+    confidence = np.zeros(total, np.float32)
+    median = np.full(total, np.inf, np.float32)
+    p95 = np.full(total, np.inf, np.float32)
+    coverage = np.zeros(total, np.float32)
+    retained = np.zeros(total, np.float32)
+    information = np.zeros((total, 3), np.float32)
+    tree = cKDTree(model)
+
+    for frame_index, frame in enumerate(frames):
+        rows = _object_rows(frame, object_id)
+        observed = np.asarray(frame.xyz[rows], np.float64)
+        if not len(observed):
+            continue
+        R = np.asarray(rotation[frame_index], np.float64)
+        t = np.asarray(translation[frame_index], np.float64)
+        if not (np.isfinite(R).all() and np.isfinite(t).all()):
+            continue
+        canonical = (observed - t) @ R
+        distance, match = tree.query(canonical, workers=1)
+        inlier, med, high, cov, keep_fraction, score = _pose_metrics(
+            distance, match, len(model), cfg
+        )
+        median[frame_index] = med
+        p95[frame_index] = high
+        coverage[frame_index] = cov
+        retained[frame_index] = keep_fraction
+        confidence[frame_index] = score
+        if inlier.any():
+            information[frame_index] = _rotation_information(model[match[inlier]])
+
+    return _Track(
+        rotation=np.asarray(rotation, np.float32),
+        translation=np.asarray(translation, np.float32),
+        confidence=confidence,
+        residual_median=median,
+        residual_p95=p95,
+        coverage=coverage,
+        retained_fraction=retained,
+        rotation_information=information,
+    )
+
+
+def _smooth_track(
+    frames: list[_Frame],
+    object_id: int,
+    model: np.ndarray,
+    track: _Track,
+    cfg: ObjectModelConfig,
+) -> _Track:
+    """Non-causal smoothing of a finished pose track, then a re-score."""
+    from viki.dsp import smooth_rotations, smooth_savgol
+
+    if int(cfg.pose_smoothing_window) <= 1 or len(track.rotation) < 3:
+        return track
+    rotation = smooth_rotations(
+        track.rotation,
+        window=cfg.pose_smoothing_window,
+        polyorder=cfg.pose_smoothing_polyorder,
+    )
+    translation = np.asarray(track.translation, np.float64)
+    finite = np.isfinite(translation).all(axis=1)
+    if finite.sum() >= 3:
+        try:
+            translation = translation.copy()
+            translation[finite] = smooth_savgol(
+                translation[finite],
+                window=cfg.pose_smoothing_window,
+                polyorder=cfg.pose_smoothing_polyorder,
+            )
+        except ValueError:
+            pass  # too short for this window — ship the unsmoothed translation
+    return _rescore_track(frames, object_id, model, rotation, translation, cfg)
+
+
 def _track_model(
     frames: list[_Frame],
     object_id: int,
@@ -702,7 +810,8 @@ def _build_model(
     final = _track_model(
         frames, object_id, model, center, cfg, report, "object_model_final_track"
     )
-    return _Model(object_id, label, model, support, kind, final, contact)
+    smoothed = _smooth_track(frames, object_id, model, final, cfg)
+    return _Model(object_id, label, model, support, kind, smoothed, contact, final)
 
 
 def _classify_points(
@@ -849,6 +958,20 @@ def build_object_models(
             ], axis=1),
             translation_world=np.stack([
                 model.track.translation for model in models
+            ], axis=1),
+            # the unsmoothed fit, so the effect of the smoothing can be checked
+            # after the fact rather than taken on trust
+            rotation_world_object_raw=np.stack([
+                model.fitted.rotation for model in models
+            ], axis=1),
+            translation_world_raw=np.stack([
+                model.fitted.translation for model in models
+            ], axis=1),
+            track_confidence_raw=np.stack([
+                model.fitted.confidence for model in models
+            ], axis=1),
+            residual_median_raw_m=np.stack([
+                model.fitted.residual_median for model in models
             ], axis=1),
             track_confidence=np.stack([
                 model.track.confidence for model in models

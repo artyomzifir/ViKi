@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
+from scripts.diagnose_board_depth import validated_bias_series
 from viki import config
 from viki.episode import new_episode, stage_done
 from viki.perception.cloud import (
@@ -68,6 +69,56 @@ def test_build_cloud_writes_parseable_frames(tmp_path):
     # 1 m ahead, within the default workspace AABB
     assert np.all(xyz[:, 2] > 0.5) and np.all(np.abs(xyz[:, :2]) < 0.6)
     assert str(ep.cloud_dir) == out
+
+
+def test_board_bias_variant_preserves_raw_and_canonical_cloud(tmp_path):
+    ep = _make_episode(tmp_path, frames=1)
+    build_cloud(ep, voxel=0, bbox=[], bg_subtract=False)
+    canonical = (ep.cloud_dir / "000000.bin").read_bytes()
+    raw = np.load(ep.raw_dir / "cam0_depth" / "000000.npy").copy()
+    variant = ep.root / "cloud_board_corrected"
+    build_cloud(
+        ep, voxel=0, bbox=[], bg_subtract=False,
+        depth_biases_by_frame={"cam0": [10.0]}, output_dir=variant,
+    )
+    assert (ep.cloud_dir / "000000.bin").read_bytes() == canonical
+    np.testing.assert_array_equal(np.load(ep.raw_dir / "cam0_depth" / "000000.npy"), raw)
+    _, original_xyz, original_rgb = _unpack(canonical)
+    _, corrected_xyz, corrected_rgb = _unpack((variant / "000000.bin").read_bytes())
+    np.testing.assert_allclose(original_xyz[:, 2] - corrected_xyz[:, 2], 0.01, atol=1e-6)
+    np.testing.assert_array_equal(original_rgb, corrected_rgb)
+    assert json.loads((variant / "meta.json").read_text())["experimental_depth_bias_mm"] == {"cam0": [10.0]}
+
+
+def test_board_bias_requires_separate_output(tmp_path):
+    ep = _make_episode(tmp_path, frames=1)
+    with pytest.raises(ValueError, match="separate output"):
+        build_cloud(ep, depth_biases_by_frame={"cam0": [10.0]})
+    with pytest.raises(ValueError, match="separate output"):
+        build_cloud(ep, depth_biases_by_frame={"cam0": [10.0]}, output_dir=ep.cloud_dir)
+    with pytest.raises(ValueError, match="incomplete depth-bias"):
+        build_cloud(ep, depth_biases_by_frame={"cam0": []}, output_dir=ep.root / "variant")
+
+
+def test_board_bias_interpolation_rejects_sparse_or_unvalidated_measurements():
+    def row(frame, bias, raw=10.0, corrected=2.0):
+        return {
+            "frame": frame, "shared_rgb_corners": 20,
+            "heldout_pair_raw_mm": [raw, 12.0],
+            "heldout_pair_corrected_mm": [corrected, 3.0],
+            "cameras": {"cam0": {"range_bias_mm": bias,
+                                  "test_corners": 10,
+                                  "heldout_abs_error_mm": [1.0, 2.0]}},
+        }
+
+    report = {"frames": [row(0, 8.0), row(15, 10.0)]}
+    series = validated_bias_series(report, 18)["cam0"]
+    assert series[0] == 8.0 and series[15] == series[17] == 10.0
+    assert series[6] == pytest.approx(8.8)
+    with pytest.raises(ValueError, match="every 20 frames"):
+        validated_bias_series({"frames": [row(0, 8.0), row(30, 10.0)]}, 31)
+    with pytest.raises(ValueError, match="independent check"):
+        validated_bias_series({"frames": [row(0, 8.0), row(15, 10.0, corrected=11.0)]}, 18)
 
 
 def test_coarser_voxel_yields_fewer_points(tmp_path, monkeypatch):

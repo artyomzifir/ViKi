@@ -22,6 +22,19 @@ optimizer. Live solves obtain rays from the running backend; offline re-solves
 rebuild the same model from the raw calibration blob saved in the preset. This
 keeps extrinsics consistent with cloud reconstruction across colour resolutions.
 
+The default large ChArUco board is 8×10 squares, 50 mm per square (400×500 mm),
+35 mm markers, `DICT_5X5_50`. These settings must match the physical print.
+Changing the default does not convert existing presets or recordings: each saved
+solve retains its own board geometry. Capture a new rig calibration before using
+the large board for new episodes.
+
+For the current two-Kinect rig, use the large board for new recordings: the
+operator observed substantial cloud misalignment with the earlier 11×7,
+25 mm-board `table-v1` calibration and visually usable alignment after a new
+large-board solve. Both presets passed the automatic validator, so that verdict
+alone does not establish task-volume accuracy. See
+`docs/2026-10-06-large-board-calibration.md` for the observation and limits.
+
 ## Contract
 
 - **out:** `CalibrationExtrinsics.transform_matrix` (4×4 camera→world) — consumed by `perception.lift.camera_landmarks_to_world`.

@@ -18,7 +18,9 @@ with an independent lifecycle:
     observations when the extrinsics change.
 
 ``validation_report.json``
-    Cloud-agreement verdict (green / amber / red). Carries ``extrinsics_hash``.
+    Cloud-agreement verdict (green / amber / unknown / red). ``unknown`` means
+    the pair could not be scored — too little shared field of view — which is
+    not the same as the clouds disagreeing. Carries ``extrinsics_hash``.
 
 ``<device_id>_bg.npz``
     Per-camera empty-scene depth plate: median depth (mm) + a validity mask.
@@ -415,8 +417,8 @@ def world_display_matrix(name: str) -> np.ndarray:
 def write_validation(
     name: str, *, verdict: str, pairs: list[dict], extrinsics_hash_: str | None = None
 ) -> dict:
-    if verdict not in ("green", "amber", "red"):
-        raise ValueError(f"verdict must be green/amber/red, got {verdict!r}")
+    if verdict not in ("green", "amber", "unknown", "red"):
+        raise ValueError(f"verdict must be green/amber/unknown/red, got {verdict!r}")
     payload = {
         "schema": VALIDATION_SCHEMA,
         "created_at": _now_iso(),
@@ -500,6 +502,12 @@ def record_ready(name: str, *, allow_amber: bool = False) -> tuple[bool, str]:
     verdict = st["validation"]["verdict"]
     if verdict == "red":
         return False, "validation verdict is red — the camera clouds do not agree; recalibrate"
+    if verdict == "unknown" and not allow_amber:
+        # Not scorable is not the same as wrong: the cameras share too little
+        # view (or too few points) for the gate to have an opinion. Let the
+        # operator through on an explicit confirm, like amber.
+        return False, ("validation could not be scored — the cameras share too little "
+                       "of the workspace; confirm to record anyway")
     if verdict == "amber" and not allow_amber:
         return False, "validation verdict is amber — confirm to record anyway"
     return True, ""

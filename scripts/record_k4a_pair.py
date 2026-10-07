@@ -2,11 +2,10 @@
 """
 Record a hardware-synced Kinect pair with the vendor binary, one process each.
 
-ViKi's own capture path hard-locks this host when both Kinects stream through a
-single libusb context (``bugs.md`` row 1). ``k4arecorder`` is the documented
-multi-device route: one process per camera, separate libusb contexts, MJPEG
-written straight to MKV with no BGRA32 conversion, and a single teardown at the
-end instead of dozens of HTTP start/stops.
+The current rig gives each Kinect an independent USB host controller;
+ViKi's two-camera capture works on that wiring. This vendor recorder is a
+raw-MKV diagnostic alternative, not a workaround for the old shared-controller
+host freeze. It uses one process per camera and writes MJPEG straight to MKV.
 
 Ordering is not a preference. The subordinate must be streaming and waiting
 before the master starts emitting pulses, or it never sees a trigger — so
@@ -15,8 +14,8 @@ subordinates go first and the master goes last, per the vendor's own guidance.
     docker compose run --rm terminal python3 scripts/record_k4a_pair.py \
         --seconds 20 --out data/k4a_raw/<name>
 
-Roles come from ``KINECT_SYNC`` in the configuration, so this and the ViKi
-recorder cannot disagree about which camera is the master.
+Roles come from the physical sync jacks, because device indices change on
+replug; the subordinate delay comes from ``KINECT_SYNC``.
 """
 from __future__ import annotations
 
@@ -33,24 +32,53 @@ RECORDER = "k4arecorder"
 
 
 def _roles() -> tuple[int, list[int], int]:
-    """(master_index, subordinate_indices, subordinate_delay_us) from config."""
-    from viki import config
+    """(master_index, subordinate_indices, subordinate_delay_us).
 
-    sync = getattr(config, "KINECT_SYNC", {}) or {}
-    master = sync.get("master")
-    subs = list(sync.get("subordinates") or [])
-    if not master or not subs:
+    Roles come from the **sync jacks**, not from configuration. Device indices
+    follow USB enumeration order and change on every replug, so a config that
+    named ``kinect_1`` as master is describing yesterday's enumeration. The
+    cable is the ground truth: the camera with something in SYNC OUT drives, the
+    one with something in SYNC IN follows. Getting this backwards costs a whole
+    run — the subordinate refuses to start with "failure to detect presence of
+    sync in cable".
+    """
+    import ctypes
+
+    from viki.cameras.kinect import K4ADevice, _load_libk4a
+
+    lib = _load_libk4a()
+    lib.k4a_device_open.argtypes = [ctypes.c_uint32, ctypes.POINTER(K4ADevice)]
+    lib.k4a_device_get_sync_jack.argtypes = [
+        K4ADevice, ctypes.POINTER(ctypes.c_bool), ctypes.POINTER(ctypes.c_bool)
+    ]
+
+    masters, subs = [], []
+    for i in range(int(lib.k4a_device_get_installed_count())):
+        h = K4ADevice(None)
+        if lib.k4a_device_open(ctypes.c_uint32(i), ctypes.byref(h)) != 0:
+            raise SystemExit(
+                f"device index {i} will not open — after a host freeze the Kinects "
+                "stay wedged until USB *and* mains power are pulled"
+            )
+        sin, sout = ctypes.c_bool(), ctypes.c_bool()
+        lib.k4a_device_get_sync_jack(h, ctypes.byref(sin), ctypes.byref(sout))
+        lib.k4a_device_close(h)
+        if sin.value:
+            subs.append(i)
+        elif sout.value:
+            masters.append(i)
+
+    if len(masters) != 1 or not subs:
         raise SystemExit(
-            "KINECT_SYNC has no master/subordinates — this script only drives a "
-            "wired pair. Configure it, or record the single camera through ViKi."
+            f"sync cable is not wired for a pair: SYNC OUT on {masters}, "
+            f"SYNC IN on {subs}. Exactly one camera must drive (SYNC OUT) and at "
+            "least one follow (SYNC IN)."
         )
 
-    def idx(dev: str) -> int:
-        if not str(dev).startswith("kinect_"):
-            raise SystemExit(f"not a Kinect device id: {dev!r}")
-        return int(str(dev).split("_", 1)[1])
+    from viki import config
 
-    return idx(master), [idx(d) for d in subs], int(sync.get("subordinate_delay_us", 160))
+    delay = int((getattr(config, "KINECT_SYNC", {}) or {}).get("subordinate_delay_us", 160))
+    return masters[0], subs, delay
 
 
 def _cmd(index: int, path: Path, role: str, args, delay_us: int) -> list[str]:

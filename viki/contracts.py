@@ -492,6 +492,11 @@ class Episode:
         """Compact rigid-object models and tracks derived from semantic RGB-D."""
         return self.segmentation_dir / "object_models.npz"
 
+    @property
+    def object_relative_npz(self) -> Path:
+        """Post-IK object-relative hand and TCP trajectories."""
+        return self.intermediates_dir / "object_relative.npz"
+
 
 # ──────────────────────── artifact schema keys ─────────────────────────
 # The exact array keys each stage writes. Writers and readers assert against

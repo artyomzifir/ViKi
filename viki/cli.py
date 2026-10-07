@@ -12,6 +12,7 @@ server calls — the CLI just parses args and prints results.
     viki segment  <episode> ...        # prompted SAM 2.1 masks [+ RGB-D lift]
     viki object-model <episode>        # semantic cloud -> compact rigid models
     viki scene <episode>               # auto-prompts -> masks -> 3-D -> models
+    viki object-relative <episode>     # object frames + hand/plan -> relative tracks
     viki prepare  <episode>
     viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
@@ -215,10 +216,16 @@ def _cmd_scene(a) -> None:
         render_overlay=not a.no_overlay,
         depth_stride=a.depth_stride,
         voxel_m=a.voxel_m,
+        prompt_voxel_m=a.prompt_voxel_m,
+        prompt_min_points=a.prompt_min_points,
+        prompt_radius_m=a.prompt_radius_mm / 1000.0,
+        prompt_min_object_mm=a.prompt_min_object_mm,
+        prompt_frame_attempts=a.prompt_frame_attempts,
         object_model=ObjectModelConfig(
             bootstrap_frames=a.bootstrap_frames,
             component_radius_m=a.component_radius_mm / 1000.0,
             inlier_distance_m=a.inlier_distance_mm / 1000.0,
+            pose_smoothing_window=a.pose_smoothing_window,
         ),
     )
     print(scene_perception_episode(
@@ -290,10 +297,18 @@ def _cmd_retarget(a) -> None:
             "adapter_rpy_deg": a.adapter_rpy_deg,
             "adapter_radius_mm": a.adapter_radius_mm,
             "sequential_baseline": a.sequential_baseline,
+            "object_grasp": a.object_grasp,
+            "object_cube_side_mm": a.object_cube_side_mm,
         }.items()
         if value is not None
     }
     print(retarget_episode(_episode(a.episode), robot=a.robot, options=options))
+
+
+def _cmd_object_relative(a) -> None:
+    from viki.object_centric import build_object_relative_episode
+
+    print(build_object_relative_episode(_episode(a.episode)))
 
 
 def _cmd_replay(a) -> None:
@@ -345,9 +360,25 @@ def _cmd_run(a) -> None:
     from viki.perception.profiles import DEFAULT_PERCEPTION_PROFILE
     from viki.prepare.run import prepare_episode
     from viki.replay import replay_episode
-    from viki.retarget.run import retarget_episode
+    from viki.retarget import config_from_options, retarget_episode
 
     ep = _episode(a.episode)
+    retarget_options = {} if a.object_grasp is None else {"object_grasp": a.object_grasp}
+    scene_requested = a.scene_objects > 0 or a.scene_prompts is not None
+    if config_from_options(a.robot, retarget_options).object_grasp and not ep.object_models_npz.is_file():
+        if not scene_requested:
+            raise ValueError(
+                "cube-aware retarget needs a manipulated_object scene: supply "
+                "--scene-prompts, run 'viki scene' first, or opt out with --no-object-grasp"
+            )
+        if a.scene_prompts is None and (
+            a.scene_objects != 1 or a.scene_object_label != "manipulated_object"
+        ):
+            raise ValueError(
+                "automatic cube-aware scene needs exactly one object labelled "
+                "manipulated_object; use --scene-objects 1 --scene-object-label "
+                "manipulated_object, or supply a curated --scene-prompts manifest"
+            )
     steps = [
         ("extract", lambda: extract_episode(ep, backend=a.backend)),
         ("prepare", lambda: prepare_episode(ep, profile=DEFAULT_PERCEPTION_PROFILE)),
@@ -358,6 +389,7 @@ def _cmd_run(a) -> None:
         scene_options = ScenePerceptionOpts(
             prompts=a.scene_prompts,
             object_count=max(1, a.scene_objects),
+            object_label=a.scene_object_label,
             checkpoint=a.scene_checkpoint,
             chunk_frames=a.scene_chunk_frames,
         )
@@ -366,9 +398,13 @@ def _cmd_run(a) -> None:
             lambda: scene_perception_episode(ep, scene_options, force=a.force),
         ))
     steps.extend([
-        ("retarget", lambda: retarget_episode(ep, robot=a.robot)),
-        ("replay", lambda: replay_episode(ep, driver=a.driver)),
+        ("retarget", lambda: retarget_episode(ep, robot=a.robot, options=retarget_options)),
     ])
+    if a.scene_objects > 0 or a.scene_prompts is not None:
+        from viki.object_centric import build_object_relative_episode
+
+        steps.append(("object_relative", lambda: build_object_relative_episode(ep)))
+    steps.append(("replay", lambda: replay_episode(ep, driver=a.driver)))
     for name, fn in steps:
         # The scene branch owns two resumable stages and validates their
         # artifacts internally; there is intentionally no synthetic `scene`
@@ -521,10 +557,24 @@ def _build_parser() -> argparse.ArgumentParser:
     pscene.add_argument("--chunk-frames", type=int, default=100)
     pscene.add_argument("--no-overlay", action="store_true")
     pscene.add_argument("--depth-stride", type=int, default=2)
-    pscene.add_argument("--voxel-m", type=float, default=0.004)
+    pscene.add_argument("--voxel-m", type=float, default=0.004,
+                        help="semantic-cloud voxel")
+    pscene.add_argument("--prompt-voxel-m", type=float, default=0.006,
+                        help="auto-prompt clustering grid; the smallest promptable "
+                             "object scales with it (40 mm cube needs ~0.003)")
+    pscene.add_argument("--prompt-min-points", type=int, default=100,
+                        help="auto-prompt: minimum voxels for a component")
+    pscene.add_argument("--prompt-radius-mm", type=float, default=18.0,
+                        help="auto-prompt: connectivity radius")
+    pscene.add_argument("--prompt-min-object-mm", type=float, default=30.0,
+                        help="smallest object to prompt; tightens the clustering grid")
+    pscene.add_argument("--prompt-frame-attempts", type=int, default=6,
+                        help="seed frames to try before giving up (1 = frame 0 only)")
     pscene.add_argument("--bootstrap-frames", type=int, default=60)
     pscene.add_argument("--component-radius-mm", type=float, default=12.0)
     pscene.add_argument("--inlier-distance-mm", type=float, default=12.0)
+    pscene.add_argument("--pose-smoothing-window", type=int, default=15,
+                        help="frames of non-causal pose smoothing; <=1 disables")
     pscene.add_argument("--force", action="store_true", help="rebuild completed scene stages")
     pscene.set_defaults(func=_cmd_scene)
 
@@ -610,6 +660,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--adapter-offset-mm", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-rpy-deg", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-radius-mm", type=float, default=None)
+    pt.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
+    pt.add_argument("--object-cube-side-mm", type=float, default=None)
     pt.add_argument(
         "--sequential-baseline",
         action="store_true",
@@ -617,6 +669,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also archive frame-wise IK + post-hoc smoothing for comparison",
     )
     pt.set_defaults(func=_cmd_retarget)
+
+    por = sub.add_parser(
+        "object-relative",
+        help="object models + cln.npz + plan.h5 -> object-relative hand/TCP tracks",
+    )
+    por.add_argument("episode")
+    por.set_defaults(func=_cmd_object_relative)
 
     prp = sub.add_parser("replay", help="plan.h5 -> replay.h5 (stub stage)")
     prp.add_argument("episode")
@@ -656,6 +715,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     prn.add_argument("episode")
     prn.add_argument("--robot", default=None)
+    prn.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
     prn.add_argument("--backend", default=None)
     prn.add_argument("--driver", default="dryrun", choices=["dryrun", "ur3"])
     prn.add_argument(
@@ -663,6 +723,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="also build scene/object artifacts for this many non-operator objects",
+    )
+    prn.add_argument(
+        "--scene-object-label",
+        choices=["manipulated_object", "other_object", "other_dynamic"],
+        default="other_dynamic",
+        help="label for automatic prompts; cube-aware retarget requires one manipulated_object",
     )
     prn.add_argument(
         "--scene-prompts",

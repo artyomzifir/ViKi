@@ -14,7 +14,9 @@ from viki.retarget.grippers import (  # noqa: F401
     normalize_gripper,
 )
 from viki.retarget.robots import RobotConfig, normalize_robot  # noqa: F401
-from viki.retarget.run import RetargetConfig, config_from_options, retarget_episode  # noqa: F401
+from viki.retarget.run import (  # noqa: F401
+    RetargetConfig, config_from_options, retarget_episode, retarget_prerequisite_errors,
+)
 
 __all__ = [
     "CylinderGripperAdapter",
@@ -27,4 +29,5 @@ __all__ = [
     "RetargetConfig",
     "config_from_options",
     "retarget_episode",
+    "retarget_prerequisite_errors",
 ]

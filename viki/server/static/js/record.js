@@ -276,7 +276,7 @@ async function record() {
   } catch (e) {
     const msg = String(e);
     if (/record-ready|amber|red|world anchor|validation|background|no active calibration/i.test(msg)) {
-      if (/amber/i.test(msg) && confirm(`${msg}\n\nRecord anyway on the amber verdict?`)) {
+      if (/confirm to record anyway/i.test(msg) && confirm(`${msg}\n\nRecord anyway?`)) {
         try { ({ job_id } = await api('POST', '/api/record/start', { ...body, allow_amber: true })); }
         catch (e2) { log('Record failed: ' + e2, 'error'); return; }
       } else {

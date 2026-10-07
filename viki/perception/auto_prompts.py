@@ -13,8 +13,9 @@ cannot infer which object is the task's manipulated object from frame zero.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,8 @@ from viki.perception.object_model import _radius_components
 from viki.perception.segmentation import LABEL_CODES, PROMPT_SCHEMA
 
 
+logger = logging.getLogger(__name__)
+
 AUTO_PROMPT_METHOD = "background_depth_3d_components_v1"
 
 
@@ -48,13 +51,25 @@ class AutoPromptConfig:
     frame: int = 0
     object_count: int = 3
     object_label: str = "other_dynamic"
-    depth_stride: int = 2
+    depth_stride: int = 1
     background_tolerance_mm: float = 50.0
     voxel_m: float = 0.006
     component_radius_m: float = 0.018
     min_component_points: int = 100
     min_object_saturation: float = 0.25
+    # The smallest object worth prompting. This drives the clustering grid:
+    # a component has to clear ``min_component_points`` voxels, and an object
+    # of extent E on a grid of V contributes roughly (E/V)^2 voxels per visible
+    # face. At the 6 mm default a 40 mm cube is ~70 voxels — under the
+    # threshold, so it was dropped before ranking and never appeared as a
+    # candidate at all. ``_effective_config`` tightens the grid to E/8.
+    min_object_extent_m: float = 0.03
     max_object_extent_m: float = 0.25
+    # Frame zero is only a preference. Whether an object is a component of its
+    # own depends on whether a hand is touching it at that instant, which is
+    # not something the caller can know in advance, so fall back to frames
+    # spread over the take instead of failing the whole stage.
+    frame_attempts: int = 6
     box_percentile: float = 1.0
     box_margin_px: int = 8
 
@@ -100,6 +115,12 @@ def _validate_config(cfg: AutoPromptConfig) -> None:
         raise ValueError("min_object_saturation must be in [0, 1]")
     if cfg.max_object_extent_m <= 0:
         raise ValueError("max_object_extent_m must be positive")
+    if cfg.min_object_extent_m <= 0:
+        raise ValueError("min_object_extent_m must be positive")
+    if cfg.min_object_extent_m > cfg.max_object_extent_m:
+        raise ValueError("min_object_extent_m must not exceed max_object_extent_m")
+    if cfg.frame_attempts <= 0:
+        raise ValueError("frame_attempts must be positive")
     if not 0 <= cfg.box_percentile < 50:
         raise ValueError("box_percentile must be in [0, 50)")
     if cfg.box_margin_px < 0:
@@ -137,23 +158,64 @@ def _describe_components(
     return result
 
 
+def _saturated_subcomponents(
+    xyz: np.ndarray,
+    rgb: np.ndarray,
+    source_camera: np.ndarray,
+    component: _Component,
+    cfg: AutoPromptConfig,
+) -> list[_Component]:
+    """Re-cluster the colourful part of an oversized component.
+
+    Radius connectivity welds an object to whatever it touches. Usually that is
+    the operator's hand and a different seed frame settles it, but not always:
+    when the background plate no longer matches the table, a slab of tabletop
+    survives as foreground and every object resting on it is inside that slab
+    at *every* frame. Measured on take 2026-09-21_09-58-19, where the 40 mm
+    cube sat in a 382 x 110 x 189 mm component from the first frame to the
+    last. Colour separates them cleanly there — the slab reads saturation 0.06
+    against the cube's 0.94 — so the rescue is to cluster again over only the
+    points that already pass ``min_object_saturation``.
+    """
+    saturation = _colour_saturation(rgb)
+    keep = component.rows[saturation[component.rows] >= cfg.min_object_saturation]
+    if len(keep) < cfg.min_component_points:
+        return []
+    return [
+        replace(sub, rows=keep[sub.rows])
+        for sub in _describe_components(xyz[keep], rgb[keep], source_camera[keep], cfg)
+    ]
+
+
 def _select_prompt_components(
     xyz: np.ndarray,
     rgb: np.ndarray,
     source_camera: np.ndarray,
     camera_count: int,
     cfg: AutoPromptConfig,
-) -> tuple[_Component, list[_Component], list[_Component]]:
+) -> tuple[_Component, list[_Component], list[_Component], set[int]]:
     """Choose one large operator and ``object_count`` compact components."""
 
     components = _describe_components(xyz, rgb, source_camera, cfg)
     required_views = min(2, camera_count)
-    candidates = [
-        item for item in components
-        if item.camera_count >= required_views
-        and item.saturation >= cfg.min_object_saturation
-        and float(item.dimensions.max()) <= cfg.max_object_extent_m
-    ]
+
+    def passes(item: _Component) -> bool:
+        return (item.camera_count >= required_views
+                and item.saturation >= cfg.min_object_saturation
+                and float(item.dimensions.max()) <= cfg.max_object_extent_m)
+
+    candidates = [item for item in components if passes(item)]
+    rescued: set[int] = set()
+    if len(candidates) < cfg.object_count:
+        # Only now, and only inside components too big to be objects: the
+        # primary pass stays the definition of a candidate, this is a fallback.
+        for item in components:
+            if float(item.dimensions.max()) <= cfg.max_object_extent_m:
+                continue
+            for sub in _saturated_subcomponents(xyz, rgb, source_camera, item, cfg):
+                if passes(sub):
+                    rescued.add(id(sub))
+                    candidates.append(sub)
     candidates.sort(
         key=lambda item: (
             item.camera_count,
@@ -188,7 +250,7 @@ def _select_prompt_components(
 
     # A spatial order is stable across cameras and keeps ids deterministic.
     objects.sort(key=lambda item: tuple(float(value) for value in item.centroid))
-    return operator, objects, components
+    return operator, objects, components, rescued
 
 
 def _interior_point(uv: np.ndarray, width: int, height: int) -> tuple[int, int]:
@@ -315,6 +377,42 @@ def _component_record(
     }
 
 
+def _effective_config(cfg: AutoPromptConfig) -> AutoPromptConfig:
+    """Tighten the clustering grid until the smallest wanted object resolves."""
+    voxel = min(cfg.voxel_m, cfg.min_object_extent_m / 8.0)
+    if voxel >= cfg.voxel_m:
+        return cfg
+    logger.info(
+        "auto_prompts: clustering grid %.1f mm -> %.1f mm so a %.0f mm object "
+        "clears %d voxels", cfg.voxel_m * 1000, voxel * 1000,
+        cfg.min_object_extent_m * 1000, cfg.min_component_points,
+    )
+    return replace(cfg, voxel_m=voxel)
+
+
+def _episode_frame_count(ep) -> int:
+    raw = Path(ep.raw_dir)
+    counts = [
+        len(list((raw / f"{video.stem}_depth").glob("*.npy")))
+        for video in sorted(raw.glob("*.mp4"))
+    ]
+    counts = [value for value in counts if value]
+    return min(counts) if counts else 1
+
+
+def _frame_plan(ep, cfg: AutoPromptConfig) -> list[int]:
+    """The preferred frame first, then frames spread over the take."""
+    if cfg.frame_attempts <= 1:
+        return [cfg.frame]
+    total = _episode_frame_count(ep)
+    spread = np.linspace(0, max(total - 1, 0), cfg.frame_attempts).astype(int)
+    plan: list[int] = []
+    for frame in (cfg.frame, *(int(value) for value in spread)):
+        if 0 <= frame < max(total, 1) and frame not in plan:
+            plan.append(frame)
+    return plan or [cfg.frame]
+
+
 def generate_auto_prompts(
     ep,
     output_path: str | Path | None = None,
@@ -326,10 +424,33 @@ def generate_auto_prompts(
     Object candidates receive the same conservative label because a single seed
     frame does not reveal task role. Object-centric tracking can later decide
     which rigid instance is active in each phase.
+
+    ``cfg.frame`` is tried first; if its geometry does not separate the wanted
+    objects — an operator's hand resting on one welds them into a single
+    component — frames spread over the take are tried in turn, up to
+    ``cfg.frame_attempts``. The manifest records the frame that was used.
     """
 
-    cfg = config or AutoPromptConfig()
+    cfg = _effective_config(config or AutoPromptConfig())
     _validate_config(cfg)
+    failures: list[str] = []
+    for frame in _frame_plan(ep, cfg):
+        try:
+            return _build_manifest(ep, output_path, replace(cfg, frame=frame))
+        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            failures.append(f"frame {frame}: {exc}")
+    raise ValueError(
+        f"no frame yielded {cfg.object_count} usable object candidate(s) in "
+        f"{len(failures)} attempt(s). "
+        + " || ".join(failures)
+    )
+
+
+def _build_manifest(
+    ep,
+    output_path: str | Path | None,
+    cfg: AutoPromptConfig,
+) -> Path:
     cameras, preset = _read_camera_samples(ep, cfg)
     xyz = np.concatenate([item.xyz for item in cameras])
     rgb = np.concatenate([item.rgb for item in cameras])
@@ -343,7 +464,7 @@ def generate_auto_prompts(
     voxel_xyz = xyz[voxel_rows]
     voxel_rgb = rgb[voxel_rows]
     voxel_camera = source_camera[voxel_rows]
-    operator, objects, all_components = _select_prompt_components(
+    operator, objects, all_components, rescued = _select_prompt_components(
         voxel_xyz,
         voxel_rgb,
         voxel_camera,
@@ -397,7 +518,12 @@ def generate_auto_prompts(
     ]
     records = [_component_record(operator, object_id=1, role="operator")]
     records.extend(
-        _component_record(component, object_id=object_id, role="object_candidate")
+        _component_record(
+            component,
+            object_id=object_id,
+            role=("object_candidate_colour_split" if id(component) in rescued
+                  else "object_candidate"),
+        )
         for object_id, component in zip(object_ids[1:], objects)
     )
     manifest = {
@@ -407,13 +533,15 @@ def generate_auto_prompts(
         "auto_annotation": {
             "method": AUTO_PROMPT_METHOD,
             "calibration_preset": preset,
+            # the frame that actually worked, which is not always cfg's first
+            "seed_frame": int(cfg.frame),
             "parameters": asdict(cfg),
             "foreground_samples": int(len(xyz)),
             "voxel_samples": int(len(voxel_xyz)),
             "retained_components": int(len(all_components)),
             "components": records,
             "limitation": (
-                "frame-zero geometry separates operator and compact objects; "
+                "seed-frame geometry separates operator and compact objects; "
                 "task role remains unknown"
             ),
         },

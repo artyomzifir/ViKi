@@ -69,6 +69,42 @@ class ToolGripperConfig:
         state = np.clip(np.asarray(opening, dtype=np.float64), 0.0, 1.0)
         return state * self.max_width_m
 
+    def contact_widths(self, assembly: AttachedRobot, opening: np.ndarray) -> np.ndarray:
+        """Distance between the two URDF rubber-panel centres at each command."""
+        state = np.asarray(opening, dtype=np.float64)
+        if state.ndim != 1 or not np.isfinite(state).all() or np.any((state < 0) | (state > 1)):
+            raise ValueError("contact widths require finite normalised openings")
+        if len(assembly.position_points) != 2:
+            return self.opening_widths(state)
+        import pinocchio as pin
+
+        model = assembly.robot.model
+        data = model.createData()
+        configuration = pin.neutral(model)
+        joint_id = model.getJointId(assembly.drive_joint)
+        joint_index = int(model.idx_qs[joint_id])
+        frames = [(model.getFrameId(name), np.asarray(offset, dtype=np.float64))
+                  for name, offset in assembly.position_points]
+        widths = np.empty(len(state), dtype=np.float64)
+        for frame_index, command in enumerate(state):
+            configuration[joint_index] = self.joint_positions(np.array([command]))[0]
+            pin.forwardKinematics(model, data, configuration)
+            pin.updateFramePlacements(model, data)
+            points = [data.oMf[frame_id].translation + data.oMf[frame_id].rotation @ offset
+                      for frame_id, offset in frames]
+            widths[frame_index] = np.linalg.norm(points[1] - points[0])
+        return widths
+
+    def opening_for_contact_width(self, assembly: AttachedRobot, width_m: float) -> float:
+        """Invert the monotone URDF contact geometry for one target gap."""
+        if not np.isfinite(width_m):
+            raise ValueError("target contact width must be finite")
+        commands = np.linspace(0.0, 1.0, 101)
+        widths = self.contact_widths(assembly, commands)
+        if np.any(np.diff(widths) <= 0) or not widths[0] <= width_m <= widths[-1]:
+            raise ValueError("target contact width is outside the gripper's URDF range")
+        return float(np.interp(width_m, widths, commands))
+
     def profile_opening(self, opening: np.ndarray, dt: float) -> np.ndarray:
         """Rate-limit a target opening using the tool's physical jaw speed."""
         target = np.clip(np.asarray(opening, dtype=np.float64), 0.0, 1.0)

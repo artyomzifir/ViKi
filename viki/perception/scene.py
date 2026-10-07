@@ -47,14 +47,33 @@ def _relative(ep: Episode, path: Path) -> str:
 
 
 def _stage_report(report: Report, stage: str) -> Report:
+    """Label a stage's progress, unless it labels itself.
+
+    ``_track_model`` emits its own finer ``stage`` (bootstrap vs track), so this
+    is a default and not an override — passing both raised
+    ``TypeError: got multiple values for keyword argument 'stage'`` and took the
+    whole object-model stage down after SAM had already done its work.
+    """
     def emit(**fields) -> None:
-        report(stage=stage, **fields)
+        fields.setdefault("stage", stage)
+        report(**fields)
 
     return emit
 
 
+def _invalidate_object_dependents(ep: Episode) -> None:
+    if stage_done(ep, "object_relative"):
+        clear_stage(ep, "object_relative")
+    retarget_status = read_status(ep).get("stages", {}).get("retarget", {})
+    if retarget_status.get("done") and retarget_status.get("object_grasp") is not False:
+        clear_stage(ep, "retarget")
+        if stage_done(ep, "replay"):
+            clear_stage(ep, "replay")
+
+
 def _invalidate_object_model(ep: Episode) -> None:
     clear_stage(ep, "object_model")
+    _invalidate_object_dependents(ep)
     if ep.object_models_npz.is_file():
         ep.object_models_npz.unlink()
 
@@ -134,16 +153,34 @@ class ScenePerceptionOpts:
     render_overlay: bool = True
     depth_stride: int = 2
     voxel_m: float = 0.004
+    # Prompt clustering is a separate grid from ``voxel_m`` (which is the
+    # semantic cloud's). Its resolution sets the smallest object that can be
+    # prompted at all: a 40 mm cube is ~70 voxels on the 6 mm default grid,
+    # under ``prompt_min_points``, so it is dropped before it can be ranked.
+    # On a 3 mm grid the same cube is a clean 291-point two-view component.
+    prompt_voxel_m: float = 0.006
+    prompt_min_points: int = 100
+    prompt_radius_m: float = 0.018
+    prompt_min_object_mm: float = 30.0
+    prompt_frame_attempts: int = 6
     auto_prompts: AutoPromptConfig | None = None
     object_model: ObjectModelConfig = field(default_factory=ObjectModelConfig)
 
     def prompt_config(self) -> AutoPromptConfig:
         if self.auto_prompts is not None:
             return self.auto_prompts
+        # ``depth_stride`` is deliberately not inherited: it exists to bound the
+        # cost of lifting *every* frame, while prompting reads one, where full
+        # resolution is both cheap and the difference between seeing a 40 mm
+        # object and not seeing it.
         return AutoPromptConfig(
             object_count=self.object_count,
             object_label=self.object_label,
-            depth_stride=self.depth_stride,
+            voxel_m=self.prompt_voxel_m,
+            min_component_points=self.prompt_min_points,
+            component_radius_m=self.prompt_radius_m,
+            min_object_extent_m=self.prompt_min_object_mm / 1000.0,
+            frame_attempts=self.prompt_frame_attempts,
         )
 
 
@@ -204,6 +241,7 @@ def build_object_models_episode(
     report: Report | None = None,
 ) -> Path:
     """Build compact object models as a tracked episode stage."""
+    _invalidate_object_dependents(ep)
     root = Path(segmentation_dir) if segmentation_dir is not None else ep.segmentation_dir
     result = build_object_models(
         root,
@@ -236,8 +274,8 @@ def scene_perception_episode(
 
     The branch is a first-class part of the offline artifact graph, but it is
     explicit because SAM requires the dedicated CUDA image and object count is
-    a property of the recording.  Retarget does not consume the result unless a
-    future, separately validated policy explicitly requests it.
+    a property of the recording.  Cube-aware retarget explicitly requires one
+    labelled manipulated-object track; other tasks may use hand-only IK.
     """
     options = opts or ScenePerceptionOpts()
     progress = report or _noop

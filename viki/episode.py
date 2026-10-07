@@ -27,6 +27,7 @@ _STAGES = (
     "object_model",
     "prepare",
     "retarget",
+    "object_relative",
     "replay",
     "label",
     "export",

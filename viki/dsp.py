@@ -82,6 +82,75 @@ def smooth_trajectory(
     raise ValueError(f"unknown smoothing method: {method}")
 
 
+# ───────────────────────────── rotations ─────────────────────────────
+
+
+def geodesic_mean_rotation(rotations: np.ndarray) -> np.ndarray:
+    """Chordal (Frobenius) mean of a stack of rotation matrices.
+
+    The projection of the arithmetic mean back onto SO(3). For rotations that
+    stay within a fraction of a turn of one another — which is the case this is
+    for — it coincides with the geodesic mean closely enough to serve as the
+    linearisation point below.
+    """
+    arr = np.asarray(rotations, dtype=np.float64).reshape(-1, 3, 3)
+    if not len(arr):
+        raise ValueError("cannot average an empty rotation stack")
+    u, _, vt = np.linalg.svd(arr.mean(axis=0))
+    mean = u @ vt
+    if np.linalg.det(mean) < 0:            # reflection — flip the weakest axis
+        u[:, -1] *= -1
+        mean = u @ vt
+    return mean
+
+
+def smooth_rotations(
+    rotations: np.ndarray,
+    window: int = 15,
+    polyorder: int = 2,
+    iterations: int = 2,
+) -> np.ndarray:
+    """Savitzky-Golay a rotation track without leaving SO(3).
+
+    Rotation matrices cannot be filtered element-wise — the result is not a
+    rotation. Instead each sample is expressed as a rotation *vector* relative
+    to the track's mean orientation, those 3-vectors are smoothed like any other
+    trajectory, and the result is mapped back. Re-centring on the smoothed mean
+    (``iterations``) keeps the linearisation honest when the track does turn.
+
+    Exact in the limit this pipeline mostly meets: an object that is carried
+    rather than turned has a near-constant orientation, so every sample sits in
+    one small neighbourhood of the mean and the tangent space is not an
+    approximation worth worrying about.
+
+    ``window <= 1`` returns a copy, so callers can disable smoothing by config
+    without branching. Frames that are not finite are carried through untouched
+    and excluded from the fit.
+    """
+    from scipy.spatial.transform import Rotation
+
+    arr = np.asarray(rotations, dtype=np.float64).reshape(-1, 3, 3)
+    out = arr.copy()
+    if int(window) <= 1 or len(arr) < 3:
+        return out
+    valid = np.isfinite(arr).all(axis=(1, 2))
+    if valid.sum() < 3:
+        return out
+
+    reference = geodesic_mean_rotation(arr[valid])
+    for _ in range(max(1, int(iterations))):
+        local = Rotation.from_matrix(reference.T @ arr[valid])
+        vectors = local.as_rotvec()
+        try:
+            smoothed = smooth_savgol(vectors, window=window, polyorder=polyorder)
+        except ValueError:
+            return out                      # track too short for this window
+        result = reference @ Rotation.from_rotvec(smoothed).as_matrix()
+        reference = geodesic_mean_rotation(result)
+    out[valid] = result
+    return out
+
+
 # ─────────────────────── gap-aware landmark sequence ──────────────────
 
 

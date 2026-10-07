@@ -40,6 +40,28 @@ def test_physical_speed_profile_turns_binary_jump_into_a_ramp():
     np.testing.assert_allclose(np.diff(profiled), [-max_step] * 3)
 
 
+@pytest.mark.slow
+def test_robotiq_contact_gap_is_inverted_from_urdf_not_nominal_width():
+    pytest.importorskip("pinocchio")
+
+    from viki.retarget.grippers import attach_gripper
+    from viki.retarget.run import _load_robot_description
+    from viki.retarget.robots import normalize_robot
+
+    robot = normalize_robot("ur10")
+    gripper = normalize_gripper("robotiq_2f85")
+    try:
+        assembly = attach_gripper(_load_robot_description(robot.description), robot, gripper)
+    except Exception as exc:
+        pytest.skip(f"robot/gripper descriptions unavailable: {exc}")
+    command = gripper.opening_for_contact_width(assembly, 0.038)
+    assert 0.3 < command < 0.4
+    assert gripper.contact_widths(assembly, np.array([command]))[0] == pytest.approx(
+        0.038, abs=1e-5
+    )
+    assert gripper.contact_widths(assembly, np.array([0.038 / 0.085]))[0] > 0.047
+
+
 def test_unavailable_and_unknown_models_fail_before_ik():
     with pytest.raises(ValueError, match="SCHUNK WSG-50 is not available"):
         normalize_gripper("wsg-50")

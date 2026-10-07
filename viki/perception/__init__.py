@@ -24,6 +24,7 @@ from viki.perception.auto_prompts import (  # noqa: F401
     generate_auto_prompts,
 )
 from viki.perception.object_model import (  # noqa: F401
+    OBJECT_MODEL_SCHEMA,
     ObjectModelConfig,
     build_object_models,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "AutoPromptConfig",
     "generate_auto_prompts",
     "ObjectModelConfig",
+    "OBJECT_MODEL_SCHEMA",
     "build_object_models",
     "ScenePerceptionOpts",
     "segment_episode",

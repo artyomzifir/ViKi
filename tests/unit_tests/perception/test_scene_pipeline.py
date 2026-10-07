@@ -3,9 +3,10 @@ import json
 import numpy as np
 
 from viki.contracts import Episode
-from viki.episode import read_status
+from viki.episode import mark_stage, read_status
 from viki.perception.scene import (
     ScenePerceptionOpts,
+    _invalidate_object_model,
     lift_segmented_episode,
     scene_perception_episode,
 )
@@ -54,7 +55,7 @@ def test_scene_pipeline_is_tracked_and_resumable(tmp_path, monkeypatch):
         with output.open("wb") as stream:
             np.savez_compressed(
                 stream,
-                schema=np.asarray("viki_object_models_v1"),
+                schema=np.asarray("viki_object_models_v2"),
                 object_ids=np.asarray([2, 3], np.int32),
                 frame_count=np.int32(12),
                 metrics_json=np.asarray(json.dumps({"elapsed_sec": 1.25})),
@@ -110,7 +111,7 @@ def test_scene_pipeline_adopts_valid_pre_stage_artifacts(tmp_path, monkeypatch):
     }))
     np.savez_compressed(
         ep.object_models_npz,
-        schema=np.asarray("viki_object_models_v1"),
+        schema=np.asarray("viki_object_models_v2"),
         object_ids=np.asarray([2], np.int32),
         frame_count=np.int32(8),
         metrics_json=np.asarray(json.dumps({"elapsed_sec": 2.0})),
@@ -128,3 +129,49 @@ def test_scene_pipeline_adopts_valid_pre_stage_artifacts(tmp_path, monkeypatch):
     stages = read_status(ep)["stages"]
     assert stages["segment"]["lifted_3d"] is True
     assert stages["object_model"]["objects"] == 1
+
+
+def test_stage_progress_lets_an_inner_stage_name_itself():
+    """``object_model._track_model`` reports its own finer stage. The wrapper
+    used to pass ``stage=`` on top of it, which raised TypeError and took the
+    whole object-model step down after SAM had already run."""
+    from viki.perception.scene import _stage_report
+
+    seen = []
+    emit = _stage_report(lambda **fields: seen.append(fields), "object_model")
+    emit(frame=1, total=10)
+    emit(stage="object_model_core_track", frame=2, total=10, object_id=2)
+    assert seen[0]["stage"] == "object_model"
+    assert seen[1]["stage"] == "object_model_core_track"
+
+
+def test_scene_opts_do_not_hand_the_lift_stride_to_the_prompter():
+    """Prompting reads one frame, where full resolution is cheap and decides
+    whether a 40 mm object is visible at all; the stride bounds the cost of
+    lifting every frame."""
+    opts = ScenePerceptionOpts(depth_stride=6, prompt_min_object_mm=40.0)
+    cfg = opts.prompt_config()
+    assert cfg.depth_stride == 1
+    assert cfg.min_object_extent_m == 0.040
+
+
+def test_rebuilt_models_invalidate_cube_plan_and_replay(tmp_path):
+    ep = Episode(tmp_path)
+    mark_stage(ep, "object_model")
+    mark_stage(ep, "retarget", object_grasp=True)
+    mark_stage(ep, "object_relative")
+    mark_stage(ep, "replay")
+
+    _invalidate_object_model(ep)
+    assert read_status(ep)["stages"] == {}
+
+
+def test_rebuilt_models_keep_independent_hand_only_plan(tmp_path):
+    ep = Episode(tmp_path)
+    mark_stage(ep, "object_model")
+    mark_stage(ep, "retarget", object_grasp=False)
+    mark_stage(ep, "object_relative")
+    mark_stage(ep, "replay")
+
+    _invalidate_object_model(ep)
+    assert set(read_status(ep)["stages"]) == {"retarget", "replay"}

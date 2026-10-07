@@ -35,7 +35,7 @@ def _episode_with_object_model(tmp_path, monkeypatch):
     metric = np.asarray([[0.8], [0.9]], np.float32)
     np.savez_compressed(
         root / "object_models.npz",
-        schema=np.asarray("viki_object_models_v1"),
+        schema=np.asarray("viki_object_models_v2"),
         frame_count=np.int32(2),
         object_ids=np.asarray([2], np.int32),
         object_labels=np.asarray(["manipulated_object"]),
@@ -107,4 +107,20 @@ def test_object_model_route_rejects_profile_path(tmp_path, monkeypatch):
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(object_model_meta(ep.id, profile="../sam2.1_hiera_small"))
+    assert exc.value.status_code == 422
+
+
+def test_object_model_route_rejects_retired_schema(tmp_path, monkeypatch):
+    ep = _episode_with_object_model(tmp_path, monkeypatch)
+    artifact = ep.object_models_npz
+    with np.load(artifact, allow_pickle=False) as archive:
+        arrays = {key: archive[key] for key in archive.files}
+    arrays["schema"] = np.asarray("viki_object_models_v1")
+    np.savez_compressed(artifact, **arrays)
+
+    from fastapi import HTTPException
+    from viki.server.routes.pipeline import object_model_meta
+
+    with pytest.raises(HTTPException, match="unsupported object-model schema") as exc:
+        asyncio.run(object_model_meta(ep.id))
     assert exc.value.status_code == 422

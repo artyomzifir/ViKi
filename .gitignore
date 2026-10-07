@@ -7,6 +7,8 @@ intrinsics.json
 depth/
 data/
 debug/
+# Local agent scratch reports; release evidence lives in docs/
+docs/research_notes/
 .slim/
 tools/
 

@@ -186,6 +186,7 @@ def _camera_samples(
     edge_jump_relative: float = 0.02,
     exact_color_projection: bool = False,
     return_depth_uv: bool = False,
+    depth_bias_mm: float = 0.0,
 ) -> tuple[np.ndarray, ...]:
     """One camera frame → world points, RGB, and source colour pixels.
 
@@ -217,6 +218,10 @@ def _camera_samples(
         # current depth is within tolerance of it — drop those.
         keep &= ~((bz > 0) & (np.abs(z - bz) <= float(bg_tol_mm)))
     us, vs, z = us[keep], vs[keep], z[keep]
+    if depth_bias_mm:
+        z -= float(depth_bias_mm)
+        valid_range = z > 0
+        us, vs, z = us[valid_range], vs[valid_range], z[valid_range]
     if us.size == 0:
         empty = (
             np.empty((0, 3), np.float32),
@@ -292,6 +297,7 @@ def _camera_cloud(
     edge_jump_mm: float = 30.0,
     edge_jump_relative: float = 0.02,
     exact_color_projection: bool = False,
+    depth_bias_mm: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compatibility wrapper for the Viewer cloud builder."""
     xyz, rgb, _color_uv = _camera_samples(
@@ -309,6 +315,7 @@ def _camera_cloud(
         edge_jump_mm=edge_jump_mm,
         edge_jump_relative=edge_jump_relative,
         exact_color_projection=exact_color_projection,
+        depth_bias_mm=depth_bias_mm,
     )
     return xyz, rgb
 
@@ -336,6 +343,8 @@ def build_cloud(
     edge_jump_mm: float | None = None,
     edge_jump_relative: float | None = None,
     exact_color_projection: bool | None = None,
+    depth_biases_by_frame: dict[str, list[float]] | None = None,
+    output_dir: Path | None = None,
     report=None,
 ) -> str:
     """Write ``cloud/<i>.bin`` + ``cloud/meta.json`` for the episode. Returns the dir.
@@ -345,7 +354,13 @@ def build_cloud(
     ``CLOUD_*`` config keys.
     ``bg_subtract`` drops points matching the calibration preset's empty-scene
     depth. ``report(stage="cloud", frame=i, total=N)`` drives a progress bar.
+    Experimental ``depth_biases_by_frame`` requires a separate ``output_dir``;
+    the raw depth and canonical cloud remain unchanged.
     """
+    if depth_biases_by_frame is not None and (
+        output_dir is None or Path(output_dir).resolve() == ep.cloud_dir.resolve()
+    ):
+        raise ValueError("depth-bias comparison must use a separate output directory")
     raw = ep.raw_dir
     intr_all = _read_json(raw / "intrinsics.json")
     extr_all = _read_json(raw / "extrinsics.json")
@@ -446,16 +461,22 @@ def build_cloud(
             "bg": bg_by_dev.get(dev),
         })
 
-    out_dir = ep.cloud_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for old in out_dir.glob("*.bin"):
-        old.unlink()
-
     total = 0
     if cams:
         total = int(cams[0]["cap"].get(cv2.CAP_PROP_FRAME_COUNT)) or len(
             list(cams[0]["depth_dir"].glob("*.npy"))
         )
+    if depth_biases_by_frame is not None:
+        for camera in cams:
+            series = depth_biases_by_frame.get(camera["dev"])
+            if series is None or len(series) < total or not np.isfinite(series).all():
+                for opened in cams:
+                    opened["cap"].release()
+                raise ValueError(f"incomplete depth-bias series for {camera['dev']}")
+    out_dir = Path(output_dir) if output_dir is not None else ep.cloud_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("*.bin"):
+        old.unlink()
     if report:
         report(stage="cloud", frame=0, total=total)
 
@@ -481,6 +502,7 @@ def build_cloud(
             depth_mm = np.load(dpath)
             if not depth_mm.any():
                 continue
+            bias_series = (depth_biases_by_frame or {}).get(c["dev"], [])
             x, r = _camera_cloud(
                 bgr,
                 depth_mm,
@@ -496,6 +518,7 @@ def build_cloud(
                 edge_jump_mm=edge_jump_mm,
                 edge_jump_relative=edge_jump_relative,
                 exact_color_projection=exact_color_projection,
+                depth_bias_mm=bias_series[i] if bias_series else 0.0,
             )
             if len(x):
                 xyz_parts.append(x)
@@ -548,7 +571,9 @@ def build_cloud(
         "edge_jump_relative": edge_jump_relative,
         "exact_color_projection": exact_color_projection,
         "per_frame_points": per_frame,
+        "experimental_depth_bias_mm": depth_biases_by_frame,
     }, indent=2))
-    mark_stage(ep, "cloud", frames=i, points=int(sum(per_frame)))
+    if output_dir is None:
+        mark_stage(ep, "cloud", frames=i, points=int(sum(per_frame)))
     logger.info("cloud %s: %d frames → %s", ep.id, i, out_dir)
     return str(out_dir)

@@ -30,11 +30,9 @@ RUN mkdir -p /etc/apt/keyrings && \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Azure Kinect SDK (libk4a + k4a-tools) ────────────────────────────────────
-# k4a-tools carries `k4arecorder`, the vendor capture binary. Two Kinects driven
-# through ViKi's own libusb path hard-lock this host (see bugs.md row 1), and one
-# recorder process per camera is the documented multi-device route: separate
-# libusb contexts, MJPEG written straight to MKV with no BGRA32 conversion, and
-# one teardown per episode instead of dozens of HTTP start/stops.
+# k4a-tools carries `k4arecorder`, the vendor capture binary. It is retained
+# for raw-MKV diagnostics, not as a workaround: two Kinects now capture through
+# ViKi with one independent xHCI controller per camera (see bugs.md row 1).
 # k4a-tools wants libsoundio1 for the microphone array; 24.04 dropped it, so
 # it comes from the Ubuntu universe pool. The recorder will not load without
 # the .so even when audio is never recorded.

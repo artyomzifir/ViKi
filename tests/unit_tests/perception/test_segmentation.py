@@ -47,13 +47,14 @@ def test_auto_prompt_component_selection_separates_large_operator_and_objects():
         max_object_extent_m=0.15,
     )
 
-    selected_operator, objects, components = _select_prompt_components(
+    selected_operator, objects, components, rescued = _select_prompt_components(
         xyz, rgb, camera, 2, cfg,
     )
 
     assert selected_operator.point_count == len(operator)
     assert len(objects) == 3
     assert len(components) == 4
+    assert not rescued  # all three separate on geometry alone
     np.testing.assert_allclose(
         [item.centroid[0] for item in objects], [-0.25, 0.0, 0.25], atol=1e-6,
     )

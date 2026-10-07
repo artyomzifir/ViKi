@@ -731,6 +731,13 @@ class CameraManager:
             return None
         return worker.nearest_to(host_timestamp_us)
 
+    def recent_frames(self, device_id: str) -> list[Frame]:
+        """Return a stable buffer snapshot from a healthy camera worker."""
+        worker = self._workers.get(device_id)
+        if worker is None or not getattr(worker, "is_healthy", True):
+            return []
+        return worker.snapshot()
+
     def latest_frame(self, device_id: str) -> Optional[Frame]:
         worker = self._workers.get(device_id)
         if worker is None or not getattr(worker, "is_healthy", True):

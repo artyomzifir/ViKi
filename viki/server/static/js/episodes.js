@@ -12,6 +12,7 @@ export const STAGES = [
   ['raw', 'RAW', 'raw/ — recorded colour + depth frames'],
   ['rec', 'REC', 'rec.npz — extracted 3-D hand landmarks'],
   ['cln', 'CLN', 'cln.npz — fused + smoothed trajectory'],
+  ['object_model', 'OBJ', 'object_models.npz — tracked scene objects'],
   ['plan', 'PLN', 'plan.h5 — retargeted robot joint plan'],
   ['replay', 'RPL', 'replay.h5 — physical replay states'],
 ];
@@ -64,8 +65,9 @@ function cloudBarHTML(cp) {
 export function rowHTML(ep, o = {}) {
   if (o.manage && o.editingPath === ep.path) return editingRowHTML(ep);
 
+  const disabledReason = o.disabledReason?.(ep) || '';
   const pick = o.select
-    ? `<input type="checkbox" class="ep-sel" data-ep="${ep.id}"${o.selected?.has?.(ep.id) ? ' checked' : ''}> `
+    ? `<input type="checkbox" class="ep-sel" data-ep="${ep.id}"${!disabledReason && o.selected?.has?.(ep.id) ? ' checked' : ''}${disabledReason ? ` disabled title="${esc(disabledReason)}"` : ''}> `
     : '';
   const meta = [
     ep.demonstrator,

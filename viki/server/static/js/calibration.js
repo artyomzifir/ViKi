@@ -33,9 +33,9 @@ function template() {
   const s = sessionGet('calibBoard', null);
   const b = s || {
     type: 'aruco',
-    cols: c.aruco.boardSize?.[0] ?? 11, rows: c.aruco.boardSize?.[1] ?? 7,
-    square: c.aruco.squareSize ?? 0.025, marker: c.aruco.markerSize ?? 0.01875,
-    dict: ARUCO_DICTS[c.aruco.dictId] ?? 'DICT_5X5_100',
+    cols: c.aruco.boardSize?.[0] ?? 8, rows: c.aruco.boardSize?.[1] ?? 10,
+    square: c.aruco.squareSize ?? 0.05, marker: c.aruco.markerSize ?? 0.035,
+    dict: ARUCO_DICTS[c.aruco.dictId] ?? 'DICT_5X5_50',
   };
   const arucoOpts = ARUCO_DICTS.map(n =>
     `<option ${n === b.dict ? 'selected' : ''}>${n}</option>`).join('');
@@ -140,8 +140,11 @@ function template() {
         <div class="wiz-step" data-step="validate">
           <div class="wiz-head"><span class="wiz-dot"></span><b>4 · Validate</b>
             <span class="wiz-state" data-role="st-validate">—</span></div>
-          <div class="hint">Empty scene. Checks the per-camera clouds actually
-            overlap. Recording is blocked on a <b>red</b> verdict.</div>
+          <div class="hint">Empty scene. Checks the per-camera clouds agree
+            <i>where both cameras can see</i>. Recording is blocked on a
+            <b>red</b> verdict; <b>unknown</b> means too little shared view to
+            judge and asks for a confirm. A green result does not verify
+            moving hands or objects above the table.</div>
           <button id="calib-validate" class="primary" disabled>Run validation</button>
           <div id="calib-validation" class="wiz-crit"></div>
         </div>
@@ -209,7 +212,7 @@ function persistBoard() {
   sessionSet('calibBoard', {
     type: boardType(),
     cols: p.board_size[0], rows: p.board_size[1], square: p.square_size,
-    marker: p.marker_size ?? 0.01875, dict: p.aruco_dict ?? view.querySelector('#aruco-dict').value,
+    marker: p.marker_size ?? 0.035, dict: p.aruco_dict ?? view.querySelector('#aruco-dict').value,
   });
 }
 
@@ -302,7 +305,7 @@ async function runValidate() {
     const r = await api('POST', '/api/calibration/validate');
     renderValidation(r);
     log(`Validation: ${r.verdict.toUpperCase()}`,
-      r.verdict === 'green' ? 'ok' : r.verdict === 'amber' ? 'warn' : 'error');
+      r.verdict === 'green' ? 'ok' : r.verdict === 'red' ? 'error' : 'warn');
   } catch (e) { log('Validation failed: ' + e, 'error'); }
   refreshSetup();
 }
@@ -341,9 +344,14 @@ function renderValidation(v) {
   box.innerHTML =
     `<div class="crit ${v.verdict}">verdict <b>${v.verdict}</b></div>` +
     v.pairs.map(p => p.skipped
-      ? `<div class="crit bad">${p.a}–${p.b}: ${p.reason}</div>`
-      : `<div class="crit ${p.verdict}">${p.a}–${p.b}: NN ${p.nn_median_mm}mm ·
-         ICP ${p.icp_translation_mm}mm / ${p.icp_rotation_deg}°</div>`).join('');
+      ? `<div class="crit warn">${p.a}–${p.b}: not scored — ${p.reason}</div>`
+      : `<div class="crit ${p.verdict}">${p.a}–${p.b}: NN ${p.nn_median_mm}mm${
+          p.nn_median_ab_mm !== undefined
+            ? ` (→ ${p.nn_median_ab_mm} / ← ${p.nn_median_ba_mm})` : ''} ·
+         ICP ${p.icp_translation_mm}mm / ${p.icp_rotation_deg}°${p.shared_view
+        ? ` · shared view ${Math.round(100 * Math.min(p.shared_view.a_frac,
+            p.shared_view.b_frac))}%` : ' · whole box (no frustum)'}${p.note
+        ? ` · ${p.note}` : ''}</div>`).join('');
 }
 
 async function refreshSetup() {

@@ -54,6 +54,7 @@ def test_retarget_episode_real_ik(tmp_path):
     # misreported as an unavailable optional model.
     retarget_episode(ep, robot="ur3", options={
         "max_iterations": 3,
+        "object_grasp": False,
         "collision_enabled": True,
         "collision_pairs": 2,
         "approach_sec": 0.2,
@@ -74,14 +75,23 @@ def test_retarget_episode_real_ik(tmp_path):
         opening = np.asarray(plan["gripper_opening"], dtype=np.float64)
         assert np.all(np.diff(opening) <= 1e-8)
         assert float(np.max(np.abs(np.diff(opening)))) <= 0.150 / 30 / 0.085 + 1e-6
+        contact_width = np.asarray(plan["gripper_opening_m"])
+        assert np.all(np.diff(contact_width) <= 1e-8)
+        assert contact_width[0] > 0.085
+        assert contact_width[-1] < contact_width[0]
+        from viki.retarget.grippers import attach_gripper, normalize_gripper
+        from viki.retarget.robots import normalize_robot
+
+        robot = normalize_robot("ur3")
+        gripper = normalize_gripper("robotiq_2f85")
+        assembly = attach_gripper(_load_robot_description(robot.description), robot, gripper)
         np.testing.assert_allclose(
-            np.asarray(plan["gripper_opening_m"]),
-            opening * 0.085,
+            contact_width, gripper.contact_widths(assembly, opening), atol=1e-6
         )
         assert str(plan["gripper_command_names_json"]) == '["opening"]'
         np.testing.assert_allclose(np.asarray(plan["gripper_command"])[:, 0], opening)
         assert "gripper" in str(plan["point_groups_json"])
-        assert int(plan["schema_version"]) == 8
+        assert int(plan["schema_version"]) == 9
         np.testing.assert_allclose(plan["base_position_calibration"], [0.7, 0.0, 0.0])
         np.testing.assert_allclose(plan["base_rpy_deg_calibration"], [0.0, 0.0, 180.0])
         assert str(plan["target_position_anchor"]) == "pinch_center"

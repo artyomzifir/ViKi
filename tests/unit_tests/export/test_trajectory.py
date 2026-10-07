@@ -11,7 +11,7 @@ from viki.export import export_trajectories
 from viki.retarget.archive import write_hdf5_archive
 
 
-def _planned_episode(tmp_path, n=12, task="pick up the block"):
+def _planned_episode(tmp_path, n=12, task="pick up the block", source_pose="landmarks"):
     ep = new_episode(tmp_path)
     meta = json.loads(ep.meta_path.read_text())
     meta["task"] = task
@@ -35,6 +35,7 @@ def _planned_episode(tmp_path, n=12, task="pick up the block"):
             "joint_names_json": json.dumps([f"j{i}" for i in range(6)]),
             "config_json": "{}",
             "metrics_json": json.dumps({"position_rmse_mm": 12.5}),
+            "source_pose": source_pose,
         },
     )
     mark_stage(ep, "retarget", robot="ur10_official_description")
@@ -47,7 +48,7 @@ def test_bundle_round_trips_the_plan(tmp_path):
 
     manifest = json.loads((tmp_path / "bundle" / "dataset.json").read_text())
     assert manifest["schema"] == "viki_trajectory_bundle"
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 4
     assert manifest["name"] == "v0-test"
     assert manifest["robots"] == ["ur10"]
     assert manifest["episode_count"] == 1 and manifest["total_frames"] == n
@@ -87,7 +88,7 @@ def test_manifest_admits_that_nothing_was_screened(tmp_path):
 def test_bundle_carries_completed_object_model_sidecar(tmp_path):
     ep, _ = _planned_episode(tmp_path / "ep")
     ep.object_models_npz.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(ep.object_models_npz, schema=np.asarray("viki_object_models_v1"))
+    np.savez_compressed(ep.object_models_npz, schema=np.asarray("viki_object_models_v2"))
     mark_stage(ep, "segment", lifted_3d=True)
     mark_stage(ep, "object_model", objects=1, artifact="object_models.npz")
 
@@ -100,6 +101,22 @@ def test_bundle_carries_completed_object_model_sidecar(tmp_path):
     assert scene["object_model_run"] is True
     assert scene["object_model_included"] is True
     assert scene["object_model_stage"]["objects"] == 1
+
+
+def test_bundle_carries_completed_object_relative_sidecar(tmp_path):
+    ep, _ = _planned_episode(tmp_path / "ep")
+    ep.object_relative_npz.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        ep.object_relative_npz, schema=np.asarray("viki_object_relative_v1")
+    )
+    mark_stage(ep, "object_relative", objects=1)
+
+    export_trajectories([str(ep.root)], tmp_path / "bundle")
+    exported = tmp_path / "bundle" / "episodes" / ep.id
+    assert (exported / "object_relative.npz").is_file()
+    record = json.loads((exported / "meta.json").read_text())
+    assert record["scene_perception"]["object_relative_included"] is True
+    assert record["scene_perception"]["object_relative_stage"]["objects"] == 1
 
 
 def test_unretargeted_episode_is_skipped_not_fatal(tmp_path):
@@ -124,6 +141,38 @@ def test_unretargeted_episode_is_skipped_not_fatal(tmp_path):
 
 def test_nothing_exportable_fails_loudly(tmp_path):
     ep = new_episode(tmp_path / "ep")
+    with pytest.raises(RuntimeError, match="no episodes could be exported"):
+        export_trajectories([str(ep.root)], tmp_path / "bundle")
+
+
+def test_bundle_uses_plan_pose_source_not_current_config(tmp_path, monkeypatch):
+    ep, frames = _planned_episode(tmp_path / "ep", source_pose="hand_fit")
+    np.savez_compressed(
+        ep.cln_npz,
+        positions=np.zeros((frames, 3), dtype=np.float32),
+        rotations=np.repeat(np.eye(3, dtype=np.float32)[None], frames, axis=0),
+        hand_fit_positions=np.full((frames, 3), 2, dtype=np.float32),
+        hand_fit_rotations=np.repeat(np.diag([-1.0, -1.0, 1.0]).astype(np.float32)[None], frames, axis=0),
+        valid=np.ones(frames, dtype=bool),
+    )
+    monkeypatch.setattr("viki.config.PERCEPTION_HAND_POSE_SOURCE", "landmarks")
+
+    export_trajectories([str(ep.root)], tmp_path / "bundle")
+    exported = tmp_path / "bundle" / "episodes" / ep.id
+    with np.load(exported / "trajectory.npz", allow_pickle=False) as arrays:
+        np.testing.assert_array_equal(arrays["hand_position_rig"], 2)
+    record = json.loads((exported / "meta.json").read_text())
+    assert record["hand_pose_source"] == "hand_fit"
+
+
+def test_bundle_rejects_missing_plan_pose_source(tmp_path):
+    ep, frames = _planned_episode(tmp_path / "ep", source_pose="hand_fit")
+    np.savez_compressed(
+        ep.cln_npz,
+        positions=np.zeros((frames, 3), dtype=np.float32),
+        rotations=np.repeat(np.eye(3, dtype=np.float32)[None], frames, axis=0),
+        valid=np.ones(frames, dtype=bool),
+    )
     with pytest.raises(RuntimeError, match="no episodes could be exported"):
         export_trajectories([str(ep.root)], tmp_path / "bundle")
 

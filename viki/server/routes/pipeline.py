@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from viki import config, datasets
 from viki.contracts import Episode, cln_pose_keys
 from viki.episode import read_status
+from viki.perception import OBJECT_MODEL_SCHEMA
 from viki.server import jobs
 
 logger = logging.getLogger(__name__)
@@ -464,18 +465,29 @@ async def prepare(req: _EpReq):
 
 @_ep.post("/retarget")
 async def retarget(req: _RetargetReq):
-    """Queue whole-trajectory IK for one or more prepared episodes."""
+    """Queue whole-trajectory IK only when every selected episode is ready."""
     if not req.episodes:
         raise HTTPException(400, "select at least one episode")
-    logger.info("retarget: %d episode(s), opts=%s", len(req.episodes), req.opts)
+    from viki.retarget import config_from_options, retarget_episode, retarget_prerequisite_errors
+
+    try:
+        cfg = config_from_options(options=req.opts)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    episodes = [_episode(ref) for ref in req.episodes]
+    problems = [
+        f"{ep.id}: {message}"
+        for ep in episodes
+        for message in retarget_prerequisite_errors(ep, cfg)
+    ]
+    if problems:
+        raise HTTPException(409, "; ".join(problems))
+    logger.info("retarget: %d episode(s), opts=%s", len(episodes), req.opts)
     ids: list[str] = []
-    for episode_ref in req.episodes:
-        ep = _episode(episode_ref)
+    for ep in episodes:
         opts = dict(req.opts)
 
         def _job(report, log, ep=ep, opts=opts):
-            from viki.retarget.run import retarget_episode
-
             return retarget_episode(ep, options=opts, report=report, log=log)
 
         ids.append(jobs.submit("retarget", _job, episode=ep.id))
@@ -1124,7 +1136,7 @@ def _object_model_archive(ep: Episode, profile: str) -> dict[str, np.ndarray]:
     artifact, _ = _object_model_paths(ep, profile)
     archive = _viewer_npz(artifact)
     schema = str(np.asarray(archive.get("schema", "")).item())
-    if schema != "viki_object_models_v1":
+    if schema != OBJECT_MODEL_SCHEMA:
         raise HTTPException(422, f"unsupported object-model schema {schema!r}")
     return archive
 

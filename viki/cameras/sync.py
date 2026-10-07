@@ -7,20 +7,19 @@ How it works
 ------------
 Each CameraWorker stamps frames with host_timestamp_us = time.monotonic_ns() //
 1000 as they arrive from the device (monotonic, so a wall-clock adjustment
-mid-recording can't corrupt the timeline).  The worker keeps a short rolling
-buffer of recent frames (not just the latest), so frames at the sync tick that
-landed a few milliseconds earlier are still reachable.
+mid-recording can't corrupt the timeline). The worker keeps a short rolling
+buffer of recent frames (not just the latest).
 
 MultiCameraSync drives a loop at sync_fps (normally the rate of the slowest
 camera).  At each tick it calls nearest_to(tick_us) on every active worker and
 checks that the returned frame is within max_offset_us of the tick.  If every
-required camera passes that check, a SyncedFrameGroup is emitted.
+required camera passes that check, a SyncedFrameGroup is emitted. For a
+verified wired Kinect rig, the master is selected by host time and each
+subordinate by its device timestamp relative to that master. USB arrival
+jitter must not pair adjacent hardware capture cycles.
 
-Azure Kinect hardware sync (wired master/subordinate) aligns Kinect captures
-by hardware so both devices' frames arrive within ~1 ms of each other.
 RealSense cameras are aligned to the host clock only — their grouping is
-purely software-based.  At a shared sync_fps of 15 fps the tolerance window
-is comfortably wide enough for any USB jitter in practice.
+purely software-based.
 
 Startup order for hardware-synced Kinects
 ------------------------------------------
@@ -40,6 +39,7 @@ import random
 from typing import Callable, Optional
 
 from .base import SyncedFrameGroup
+from .hw_sync import HardwareSyncError
 from .manager import CameraManager
 
 
@@ -85,6 +85,28 @@ class MultiCameraSync:
             else int(round(1.5e6 / max(1, sync_fps)))
         )
         self._required_devices = required_devices
+        self._hardware_master: str | None = None
+        self._hardware_subordinates: dict[str, int] = {}
+        self._hardware_tolerance_us = 0
+        if hasattr(manager, "hardware_sync_status"):
+            status = manager.hardware_sync_status()
+            if status.get("required"):
+                if not status.get("ready"):
+                    raise HardwareSyncError(
+                        "Kinect HW_SYNC rig is not ready: " + str(status.get("error") or "unknown error")
+                    )
+                roles = status["roles"]
+                self._hardware_master = next(
+                    device_id for device_id, role in roles.items()
+                    if role["role"] == "master"
+                )
+                alignment = status["timestamp_alignment"]
+                self._hardware_tolerance_us = int(alignment["tolerance_us"])
+                self._hardware_subordinates = {
+                    device_id: int(alignment["offsets"][device_id]["actual_us"])
+                    for device_id, role in roles.items()
+                    if role["role"] == "subordinate"
+                }
 
     def get_synced_frame(self) -> Optional[SyncedFrameGroup]:
         """
@@ -119,6 +141,27 @@ class MultiCameraSync:
                 return None
             frames[dev_id] = frame
             offsets[dev_id] = offset
+
+        if self._hardware_master in frames:
+            master_timestamp_us = frames[self._hardware_master].timestamp_us
+            for dev_id, expected_offset_us in self._hardware_subordinates.items():
+                if dev_id not in frames:
+                    continue
+                candidates = self._manager.recent_frames(dev_id)
+                if not candidates:
+                    return None
+                frame = min(
+                    candidates,
+                    key=lambda candidate: abs(
+                        candidate.timestamp_us - master_timestamp_us - expected_offset_us
+                    ),
+                )
+                residual_us = frame.timestamp_us - master_timestamp_us - expected_offset_us
+                offset = frame.host_timestamp_us - tick_us
+                if abs(residual_us) > self._hardware_tolerance_us or abs(offset) > self._max_offset_us:
+                    return None
+                frames[dev_id] = frame
+                offsets[dev_id] = offset
 
         return SyncedFrameGroup(
             frames=frames,

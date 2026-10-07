@@ -11,5 +11,6 @@ object-pose track is available — the object-relative form
 """
 
 from viki.prepare.run import PreparationPipeline, estimate_fps  # noqa: F401
+from viki.prepare.represent import object_relative  # noqa: F401
 
-__all__ = ["PreparationPipeline", "estimate_fps"]
+__all__ = ["PreparationPipeline", "estimate_fps", "object_relative"]

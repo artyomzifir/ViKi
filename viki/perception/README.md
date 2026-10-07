@@ -26,6 +26,12 @@ is deferred to `viki.prepare`.
 
 ## Contract
 
+`cloud.py` also accepts an *experimental* per-frame depth-range bias and an
+explicit alternate output directory. This never changes the canonical Viewer
+cloud or raw depth. For the two-Kinect board-depth diagnosis, validation and
+the corrected comparison artifact, see
+[`docs/2026-10-04-two-kinect-cloud-handedness.md`](../../docs/2026-10-04-two-kinect-cloud-handedness.md).
+
 - **in:** `PreparedFrame`, `DepthProjector` (Protocol), `CalibrationExtrinsics`.
 - **out:** `rec.npz` — keys in `contracts.REC_KEYS`:
   `device_ids`, `timestamps`, `points (N,21,3)`, `landmark_ids (21,)`,
@@ -54,7 +60,7 @@ docker compose run --rm sam2 scene episodes/<id> --objects 3
 It can also be included in the complete episode pipeline:
 
 ```bash
-docker compose run --rm sam2 run episodes/<id> --scene-objects 3
+docker compose run --rm sam2 run episodes/<id> --scene-prompts data/prompts/<scene>.json
 ```
 
 The explicit object count and dedicated image are deliberate: recordings may
@@ -137,8 +143,9 @@ rotation information, an operator-proximity contact flag, and compact
 accepted/reassigned/rejected/ambiguous decisions referring to point indices in
 each source semantic-cloud frame. Shell promotion is disabled on contact
 frames. This is a supported perception artifact with explicit limitations, not
-an unconditional source of physical truth: retarget does not load it
-implicitly. Trajectory export copies a completed `object_models.npz` as a
+an unconditional source of physical truth: cube-aware retarget explicitly
+requires one labelled `manipulated_object`, while hand-only IK ignores it.
+Trajectory export copies a completed `object_models.npz` as a
 sidecar and records its stage provenance. Object-relative IK remains separately
 gated until pose observability and contact phases have acceptance tests.
 

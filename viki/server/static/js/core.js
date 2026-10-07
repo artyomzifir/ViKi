@@ -141,6 +141,8 @@ export async function initializeFrontendConfig(config) {
       approachSec: config.RETARGET_APPROACH_SEC ?? 2,
       sequentialBaseline: config.RETARGET_SEQUENTIAL_BASELINE ?? false,
       poseSource: config.PERCEPTION_HAND_POSE_SOURCE ?? 'landmarks',
+      objectGrasp: config.RETARGET_OBJECT_GRASP_ENABLED ?? true,
+      objectCubeSideMm: config.RETARGET_OBJECT_CUBE_SIDE_MM ?? 40,
     },
   };
 

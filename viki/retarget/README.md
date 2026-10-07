@@ -11,7 +11,52 @@ The PoC consumes the hand landmarks and palm orientation in `cln.npz` and writes
 - `RETARGET_ROBOT_BASE_POSITION = [x,y,z]` is the robot origin in that frame;
 - `RETARGET_ROBOT_BASE_RPY_DEG = [roll,pitch,yaw]` rotates the robot base in
   that frame (extrinsic XYZ degrees); the Retarget tab exposes both vectors;
-- object pose and object-relative motion are deliberately not used yet.
+- cube-aware grasp is the default for the UR10/Robotiq configuration. It
+  conditions targets on the tracked manipulated object and two fitted side
+  planes. Hand-only IK remains available with `viki retarget --no-object-grasp`
+  or by clearing the Retarget-tab checkbox. After retarget,
+  `viki object-relative <episode>` writes a diagnostic relative trajectory.
+
+## Experimental object-aware cube grasp
+
+`viki retarget <episode>` (cube-aware by default) requires prepared
+`cln.npz`, `raw/world_anchor.json`, and a current `object_models.npz` with
+exactly one `manipulated_object` aligned to the hand frames. The Retarget tab
+disables incomplete episodes and the API rejects the entire selection before
+queueing if any episode is unready. Scene extraction is a separate CUDA stage;
+clicking Retarget does not run it. The planner also requires a substantial
+transfer, contact spanning the pickup and placement, and two well-supported
+perpendicular side planes in the static canonical cloud. Missing or ambiguous
+evidence raises an error; it never silently falls back to hand-only IK.
+
+The planner infers approach, close, carry, release and retreat intervals from
+the object translation and proximity-contact track. It ramps the opening to
+the specified cube edge minus 2 mm, holds that commanded width throughout
+carry, then opens after placement. The target TCP position during carry follows
+the observed object translation with a fixed pickup offset; the local Robotiq
+jaw axis is aligned horizontally to one supported side-plane normal and its
+tool axis points downward. The closest of the two face pairs to the observed
+human approach is used. Orientation is held during carry rather than following
+the known-unreliable per-frame object rotation. Both pose and opening blend
+into and out of the phase; ordinary joint, floor and self-collision constraints
+still apply. Phase bounds and the selected plane normals are saved in the plan
+metrics and displayed in the Retarget tab.
+
+The opening command is inverted through the attached gripper's URDF
+contact-panel geometry. For Robotiq 2F-85, a naive normalised "38 mm" command
+places the pad centres about 48 mm apart; the object mode instead commands the
+joint value that actually makes their modelled separation 38 mm. Plan v9
+records that URDF-derived separation in `gripper_opening_m` (v8 recorded the
+linear nominal command width). Export schema v4 carries it unchanged.
+
+This is an **offline geometric experiment**, not a force/contact controller.
+The width is a position command, not measured clamp force; the model may be
+larger than the nominal cube, the phase/contact detection is heuristic, and
+neither object collision nor simulation success is checked. The mode is
+enabled by default for the current cube-transfer setup and supports only
+Robotiq 2F-85 for now. Other tasks must explicitly opt out until their object
+models and grasp policy are supported. See
+`docs/2026-10-06-cube-object-grasp.md` for the measured pilot.
 
 For the default two-finger semantics, target position is
 `(thumb_tip + index_tip) / 2`, target orientation is the stable palm frame, and
@@ -123,7 +168,7 @@ the sparse trajectory problem.
 
 ## Output and scene
 
-`plan.h5` schema v8 contains arm-only `q`, the base position/RPY, target position anchor and
+`plan.h5` schema v9 contains arm-only `q`, the base position/RPY, target position anchor and
 adapter parameters, the generic `(T,D)` continuous
 `gripper_command`, normalised/metre opening, physical master-joint position,
 desired and achieved TCP poses, errors, joint derivatives, solver/config

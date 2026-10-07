@@ -670,8 +670,10 @@ class CalibrationManager:
     # ── pre-record validation gate (spec §6) ────────────────────────────
 
     def _live_camera_cloud(self, dev: str, T_ref_cam: "object", stride: int = 4):
-        """One camera's current depth frame as an (N,3) rig-frame point cloud,
-        or ``None``. Mirrors the offline ``cloud._camera_cloud`` path."""
+        """One camera's current depth frame as an (N,3) rig-frame point cloud
+        plus its depth frustum, or ``(None, None)``. Mirrors the offline
+        ``cloud._camera_cloud`` path; the frustum lets the validation gate score
+        only what both cameras can actually see."""
         import numpy as np
 
         from viki.perception import cloud as _cloudmod
@@ -679,11 +681,11 @@ class CalibrationManager:
 
         frame = self._mgr.latest_frame(dev)
         if frame is None or not getattr(frame, "has_depth", lambda: False)():
-            return None
+            return None, None
         be = self._mgr.get_backend(dev)
         ci = getattr(frame, "color_intrinsics", None)
         if ci is None or not (ci.fx > 0):
-            return None
+            return None, None
         K_color = np.array([[ci.fx, 0, ci.cx], [0, ci.fy, ci.cy], [0, 0, 1.0]])
 
         cal = None
@@ -711,7 +713,48 @@ class CalibrationManager:
             np.ascontiguousarray(frame.color), np.asarray(frame.depth), stride,
             K_color, cal, np.asarray(T_ref_cam, float),
         )
-        return xyz if len(xyz) else None
+        if not len(xyz):
+            return None, None
+        return xyz, self._visibility_model(frame, cal, np.asarray(T_ref_cam, float))
+
+    @staticmethod
+    def _visibility_model(frame, cal, T_ref_cam):
+        """What this camera can be said to have observed, for the validation
+        gate: ``{"T_ref_cam", "K", "width", "height", "depth_mm"}`` of the
+        **depth** camera. The depth map goes along because a frustum only says
+        where the camera looked, not where it got a reading.
+
+        ``T_ref_cam`` places the *colour* camera (the ChArUco pose the bundle
+        solved), so the depth→colour rigid transform has to be folded back in.
+        Both calibration classes expose it one point at a time as
+        ``depth3d_to_color3d``; four calls recover the 4x4. ``None`` when the
+        camera reports no usable depth intrinsics — the gate then falls back to
+        scoring that pair whole."""
+        import numpy as np
+
+        di = getattr(frame, "depth_intrinsics", None)
+        if di is None or not (di.fx > 0) or not (di.width and di.height):
+            return None
+        T_color_depth = np.eye(4)
+        to_color = getattr(cal, "depth3d_to_color3d", None) if cal is not None else None
+        if to_color is not None:
+            try:
+                o = to_color([0.0, 0.0, 0.0])
+                axes = [to_color(e) for e in np.eye(3)]
+                if o is not None and all(a is not None for a in axes):
+                    T_color_depth[:3, :3] = np.column_stack(
+                        [np.asarray(a, float) - np.asarray(o, float) for a in axes]
+                    )
+                    T_color_depth[:3, 3] = np.asarray(o, float)
+            except Exception:  # noqa: BLE001 — a frustum is a nicety, not a stage
+                T_color_depth = np.eye(4)
+        return {
+            "T_ref_cam": T_ref_cam @ T_color_depth,
+            "K": di.matrix,
+            "width": int(di.width),
+            "height": int(di.height),
+            "depth_mm": np.asarray(frame.depth),
+        }
 
     def validate_live(self, out_path: str | None = None) -> dict:
         """Build a per-camera empty-scene cloud in the rig frame and score how
@@ -730,14 +773,23 @@ class CalibrationManager:
             raise RuntimeError("need ≥2 solved cameras to validate")
 
         clouds: dict = {}
+        frusta: dict = {}
         for dev, T in transforms.items():
             try:
-                c = self._live_camera_cloud(dev, T)
+                c, f = self._live_camera_cloud(dev, T)
             except Exception as exc:  # noqa: BLE001
                 self._logger.warning("validate: %s cloud failed (%s)", dev, exc)
-                c = None
+                c = f = None
             if c is not None:
                 clouds[dev] = c
+                if f is not None:
+                    frusta[dev] = f
+                else:
+                    self._logger.warning(
+                        "validate: %s reports no depth intrinsics — its pairs are "
+                        "scored over the whole workspace box, including what the "
+                        "other camera never saw", dev,
+                    )
         if len(clouds) < 2:
             raise RuntimeError("could not build a depth cloud for ≥2 cameras")
 
@@ -747,7 +799,8 @@ class CalibrationManager:
             (anchor or {}).get("T_world_display"),
         )
         report = _validate.pairwise_agreement(
-            clouds, aabb=aabb,
+            clouds, frusta=frusta, aabb=aabb,
+            min_overlap=getattr(_cfg, "CALIB_VALIDATE_MIN_OVERLAP_FRAC", None),
             green={
                 "nn_median_mm": _cfg.CALIB_VALIDATE_GREEN_NN_MM,
                 "icp_translation_mm": _cfg.CALIB_VALIDATE_GREEN_ICP_TRANS_MM,
@@ -771,8 +824,51 @@ class CalibrationManager:
         }
         with open(out_path, "w") as f:
             _json.dump(payload, f, indent=2)
+        payload["preset"] = self._fold_validation_into_active_preset(report, transforms)
         self._logger.info("validation: %s (%d pairs)", report["verdict"], len(report["pairs"]))
         return payload
+
+    def _fold_validation_into_active_preset(self, report: dict, transforms: dict):
+        """Copy a fresh verdict into the active preset's ``validation_report.json``.
+
+        ``record_ready`` reads the *preset* artifact, not the live file this step
+        writes, and stamps it with the preset's extrinsics hash. Without this
+        fold-in a Validate can never clear a stale gate — re-solving a preset
+        deliberately leaves its validation stale, and the only other writer is
+        save-as, which re-derives the whole preset from a live session. Returns
+        the preset name it wrote, or ``None``.
+
+        Refuses when the live extrinsics are not the preset's: the report would
+        then carry a hash for extrinsics it was not scored against, which is the
+        staleness check inverted.
+        """
+        import numpy as np
+
+        from viki.calibration import artifacts, presets
+
+        name = presets.current_active()
+        if not name:
+            return None
+        try:
+            stored = artifacts.device_transforms(name)
+            same = set(stored) == set(transforms) and all(
+                np.allclose(stored[d], np.asarray(transforms[d], float), atol=1e-9)
+                for d in stored
+            )
+            if not same:
+                self._logger.warning(
+                    "validation: not folded into preset %r — the live extrinsics "
+                    "are not the ones the preset stores (save the preset first)", name,
+                )
+                return None
+            artifacts.write_validation(
+                name, verdict=report["verdict"], pairs=report["pairs"]
+            )
+            self._logger.info("validation: folded into preset %r", name)
+            return name
+        except Exception as exc:  # noqa: BLE001 — never fail the step on this
+            self._logger.warning("validation: preset fold-in failed (%s)", exc)
+            return None
 
     def clear_all(self) -> None:
         """Drop every sample on every worker and wipe the live capture photos."""
