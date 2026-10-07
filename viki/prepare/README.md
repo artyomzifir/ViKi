@@ -15,7 +15,7 @@ track exists — the object-relative form.
 | `fuse.py` | `fuse_trajectories(trajs, ts, ids, weights=None)` — resample to a common grid, then `Σ w·x / Σ w` per landmark per step (paper eq. 2). Plain mean when `weights` is `None`. |
 | `interpolate.py` | per-coordinate linear and natural-cubic gap filling; `max_gap` prevents fabrication across long occlusions. This is **not** a geometry-preserving SE(3) spline. |
 | `checkpoints.py` | atomic NPZ/JSON checkpoint persistence plus motion/anatomy diagnostics |
-| `represent.py` | `object_relative(wrist_world, object_world)` = `inv(O)·H` *(stub: no object tracker → returns `None`, paper §3.6)* |
+| `represent.py` | `object_relative(wrist_world, object_world)` = `inv(O)·H`; Prepare still has no object track at this stage, so its call returns `None` |
 | Savitzky-Golay | in `viki.dsp` (`smooth_landmark_sequence`), shared with `retarget` |
 | gripper | `viki.gripper.LinearGripper` over fused frames; V1 profiles retain `BinaryGripper` |
 
@@ -75,7 +75,9 @@ Full parameters, provenance and the reference hash are documented in
 
 - fusion weights: the caller passes detector visibility only — the range and
   incidence factors of eq. 2 are not computed.
-- object-relative representation and geometry-preserving SE(3) interpolation.
+- object-relative output inside `cln.npz` and geometry-preserving SE(3)
+  interpolation. The separate post-IK `viki object-relative` stage builds an
+  auditable sidecar once object models and a robot plan exist.
 ## Stable fused + articulated profile
 
 `stable-fused-hand-v2` is the default complete perception route. It uses linear

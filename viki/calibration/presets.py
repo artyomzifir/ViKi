@@ -274,6 +274,29 @@ def activate(name: str, dst: str | None = None) -> Path:
     return preset_path(name)
 
 
+def replace_extrinsics(name: str, extrinsics: list[dict]) -> Path:
+    """Replace only a preset's solved rig poses and refresh the active file.
+
+    The single-file v2 preset remains the compatibility source used by startup
+    and recording while the split ``artifacts`` layout is being adopted.  An
+    offline re-solve must therefore update both representations atomically from
+    the caller's point of view, or the next restart silently restores the old
+    camera pose.
+    """
+    if not extrinsics:
+        raise ValueError("no solved extrinsics")
+    path = preset_path(name)
+    data = _read(name)
+    if isinstance(data, list):
+        data = extrinsics
+    else:
+        data["extrinsics"] = extrinsics
+    path.write_text(json.dumps(data, indent=2))
+    if current_active() == _safe_name(name):
+        _write_active_extrinsics(extrinsics)
+    return path
+
+
 def delete(name: str) -> None:
     from viki.calibration import captures
 

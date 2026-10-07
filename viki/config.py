@@ -38,6 +38,11 @@ CLOUD_WORKSPACE_BBOX: list[float]  # world AABB [xmin,xmax,ymin,ymax,zmin,zmax];
 CLOUD_MAX_POINTS_PER_FRAME: int
 CLOUD_BG_SUBTRACT: bool  # drop cloud points matching the calibrated empty-scene depth
 CLOUD_BG_TOLERANCE_MM: float  # |depth - background| below this = static scene, dropped
+CLOUD_EDGE_FILTER: bool  # reject mixed depth samples near ray-space discontinuities
+CLOUD_EDGE_RADIUS_RAD: float  # angular neighbourhood radius; resolution-independent
+CLOUD_EDGE_JUMP_MM: float  # absolute local depth discontinuity threshold
+CLOUD_EDGE_JUMP_RELATIVE: float  # additional threshold relative to sample depth
+CLOUD_EXACT_COLOR_PROJECTION: bool  # use libk4a color→depth warp when available
 PERCEPTION_TRACK_LM: list[int]  # hand-landmark indices to keep (others left NaN)
 PERCEPTION_INTERP_MAX_GAP: int  # >0: leave interior gaps longer than N frames unfilled
 PERCEPTION_CONF_ALPHA: float  # α in ω_t = (mean_i max_k w_i)^α  (paper §3.5 eq. 5)
@@ -52,6 +57,8 @@ TRI_DEPTH_DELTA_M: float        # skin->joint-centre offset for fingertips (scal
 TRI_DEPTH_SPREAD_SCALE_M: float # depth weight decays exp(-local_std / this)
 TRI_RAY_REF_DEG: float          # ray angle at which the quality score's angle term saturates
 TRI_LOSS: str                   # scipy least_squares loss for the joint refine (soft_l1 | huber)
+TRI_TIME_ALIGN: bool            # resample each camera's 2-D track onto the group tick (free-running rigs)
+TRI_TIME_ALIGN_MAX_GAP_MS: float # refuse to interpolate across a neighbour further than this
 TRI_GEOMETRY_CAMERAS: list[str] # which cameras feed geometry; [] = all in observations_meta
 PERCEPTION_HAND_POSE_SOURCE: str  # landmarks | hand_fit; consumers select without overwriting cln pose
 PERCEPTION_HAND_FIT_ROI_MARGIN_M: float  # adaptive capsule-union ROI padding (m)
@@ -80,6 +87,11 @@ PERCEPTION_HAND_FIT_WORKERS: int  # window-solver threads; 0 = auto (min(4, cpu/
 PERCEPTION_HAND_FIT_WARM_START_MAD_K: float  # wrist warm-start spike gate (robust MAD units)
 PERCEPTION_HAND_FIT_DEADLINE_S: float  # wall-clock guard per fit_trajectory call; 0 = off
 KINECT_SYNC: dict  # exact multi-Kinect roles; {} is allowed only with fewer than 2 connected Kinects
+REALSENSE_INTER_CAM_SYNC_MODE: int  # 0 free-running, 1 master, 2 slave (needs a trigger cable)
+KINECT_COLOR_FORMAT: str        # wire format: "mjpg" (compressed, default) or "bgra32" (uncompressed)
+KINECT_MANUAL_COLOR_CONTROL: bool  # pin exposure/white balance after start (multi-cam sync needs manual)
+KINECT_EXPOSURE_TIME_US: int       # manual exposure, microseconds
+KINECT_WHITEBALANCE_K: int         # manual white balance, Kelvin (multiple of 10)
 SKELETON_RECS_DIR: str
 SKELETON_SMOOTHED_DIR: str
 SKELETON_COORDINATE_FRAME: str
@@ -110,10 +122,12 @@ CALIB_VALIDATE_GREEN_ICP_ROT_DEG: float   # … ICP correction rotation
 CALIB_VALIDATE_AMBER_NN_MM: float     # amber band (above ⇒ red): NN median …
 CALIB_VALIDATE_AMBER_ICP_TRANS_MM: float
 CALIB_VALIDATE_AMBER_ICP_ROT_DEG: float
+CALIB_VALIDATE_MIN_OVERLAP_FRAC: float  # a pair is unscorable ('unknown') below this shared-view fraction
 RECORDING_DURATION: int
 RECORDING_FPS: int
 RETARGET_DEFAULT_ROBOT: str
 RETARGET_DEFAULT_GRIPPER_MODEL: str
+RETARGET_REFERENCE_POLICY: str
 RETARGET_TARGET_POSITION_ANCHOR: str
 RETARGET_ROBOT_BASE_POSITION: list[float]
 RETARGET_ROBOT_BASE_RPY_DEG: list[float]
@@ -139,6 +153,8 @@ RETARGET_COLLISION_PAIRS: int
 RETARGET_COLLISION_MIN_DISTANCE_M: float
 RETARGET_APPROACH_SEC: float
 RETARGET_SEQUENTIAL_BASELINE: bool
+RETARGET_OBJECT_GRASP_ENABLED: bool
+RETARGET_OBJECT_CUBE_SIDE_MM: float
 MODELS_DIR: str
 
 
@@ -204,6 +220,7 @@ class Config:
 _DEFAULTS: dict[str, Any] = {
     "RETARGET_DEFAULT_ROBOT": "ur10",
     "RETARGET_DEFAULT_GRIPPER_MODEL": "robotiq_2f85",
+    "RETARGET_REFERENCE_POLICY": "robot_home",
     "RETARGET_TARGET_POSITION_ANCHOR": "pinch_center",
     "RETARGET_ROBOT_BASE_POSITION": [-0.7, 0.0, 0.0],
     "RETARGET_ROBOT_BASE_RPY_DEG": [0.0, 0.0, 0.0],
@@ -211,7 +228,7 @@ _DEFAULTS: dict[str, Any] = {
     "RETARGET_ADAPTER_RPY_DEG": [0.0, 0.0, 0.0],
     "RETARGET_ADAPTER_RADIUS_MM": 35.0,
     "RETARGET_HAND_TO_EE_TRANSLATION": [0.0, 0.0, 0.0],
-    "RETARGET_HAND_TO_EE_RPY_DEG": [-175.675, 15.45, -47.922],
+    "RETARGET_HAND_TO_EE_RPY_DEG": [4.325, 15.45, -47.922],
     "RETARGET_W_POSITION": 1.0,
     "RETARGET_W_ORIENTATION": 0.01,
     "RETARGET_W_VELOCITY": 0.002,
@@ -229,6 +246,8 @@ _DEFAULTS: dict[str, Any] = {
     "RETARGET_COLLISION_MIN_DISTANCE_M": 0.02,
     "RETARGET_APPROACH_SEC": 2.0,
     "RETARGET_SEQUENTIAL_BASELINE": False,
+    "RETARGET_OBJECT_GRASP_ENABLED": True,
+    "RETARGET_OBJECT_CUBE_SIDE_MM": 40.0,
     "POSE_BACKEND": "rtmpose-m-hand5",
     "GRIPPER": "linear",
     "EXPORT_FPS": 15,
@@ -242,6 +261,11 @@ _DEFAULTS: dict[str, Any] = {
     "CLOUD_MAX_POINTS_PER_FRAME": 40000,
     "CLOUD_BG_SUBTRACT": True,
     "CLOUD_BG_TOLERANCE_MM": 50.0,
+    "CLOUD_EDGE_FILTER": True,
+    "CLOUD_EDGE_RADIUS_RAD": 0.004,
+    "CLOUD_EDGE_JUMP_MM": 30.0,
+    "CLOUD_EDGE_JUMP_RELATIVE": 0.02,
+    "CLOUD_EXACT_COLOR_PROJECTION": True,
     "PERCEPTION_TRACK_LM": list(range(21)),
     "PERCEPTION_INTERP_MAX_GAP": 0,
     "PERCEPTION_CONF_ALPHA": 1.0,
@@ -257,6 +281,8 @@ _DEFAULTS: dict[str, Any] = {
     "TRI_RAY_REF_DEG": 20.0,
     "TRI_LOSS": "soft_l1",
     "TRI_GEOMETRY_CAMERAS": [],
+    "TRI_TIME_ALIGN": False,
+    "TRI_TIME_ALIGN_MAX_GAP_MS": 50.0,
     "PERCEPTION_HAND_POSE_SOURCE": "hand_fit",
     "PERCEPTION_HAND_FIT_ROI_MARGIN_M": 0.030,
     "PERCEPTION_HAND_FIT_FOREARM_CUT_M": 0.010,
@@ -284,6 +310,11 @@ _DEFAULTS: dict[str, Any] = {
     "PERCEPTION_HAND_FIT_WARM_START_MAD_K": 6.0,
     "PERCEPTION_HAND_FIT_DEADLINE_S": 120.0,
     "KINECT_SYNC": {},
+    "REALSENSE_INTER_CAM_SYNC_MODE": 0,
+    "KINECT_COLOR_FORMAT": "mjpg",
+    "KINECT_MANUAL_COLOR_CONTROL": True,
+    "KINECT_EXPOSURE_TIME_US": 8330,
+    "KINECT_WHITEBALANCE_K": 4500,
     "WORLD_ANCHOR_FILENAME": "data/world_anchor.json",
     "CALIB_POSE_MIN_ANGLE_DEG": 8.0,
     "CALIB_POSE_MIN_TRANSLATION_M": 0.05,

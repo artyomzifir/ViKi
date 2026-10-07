@@ -128,3 +128,57 @@ def test_auto_picks_a_reference_when_none_given():
     sets = _make_sets(poses, T_b_ref, noise_px=0.15, seed=4)
     out = solve_bundle(sets, INTR, BOARD)
     assert out["reference_device"] in ("cam_ref", "cam_b")
+
+
+def test_exact_colour_rays_remove_non_linear_lens_distortion():
+    class RayLookup:
+        def __init__(self):
+            self.rays = {}
+
+        def add(self, uv, ray):
+            self.rays[tuple(np.round(uv, 10))] = np.asarray(ray, float)
+
+        def color_pixel_to_ray(self, u, v):
+            return self.rays.get(tuple(np.round([u, v], 10)))
+
+    T_b_ref = _T([0.0, 0.45, 0.0], [0.35, 0.02, 0.08])
+    poses = [
+        ([0.05, 0.02, 0.0], [0.0, 0.0, 0.65]),
+        ([0.55, -0.10, 0.03], [-0.03, 0.02, 0.60]),
+        ([-0.45, 0.20, -0.05], [0.04, -0.03, 0.62]),
+        ([0.30, 0.40, 0.10], [0.02, 0.03, 0.70]),
+    ]
+    sets = _make_sets(poses, T_b_ref, noise_px=0.0)
+    projectors = {"cam_ref": RayLookup(), "cam_b": RayLookup()}
+
+    # Replace ideal observations by a deliberately strong radial distortion.
+    # The fake SDK projector retains the exact ray for each resulting pixel.
+    for row in sets:
+        for dev, obs in row["observations"].items():
+            ideal = np.asarray(obs["charuco_corners"], float)
+            xy = (ideal - np.asarray([K["cx"], K["cy"]])) / np.asarray(
+                [K["fx"], K["fy"]]
+            )
+            scale = 1.0 + 0.45 * np.sum(xy * xy, axis=1, keepdims=True)
+            distorted = xy * scale * np.asarray([K["fx"], K["fy"]])
+            distorted += np.asarray([K["cx"], K["cy"]])
+            for uv, ray_xy in zip(distorted, xy):
+                projectors[dev].add(uv, [ray_xy[0], ray_xy[1], 1.0])
+            obs["charuco_corners"] = distorted.tolist()
+
+    out = solve_bundle(
+        sets,
+        INTR,
+        BOARD,
+        reference_device="cam_ref",
+        color_ray_projectors=projectors,
+    )
+
+    T_ref_camb = np.asarray(out["devices"]["cam_b"])
+    d_rot, d_t = _pose_err(T_ref_camb, np.linalg.inv(T_b_ref))
+    assert d_rot < 0.05
+    assert d_t < 5e-4
+    assert out["solve"]["projection_models"] == {
+        "cam_b": "exact-color-ray",
+        "cam_ref": "exact-color-ray",
+    }

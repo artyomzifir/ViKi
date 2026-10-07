@@ -9,9 +9,16 @@ import cv2
 import numpy as np
 import pytest
 
+from scripts.diagnose_board_depth import validated_bias_series
 from viki import config
 from viki.episode import new_episode, stage_done
-from viki.perception.cloud import build_cloud
+from viki.perception.cloud import (
+    _bbox_mask,
+    _camera_samples,
+    _depth_edge_keep_mask,
+    _voxel_downsample_indices,
+    build_cloud,
+)
 
 
 def _unpack(buf: bytes):
@@ -64,6 +71,56 @@ def test_build_cloud_writes_parseable_frames(tmp_path):
     assert str(ep.cloud_dir) == out
 
 
+def test_board_bias_variant_preserves_raw_and_canonical_cloud(tmp_path):
+    ep = _make_episode(tmp_path, frames=1)
+    build_cloud(ep, voxel=0, bbox=[], bg_subtract=False)
+    canonical = (ep.cloud_dir / "000000.bin").read_bytes()
+    raw = np.load(ep.raw_dir / "cam0_depth" / "000000.npy").copy()
+    variant = ep.root / "cloud_board_corrected"
+    build_cloud(
+        ep, voxel=0, bbox=[], bg_subtract=False,
+        depth_biases_by_frame={"cam0": [10.0]}, output_dir=variant,
+    )
+    assert (ep.cloud_dir / "000000.bin").read_bytes() == canonical
+    np.testing.assert_array_equal(np.load(ep.raw_dir / "cam0_depth" / "000000.npy"), raw)
+    _, original_xyz, original_rgb = _unpack(canonical)
+    _, corrected_xyz, corrected_rgb = _unpack((variant / "000000.bin").read_bytes())
+    np.testing.assert_allclose(original_xyz[:, 2] - corrected_xyz[:, 2], 0.01, atol=1e-6)
+    np.testing.assert_array_equal(original_rgb, corrected_rgb)
+    assert json.loads((variant / "meta.json").read_text())["experimental_depth_bias_mm"] == {"cam0": [10.0]}
+
+
+def test_board_bias_requires_separate_output(tmp_path):
+    ep = _make_episode(tmp_path, frames=1)
+    with pytest.raises(ValueError, match="separate output"):
+        build_cloud(ep, depth_biases_by_frame={"cam0": [10.0]})
+    with pytest.raises(ValueError, match="separate output"):
+        build_cloud(ep, depth_biases_by_frame={"cam0": [10.0]}, output_dir=ep.cloud_dir)
+    with pytest.raises(ValueError, match="incomplete depth-bias"):
+        build_cloud(ep, depth_biases_by_frame={"cam0": []}, output_dir=ep.root / "variant")
+
+
+def test_board_bias_interpolation_rejects_sparse_or_unvalidated_measurements():
+    def row(frame, bias, raw=10.0, corrected=2.0):
+        return {
+            "frame": frame, "shared_rgb_corners": 20,
+            "heldout_pair_raw_mm": [raw, 12.0],
+            "heldout_pair_corrected_mm": [corrected, 3.0],
+            "cameras": {"cam0": {"range_bias_mm": bias,
+                                  "test_corners": 10,
+                                  "heldout_abs_error_mm": [1.0, 2.0]}},
+        }
+
+    report = {"frames": [row(0, 8.0), row(15, 10.0)]}
+    series = validated_bias_series(report, 18)["cam0"]
+    assert series[0] == 8.0 and series[15] == series[17] == 10.0
+    assert series[6] == pytest.approx(8.8)
+    with pytest.raises(ValueError, match="every 20 frames"):
+        validated_bias_series({"frames": [row(0, 8.0), row(30, 10.0)]}, 31)
+    with pytest.raises(ValueError, match="independent check"):
+        validated_bias_series({"frames": [row(0, 8.0), row(15, 10.0, corrected=11.0)]}, 18)
+
+
 def test_coarser_voxel_yields_fewer_points(tmp_path, monkeypatch):
     ep = _make_episode(tmp_path, frames=1)
 
@@ -76,3 +133,99 @@ def test_coarser_voxel_yields_fewer_points(tmp_path, monkeypatch):
     coarse, _, _ = _unpack((ep.cloud_dir / "000000.bin").read_bytes())
 
     assert coarse < fine
+
+
+def test_camera_samples_retain_projected_colour_pixels():
+    color = np.zeros((4, 5, 3), np.uint8)
+    color[2, 3] = [10, 20, 30]
+    depth = np.zeros((4, 5), np.uint16)
+    depth[2, 3] = 1000
+    K = np.array([[100.0, 0.0, 2.0], [0.0, 100.0, 2.0], [0.0, 0.0, 1.0]])
+
+    xyz, rgb, uv, depth_uv = _camera_samples(
+        color, depth, 1, K, None, np.eye(4), return_depth_uv=True
+    )
+
+    np.testing.assert_array_equal(uv, [[3, 2]])
+    np.testing.assert_array_equal(depth_uv, [[3, 2]])
+    np.testing.assert_array_equal(rgb, [[30, 20, 10]])
+    np.testing.assert_allclose(xyz, [[0.01, 0.0, 1.0]])
+
+
+def test_camera_samples_can_use_exact_color_to_depth_warp():
+    class Calibration:
+        def color_deproject_maps(self, height, width):
+            rays = np.zeros((height, width, 3), np.float64)
+            rays[:, :, 2] = 1.0
+            return rays, np.zeros_like(rays)
+
+        def align_color_to_depth(self, _color, depth):
+            aligned = np.zeros((*depth.shape, 3), np.uint8)
+            aligned[1, 1] = [11, 22, 33]
+            return aligned
+
+    color = np.zeros((2, 2, 3), np.uint8)
+    color[0, 0] = [1, 2, 3]
+    depth = np.zeros((2, 2), np.uint16)
+    depth[1, 1] = 1000
+    K = np.eye(3)
+
+    _xyz, rgb, uv = _camera_samples(
+        color,
+        depth,
+        1,
+        K,
+        Calibration(),
+        np.eye(4),
+        exact_color_projection=True,
+    )
+
+    np.testing.assert_array_equal(rgb, [[33, 22, 11]])
+    np.testing.assert_array_equal(uv, [[0, 0]])
+
+
+def test_voxel_downsample_indices_preserve_source_rows():
+    xyz = np.array([[0.0, 0, 0], [0.001, 0, 0], [0.02, 0, 0]], np.float32)
+    idx = _voxel_downsample_indices(xyz, 0.01)
+    np.testing.assert_array_equal(idx, [0, 2])
+
+
+def test_bbox_mask_keeps_only_workspace_points():
+    xyz = np.array([[0.0, 0.0, 0.5], [2.0, 0.0, 0.5]], np.float32)
+    keep = _bbox_mask(xyz, [-1, 1, -1, 1, 0, 1])
+    np.testing.assert_array_equal(keep, [True, False])
+
+
+def test_depth_edge_filter_rejects_metric_discontinuity_not_flat_surface():
+    depth = np.full((9, 13), 1000, np.uint16)
+    depth[:, 7:] = 1400
+    K = np.array([[100.0, 0, 6.0], [0, 100.0, 4.0], [0, 0, 1.0]])
+
+    keep = _depth_edge_keep_mask(
+        depth, K, radius_rad=0.01, jump_mm=30.0, jump_relative=0.02
+    )
+
+    assert keep[:, :5].all()
+    assert not keep[:, 6:8].any()
+    assert keep[:, 8:].all()
+
+
+def test_depth_edge_filter_scales_pixel_radius_with_focal_length():
+    low = np.full((9, 13), 1000, np.uint16)
+    low[:, 7:] = 1400
+    high = np.repeat(np.repeat(low, 2, axis=0), 2, axis=1)
+    K_low = np.array([[100.0, 0, 6.0], [0, 100.0, 4.0], [0, 0, 1.0]])
+    K_high = K_low.copy()
+    K_high[:2] *= 2.0
+    K_high[2, 2] = 1.0
+
+    keep_low = _depth_edge_keep_mask(
+        low, K_low, radius_rad=0.01, jump_mm=30.0, jump_relative=0.02
+    )
+    keep_high = _depth_edge_keep_mask(
+        high, K_high, radius_rad=0.01, jump_mm=30.0, jump_relative=0.02
+    )
+
+    low_rejected = np.flatnonzero(~keep_low[4])
+    high_rejected = np.flatnonzero(~keep_high[8])
+    assert np.ptp(high_rejected) == 2 * np.ptp(low_rejected) + 1

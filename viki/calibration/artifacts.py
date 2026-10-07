@@ -18,7 +18,9 @@ with an independent lifecycle:
     observations when the extrinsics change.
 
 ``validation_report.json``
-    Cloud-agreement verdict (green / amber / red). Carries ``extrinsics_hash``.
+    Cloud-agreement verdict (green / amber / unknown / red). ``unknown`` means
+    the pair could not be scored — too little shared field of view — which is
+    not the same as the clouds disagreeing. Carries ``extrinsics_hash``.
 
 ``<device_id>_bg.npz``
     Per-camera empty-scene depth plate: median depth (mm) + a validity mask.
@@ -165,6 +167,23 @@ def write_extrinsics(
     return payload
 
 
+def annotate_solve(name: str, **fields) -> dict | None:
+    """Merge ``fields`` into a preset's stored ``solve`` dict, in place.
+
+    Used to record facts the solver itself does not know — chiefly that the
+    operator forced the solve past unmet readiness gates. Returns the updated
+    payload, or ``None`` when the preset has no ``extrinsics.json`` yet.
+    """
+    data = read_extrinsics(name)
+    if not data:
+        return None
+    solve = dict(data.get("solve") or {})
+    solve.update(fields)
+    data["solve"] = solve
+    _dump(_extrinsics_path(name), data)
+    return data
+
+
 def resolve_from_observations(name: str, *, reference_device: str | None = None) -> dict:
     """Re-run the bundle solve from the ``sets`` / ``intrinsics`` / ``board``
     stored in ``extrinsics.json`` and rewrite it in place. Used after a set is
@@ -176,12 +195,17 @@ def resolve_from_observations(name: str, *, reference_device: str | None = None)
     data = read_extrinsics(name)
     if not data:
         raise FileNotFoundError(f"no extrinsics.json for preset {name!r}")
-    out = solve_bundle(
-        data.get("sets", []),
-        data.get("intrinsics", {}),
-        data.get("board") or {},
-        reference_device=reference_device or data.get("reference_device"),
-    )
+    projectors = _preset_color_ray_projectors(name, data.get("intrinsics", {}))
+    try:
+        out = solve_bundle(
+            data.get("sets", []),
+            data.get("intrinsics", {}),
+            data.get("board") or {},
+            reference_device=reference_device or data.get("reference_device"),
+            color_ray_projectors=projectors,
+        )
+    finally:
+        _close_projectors(projectors)
     payload = write_extrinsics(
         name,
         reference_device=out["reference_device"],
@@ -191,6 +215,21 @@ def resolve_from_observations(name: str, *, reference_device: str | None = None)
         intrinsics=data.get("intrinsics", {}),
         board=data.get("board"),
     )
+    # Keep the compatibility v2 preset (and, when selected, the active flat
+    # file consumed by the recorder) on the same solve.  Otherwise startup
+    # would silently restore the pre-correction matrix.
+    from viki.calibration import presets
+
+    try:
+        presets.replace_extrinsics(
+            name,
+            [
+                {"device_id": dev, **as_camera_extrinsics(T)}
+                for dev, T in out["devices"].items()
+            ],
+        )
+    except FileNotFoundError:
+        pass  # native split-layout preset, no compatibility file to refresh
     try:
         recompute_world_anchor(name)  # keep the anchor on the new rig frame
     except (ValueError, KeyError) as exc:
@@ -231,6 +270,8 @@ def compute_world_display(
     intrinsics: dict[str, dict],
     board_cfg: dict,
     device_transforms: dict[str, Any],
+    *,
+    color_ray_projectors: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """``T_world_display`` (4x4, rig frame → display/world frame) from one set of
     home-pose ChArUco observations.
@@ -244,6 +285,7 @@ def compute_world_display(
     """
     import cv2
 
+    from viki.calibration.bundle import _rectify_pixels
     from viki.calibration.geometry import canonical_board_extrinsics
     from viki.calibration.samples import _K, _charuco_board
     from viki.contracts import CalibrationExtrinsics
@@ -253,6 +295,7 @@ def compute_world_display(
     obj_all = np.asarray(_charuco_board(board_cfg).getChessboardCorners(), np.float64)
     bs = tuple(board_cfg["board_size"])
     ss = float(board_cfg["square_size"])
+    color_ray_projectors = color_ray_projectors or {}
 
     for dev, o in (observations or {}).items():
         if dev not in intrinsics or dev not in device_transforms:
@@ -263,6 +306,12 @@ def compute_world_display(
             continue
         K = _K(intrinsics[dev])
         dist = np.asarray(intrinsics[dev].get("dist_coeffs", np.zeros(5)), float).reshape(-1)
+        projector = color_ray_projectors.get(dev)
+        if projector is not None:
+            ids, uv = _rectify_pixels(uv, ids, K, projector)
+            dist = np.zeros(5, dtype=np.float64)
+            if ids.size < 4:
+                continue
         ok, rvec, tvec = cv2.solvePnP(obj_all[ids], uv, K, dist, flags=cv2.SOLVEPNP_SQPNP)
         if not ok:
             continue
@@ -298,10 +347,15 @@ def write_world_anchor(
     from ``observations`` against the preset's current extrinsics."""
     if T_world_display is None:
         extr = read_extrinsics(name) or {}
-        T_world_display = compute_world_display(
-            observations, extr.get("intrinsics", {}), extr.get("board") or {},
-            {d: e["T_ref_cam"] for d, e in (extr.get("devices") or {}).items()},
-        )
+        projectors = _preset_color_ray_projectors(name, extr.get("intrinsics", {}))
+        try:
+            T_world_display = compute_world_display(
+                observations, extr.get("intrinsics", {}), extr.get("board") or {},
+                {d: e["T_ref_cam"] for d, e in (extr.get("devices") or {}).items()},
+                color_ray_projectors=projectors,
+            )
+        finally:
+            _close_projectors(projectors)
     payload = {
         "schema": WORLD_ANCHOR_SCHEMA,
         "created_at": _now_iso(),
@@ -323,6 +377,28 @@ def recompute_world_anchor(name: str) -> dict | None:
     return write_world_anchor(name, observations=cur["observations"])
 
 
+def _preset_color_ray_projectors(name: str, intrinsics: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild saved K4A ray models for an offline calibration re-solve."""
+    from viki.calibration import presets
+
+    out: dict[str, Any] = {}
+    for dev in intrinsics:
+        try:
+            projector = presets.k4a_calibration(name, dev)
+        except (OSError, ValueError, KeyError):
+            projector = None
+        if callable(getattr(projector, "color_pixel_to_ray", None)):
+            out[dev] = projector
+    return out
+
+
+def _close_projectors(projectors: dict[str, Any]) -> None:
+    for projector in projectors.values():
+        close = getattr(projector, "close", None)
+        if callable(close):
+            close()
+
+
 def read_world_anchor(name: str) -> dict | None:
     return _load(_world_anchor_path(name))
 
@@ -341,8 +417,8 @@ def world_display_matrix(name: str) -> np.ndarray:
 def write_validation(
     name: str, *, verdict: str, pairs: list[dict], extrinsics_hash_: str | None = None
 ) -> dict:
-    if verdict not in ("green", "amber", "red"):
-        raise ValueError(f"verdict must be green/amber/red, got {verdict!r}")
+    if verdict not in ("green", "amber", "unknown", "red"):
+        raise ValueError(f"verdict must be green/amber/unknown/red, got {verdict!r}")
     payload = {
         "schema": VALIDATION_SCHEMA,
         "created_at": _now_iso(),
@@ -426,6 +502,12 @@ def record_ready(name: str, *, allow_amber: bool = False) -> tuple[bool, str]:
     verdict = st["validation"]["verdict"]
     if verdict == "red":
         return False, "validation verdict is red — the camera clouds do not agree; recalibrate"
+    if verdict == "unknown" and not allow_amber:
+        # Not scorable is not the same as wrong: the cameras share too little
+        # view (or too few points) for the gate to have an opinion. Let the
+        # operator through on an explicit confirm, like amber.
+        return False, ("validation could not be scored — the cameras share too little "
+                       "of the workspace; confirm to record anyway")
     if verdict == "amber" and not allow_amber:
         return False, "validation verdict is amber — confirm to record anyway"
     return True, ""

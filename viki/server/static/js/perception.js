@@ -145,6 +145,7 @@ export function mount(view) {
 
   ctl = scene3d.create(root.querySelector('[data-role="canvas"]'), {
     api, log, layers: sessionGet('viewerLayers', null),
+    objectModels: true,
   });
   ctl.onFrame((f, n) => {
     root.querySelector('[data-role="time"]').max = Math.max(0, n - 1);
@@ -319,6 +320,7 @@ async function loadEpisodes() {
   const keep = new Set(selectedEpisodes());
   episodes.renderList(root.querySelector('[data-role="eps"]'), epList, {
     select: true, view: true, selected: keep, activeId: viewedEp,
+    disabledReason: ep => ep.frames > 0 ? '' : 'No completed recording',
     emptyText: 'no episodes',
   });
   syncAllCheckbox();
@@ -331,13 +333,13 @@ function markViewed(id) {
 }
 
 function selectedEpisodes() {
-  return [...root.querySelectorAll('[data-ep]:checked')].map(c => c.dataset.ep);
+  return [...root.querySelectorAll('[data-ep]:checked:not(:disabled)')].map(c => c.dataset.ep);
 }
 
 function syncAllCheckbox() {
   const all = root?.querySelector('[data-role="all"]');
   if (!all) return;
-  const boxes = [...root.querySelectorAll('[data-ep]')];
+  const boxes = [...root.querySelectorAll('[data-ep]:not(:disabled)')];
   all.checked = boxes.length > 0 && boxes.every(c => c.checked);
 }
 
@@ -423,7 +425,7 @@ function onChange(e) {
   else if (el.dataset.role === 'model') syncModel();
   else if (el.dataset.role === 'dataset') { persist(); loadEpisodes(); }
   else if (el.dataset.role === 'all') {
-    root.querySelectorAll('[data-ep]').forEach(c => { c.checked = el.checked; });
+    root.querySelectorAll('[data-ep]:not(:disabled)').forEach(c => { c.checked = el.checked; });
   }
   else if (el.dataset.ep) syncAllCheckbox();   // a row checkbox toggled
   else if (el.dataset.role) persist();   // any other param widget

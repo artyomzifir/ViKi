@@ -1,10 +1,11 @@
 # Single compose file. One image (Dockerfile `test` target = base + pytest),
-# four services:
+# five services:
 #
 #   web       docker compose up                       -> FastAPI on :8000
 #   test      docker compose run --rm test [args]      -> pytest tests/ (args append)
 #   cli       docker compose run --rm cli <verb> ...   -> `viki <verb> ...`
 #   terminal  docker compose run --rm terminal         -> bash, for manual poking
+#   sam2      docker compose run --rm sam2 <args>       -> optional SAM 2.1 image
 #
 # Only `web` starts on `up`; the rest sit behind the `tools` profile and are
 # meant for `run`.
@@ -40,6 +41,14 @@ x-common: &common
     - "c 81:* rwm"               # v4l, in case a backend opens a video node
   volumes:
     - /dev/bus/usb:/dev/bus/usb  # dynamic — new/re-enumerated nodes show through
+    # librealsense drives the D435i through **V4L2**, not libusb, so it needs the
+    # /dev/videoN nodes as well.  They live directly in /dev and renumber on every
+    # replug, so there is nothing narrower to bind.  Dropping this in 85be66f is
+    # why ViKi stopped seeing the RealSense entirely on 2026-09-03; the Kinects
+    # kept working because libk4a does use libusb.  Access is still gated by
+    # device_cgroup_rules above — majors outside usb/dri/v4l stay denied, which
+    # is the part `privileged: true` used to give away.
+    - /dev:/dev                  # V4L2 nodes for librealsense (see note above)
     - /run/udev:/run/udev:ro
     - /tmp/.X11-unix:/tmp/.X11-unix
     - ./viki:/app/viki
@@ -64,7 +73,11 @@ x-common: &common
     - LIBGL_ALWAYS_SOFTWARE=1
     - GALLIUM_DRIVER=llvmpipe
     - NVIDIA_VISIBLE_DEVICES=all
-    - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    # libk4a's proprietary depth engine creates an OpenGL 4.4 context even
+    # though ViKi itself renders the viewer in the browser.  Without the
+    # graphics/display capabilities the NVIDIA runtime exposes nvidia-smi and
+    # CUDA, but omits libGLX_nvidia; depth startup then fails with error 204.
+    - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display
   devices:
     - /dev/dri:/dev/dri
 
@@ -101,3 +114,16 @@ services:
     tty: true
     entrypoint: ["/app/docker/entrypoint.sh"]
     command: ["/bin/bash"]
+
+  sam2:
+    <<: *common
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: sam2
+    image: viki-sam2
+    container_name: viki-sam2
+    restart: "no"
+    profiles: ["tools"]
+    entrypoint: ["/app/docker/entrypoint.sh", "viki"]
+    command: ["--help"]

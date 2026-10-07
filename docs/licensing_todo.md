@@ -1,6 +1,6 @@
 # License audit and remediation TODO
 
-Status: open technical debt. Last reviewed: 2026-09-07.
+Status: open technical debt. Last reviewed: 2026-09-14.
 
 ViKi's own source code is distributed under Apache-2.0, but that license does
 not automatically cover third-party libraries, binary SDKs, model weights, or
@@ -56,6 +56,7 @@ versions that were reviewed.
 | Retarget | qpsolvers | LGPL-3.0 | Runtime wrapper around OSQP |
 | Retarget | quadprog | GPL-2.0-or-later | Installed, apparently unused |
 | Perception | NVIDIA CUDA runtime libraries | NVIDIA proprietary terms | Installed in Docker for GPU inference |
+| Perception | Meta SAM 2 code + official SAM 2.1 checkpoints | Apache-2.0 ([upstream repository](https://github.com/facebookresearch/sam2)) | Optional experimental image; Small checkpoint is downloaded separately and SHA-256 verified |
 | Capture | Azure Kinect depth engine | Microsoft proprietary terms / EULA | Included with the binary `libk4a` package |
 | Robot assets | Supported UR and iiwa descriptions | Mostly BSD variants | Downloaded and cached at runtime |
 | Robot assets | Selected newer UR meshes | Custom Universal Robots terms | Present in some description caches; not currently selectable |

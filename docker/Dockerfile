@@ -29,7 +29,13 @@ RUN mkdir -p /etc/apt/keyrings && \
         librealsense2 librealsense2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Azure Kinect SDK (libk4a) ─────────────────────────────────────────────────
+# ── Azure Kinect SDK (libk4a + k4a-tools) ────────────────────────────────────
+# k4a-tools carries `k4arecorder`, the vendor capture binary. It is retained
+# for raw-MKV diagnostics, not as a workaround: two Kinects now capture through
+# ViKi with one independent xHCI controller per camera (see bugs.md row 1).
+# k4a-tools wants libsoundio1 for the microphone array; 24.04 dropped it, so
+# it comes from the Ubuntu universe pool. The recorder will not load without
+# the .so even when audio is never recorded.
 # Packages only exist for ubuntu/18.04 on Microsoft's repo.
 # EULA must be pre-accepted via debconf for non-interactive install.
 # Source: https://github.com/microsoft/Azure-Kinect-Sensor-SDK/issues/1190
@@ -41,9 +47,13 @@ RUN echo 'libk4a1.4 libk4a1.4/accepted-eula-hash string 0f5d5c5de396e4fee4c0753a
         https://packages.microsoft.com/ubuntu/18.04/prod/pool/main/libk/libk4a1.4/libk4a1.4_1.4.1_amd64.deb && \
     wget -qO /tmp/libk4a-dev.deb \
         https://packages.microsoft.com/ubuntu/18.04/prod/pool/main/libk/libk4a1.4-dev/libk4a1.4-dev_1.4.1_amd64.deb && \
+    wget -qO /tmp/k4a-tools.deb \
+        https://packages.microsoft.com/ubuntu/18.04/prod/pool/main/k/k4a-tools/k4a-tools_1.4.1_amd64.deb && \
+    wget -qO /tmp/libsoundio1.deb \
+        http://archive.ubuntu.com/ubuntu/pool/universe/libs/libsoundio/libsoundio1_1.1.0-1_amd64.deb && \
     apt-get update && apt-get install -y --no-install-recommends \
-        /tmp/libk4a.deb /tmp/libk4a-dev.deb && \
-    rm -f /tmp/libk4a*.deb && \
+        /tmp/libk4a.deb /tmp/libk4a-dev.deb /tmp/libsoundio1.deb /tmp/k4a-tools.deb && \
+    rm -f /tmp/libk4a*.deb /tmp/k4a-tools.deb /tmp/libsoundio1.deb && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Python deps ───────────────────────────────────────────────────────────────
@@ -100,4 +110,18 @@ FROM base AS test
 # site-packages; "[dev]" pulls the test extras (pytest). Runtime deps are
 # already satisfied from requirements.txt above, so this resolves from cache.
 RUN --mount=type=cache,target=/root/.cache/pip pip install -e ".[dev]"
+CMD ["/bin/bash"]
+
+# Optional SAM 2.1 inference image.  Keep PyTorch out of the normal web/test
+# image: segmentation is an offline GPU job and its CUDA wheels are several GB.
+# CUDA 12.8 is required here for the host's Blackwell (sm_120) GPU.  SAM 2 is
+# pinned to an audited upstream commit instead of following mutable `main`.
+FROM test AS sam2
+ARG SAM2_COMMIT=2b90b9f5ceec907a1c18123530e92e794ad901a4
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cu128 \
+        "torch==2.8.0" "torchvision==0.23.0" && \
+    pip install "hydra-core>=1.3.2" "iopath>=0.1.10" "pillow>=9.4.0" && \
+    SAM2_BUILD_CUDA=0 pip install --no-build-isolation --no-deps \
+        "git+https://github.com/facebookresearch/sam2.git@${SAM2_COMMIT}"
 CMD ["/bin/bash"]

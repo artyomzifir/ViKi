@@ -17,6 +17,15 @@ from viki.contracts import (  # noqa: F401
 )
 
 
+class CameraStreamError(RuntimeError):
+    """The backend reports that its stream has failed and must be stopped.
+
+    Unlike :class:`TimeoutError`, this is not a dropped frame that a worker may
+    safely retry. Backends raise it when their SDK says the current streaming
+    session has ended or the device has been lost.
+    """
+
+
 class CameraBackend(ABC):
     """
     Abstract camera backend.
@@ -52,7 +61,8 @@ class CameraBackend(ABC):
 
         Raises
         ------
-        RuntimeError  if the backend is not started or the device is lost
+        CameraStreamError  if the running stream failed or the device was lost
+        RuntimeError  if the backend is not started
         TimeoutError  if no frame arrives within the configured timeout
         """
 

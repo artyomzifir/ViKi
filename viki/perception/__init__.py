@@ -19,6 +19,22 @@ from viki.contracts import (  # noqa: F401
     SkeletonFrame,
 )
 from viki.perception.backends import HandPoseBackend, load_backend  # noqa: F401
+from viki.perception.auto_prompts import (  # noqa: F401
+    AutoPromptConfig,
+    generate_auto_prompts,
+)
+from viki.perception.object_model import (  # noqa: F401
+    OBJECT_MODEL_SCHEMA,
+    ObjectModelConfig,
+    build_object_models,
+)
+from viki.perception.scene import (  # noqa: F401
+    ScenePerceptionOpts,
+    build_object_models_episode,
+    lift_segmented_episode,
+    scene_perception_episode,
+    segment_episode,
+)
 
 __all__ = [
     "LM",
@@ -28,5 +44,15 @@ __all__ = [
     "SkeletonFrame",
     "EndEffectorPose",
     "HandPoseBackend",
+    "AutoPromptConfig",
+    "generate_auto_prompts",
+    "ObjectModelConfig",
+    "OBJECT_MODEL_SCHEMA",
+    "build_object_models",
+    "ScenePerceptionOpts",
+    "segment_episode",
+    "lift_segmented_episode",
+    "build_object_models_episode",
+    "scene_perception_episode",
     "load_backend",
 ]

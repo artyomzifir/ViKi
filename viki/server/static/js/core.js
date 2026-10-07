@@ -98,7 +98,7 @@ export async function initializeFrontendConfig(config) {
         boardSize: config.CALIB_ARUCO_BOARD_SIZE,
         squareSize: config.CALIB_ARUCO_SQUARE_SIZE,
         markerSize: config.CALIB_ARUCO_MARKER_SIZE,
-        defaultDict: 'DICT_5X5_50', // This is hardcoded as a string for UI, mapping to ID 4
+        dictId: config.CALIB_ARUCO_DICT, // cv2.aruco enum id; the UI maps it to a name
       }
     },
     recording: {
@@ -114,6 +114,7 @@ export async function initializeFrontendConfig(config) {
     retarget: {
       robot: config.RETARGET_DEFAULT_ROBOT ?? 'ur10',
       gripper: config.RETARGET_DEFAULT_GRIPPER_MODEL ?? 'robotiq_2f85',
+      referencePolicy: config.RETARGET_REFERENCE_POLICY ?? 'robot_home',
       targetPositionAnchor: config.RETARGET_TARGET_POSITION_ANCHOR ?? 'pinch_center',
       basePosition: config.RETARGET_ROBOT_BASE_POSITION ?? [0, 0, 0],
       baseRpyDeg: config.RETARGET_ROBOT_BASE_RPY_DEG ?? [0, 0, 0],
@@ -140,6 +141,8 @@ export async function initializeFrontendConfig(config) {
       approachSec: config.RETARGET_APPROACH_SEC ?? 2,
       sequentialBaseline: config.RETARGET_SEQUENTIAL_BASELINE ?? false,
       poseSource: config.PERCEPTION_HAND_POSE_SOURCE ?? 'landmarks',
+      objectGrasp: config.RETARGET_OBJECT_GRASP_ENABLED ?? true,
+      objectCubeSideMm: config.RETARGET_OBJECT_CUBE_SIDE_MM ?? 40,
     },
   };
 

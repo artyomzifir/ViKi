@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-orange.svg)
-![Milestone](https://img.shields.io/badge/milestone-v0.0.1%20trajectory%20export-informational.svg)
+![Milestone](https://img.shields.io/badge/milestone-v0.0.2%20scene%20geometry-informational.svg)
 
 Human video is cheap and abundant, but naive retargeting from human to robot
 kinematics produces noisy, jerky trajectories. ViKi captures the demonstration
@@ -26,7 +26,11 @@ skeleton next to the robot arm converging onto the retargeted trajectory.*
 and not everything advertised below is finished.**
 
 - The capture → skeleton → retarget → **trajectory export** path runs end to end.
-  That is the v0.0.1 milestone.
+  `v0.0.2` also adds resolution-independent K4A geometry and a resumable
+  scene-perception branch that produces compact rigid-object models and a
+  separate post-IK object-relative trajectory sidecar. Cube-aware grasp is
+  now the default retarget method for the UR10/Robotiq setup, but requires a
+  tracked cube and has not been validated in simulation.
 - **Accuracy is still being tuned.** Triangulation gating, multi-camera sync and
   the articulated hand-fit model are the subject of ongoing measurement — see
   [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md).
@@ -69,6 +73,8 @@ be re-run, compared or audited on its own:
 
 ```
 raw/ → rec.npz → cln.npz → plan.h5 → (replay.h5) → dataset
+  └→ SAM masks → semantic cloud → object_models.npz
+                           + plan.h5 → object_relative.npz → dataset
 ```
 
 ---
@@ -84,8 +90,17 @@ docker compose up --build      # web UI + API on http://localhost:8000
 ```
 
 Read [SETUP_GUIDE.md](SETUP_GUIDE.md) **before** plugging in cameras — Azure
-Kinect needs a GRUB `usbfs` bump, `xhost +local:`, a separate 10 Gbps USB hub per
-device, and a sync cable for multi-Kinect capture.
+Kinect needs a GRUB `usbfs` bump, `xhost +local:`, one independent USB host
+controller per Kinect, and a sync cable for multi-Kinect capture.
+
+> **Two Kinects require two independent USB host controllers on this rig.**
+> The old single-controller wiring hard-locked the host. The current setup puts
+> one camera on the motherboard Intel xHCI and one on the Renesas PCIe xHCI;
+> dual-camera capture and wired sync now work. Separate sockets or hubs on the
+> *same* controller are not sufficient. Check the PCI controller topology after
+> rewiring; see [SETUP_GUIDE.md](SETUP_GUIDE.md#5-usb-wiring-for-two-azure-kinects).
+> The historical failure is closed in [`bugs.md`](bugs.md) and
+> [`docs/camera_freeze_investigation.md`](docs/camera_freeze_investigation.md).
 
 ### Requirements
 
@@ -93,8 +108,8 @@ device, and a sync cable for multi-Kinect capture.
 |---|---|
 | OS | Linux (tested on Ubuntu) |
 | Runtime | Docker + Docker Compose |
-| GPU | optional; NVIDIA CUDA accelerates the RTMPose backend |
-| Cameras | Intel RealSense D435i and/or Azure Kinect DK |
+| GPU | optional for the hand/retarget path; NVIDIA CUDA is required by the scene-perception SAM 2.1 image |
+| Cameras | Intel RealSense D435i and/or Azure Kinect DK — one independent USB controller per Kinect |
 | Robot | a URDF from `robot_descriptions` — UR3/UR5/UR10/UR5e/UR10e, iiwa14 (default: `ur10`) |
 
 You can run the perception stages on pre-recorded episodes with no cameras
@@ -113,6 +128,7 @@ produced on first use; some of it you have to go and get.
 | **Robot URDF descriptions** | `models/robot_descriptions/` | Downloaded at the **first retarget run** by the `robot_descriptions` package. Needs network access from inside the container. |
 | **Gripper URDFs** | `models/robot_descriptions/` | Same mechanism. Only **Robotiq 2F-85** is wired up; the other profiles refuse to load and state why (licence/packaging unverified). Supplying your own gripper is on you. |
 | **Hand-pose model weights** | `~/.cache/`, `models/` | MediaPipe HandLandmarker and RTMPose ONNX **auto-download** on first use. The `mmpose-heatmap` models (HRNetv2, Hourglass-52, SCNet-50, ResNet-50) are **not published as ONNX** — convert them yourself with `mmdeploy` or fetch from the OpenMMLab Deploee, then drop the `.onnx` into `models/`. |
+| **SAM 2.1 checkpoint** | `models/sam2/sam2.1_hiera_small.pt` | Optional, for the scene-perception branch. Download the official Meta checkpoint; ViKi verifies its SHA-256 before inference. SAM 2 code and checkpoints are Apache-2.0 licensed. |
 | **Camera calibration** | `data/` | Produced by you, per rig, with the Calibration tab — intrinsics, extrinsics, world anchor. Calibration is rig-specific and varies between recording sessions; none is shipped. |
 | **Recordings / episodes** | `data/episodes/`, `data/datasets/` | Yours. Record them with ViKi, or import an existing dataset. |
 | **Configuration** | `data/user_configuration.json` | Copied from `default_configuration.json` on first run, then edited by you (robot, base offset, adapter, profiles). |
@@ -133,8 +149,11 @@ produced on first use; some of it you have to go and get.
 | record | [`viki/cameras`](viki/cameras/README.md) | works |
 | calibrate | [`viki/calibration`](viki/calibration/README.md) | works |
 | extract (skeleton) | [`viki/perception`](viki/perception/README.md) | works — accuracy tuning ongoing |
+| segment (instances + RGB-D lift) | [`viki/perception`](viki/perception/README.md#scene-perception) | works as an explicit CUDA stage; missing pixels remain unknown |
+| object-model (rigid core/shell) | [`viki/perception`](viki/perception/README.md#scene-perception) | required for default cube-aware retarget; built by the explicit CUDA scene stage |
+| object-relative (hand/TCP tracks) | [`viki/object_centric.py`](viki/object_centric.py) | post-IK diagnostic sidecar; cube-aware IK is a separate geometric pilot |
 | prepare (fuse + smooth) | [`viki/prepare`](viki/prepare/README.md) | works — accuracy tuning ongoing |
-| retarget (IK) | [`viki/retarget`](viki/retarget/README.md) | works |
+| retarget (IK) | [`viki/retarget`](viki/retarget/README.md) | cube-aware default with readiness checks; geometric pilot only, no simulated grasp verdict |
 | replay (hardware validation) | [`viki/replay`](viki/replay/README.md) | **stub** — no hardware validation |
 | export → trajectory bundle | [`viki/export`](viki/export/README.md) | works (numpy only) |
 | export → LeRobot dataset | [`viki/export`](viki/export/README.md) | partial — needs optional deps; object-relative annotation is a placeholder |
@@ -142,7 +161,7 @@ produced on first use; some of it you have to go and get.
 See [`viki/README.md`](viki/README.md) for the full package map and
 cross-cutting rules.
 
-### Trajectory export (v0.0.1)
+### Trajectory export
 
 ```bash
 docker compose run --rm cli export data/episodes/<id> --out data/datasets/pick
@@ -175,10 +194,14 @@ The same stages are available headless:
 ```bash
 docker compose run --rm cli record   ...   # capture a synced RGB-D scene
 docker compose run --rm cli extract  ...   # raw/  -> rec.npz
+docker compose run --rm sam2 segment ...   # optional masks + semantic 3-D cloud
+docker compose run --rm sam2 scene <ep> --objects 3  # complete scene branch
 docker compose run --rm cli prepare  ...   # rec.npz -> cln.npz
 docker compose run --rm cli retarget ...   # cln.npz -> plan.h5
+docker compose run --rm cli object-relative <ep>  # model + plan -> relative tracks
 docker compose run --rm cli export   ...   # plan.h5 -> dataset
 docker compose run --rm cli run      ...   # extract -> prepare -> retarget -> replay
+docker compose run --rm sam2 run <ep> --scene-prompts data/prompts/<scene>.json  # labelled scene + core
 ```
 
 ---
@@ -199,8 +222,10 @@ unless `pyproject.toml` changes.
 | | |
 |---|---|
 | [`docs/math.md`](docs/math.md) | the full mathematical description of the pipeline |
+| [`docs/roadmap.md`](docs/roadmap.md) | current shipped, experimental and remaining work |
+| [`docs/releases/v0.0.2.md`](docs/releases/v0.0.2.md) | v0.0.2 release scope, measurements and limits |
 | [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md) | measurement protocols and results (E6–E14) |
-| [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why object-relative representation is not built yet |
+| [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why production object-driven retarget remains gated |
 | [`docs/paper_code_divergences.md`](docs/paper_code_divergences.md) | where the thesis text and the code disagree, and why |
 | [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | hardware bring-up, USB, sync wiring |
 

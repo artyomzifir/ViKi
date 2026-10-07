@@ -3,7 +3,7 @@
 import pytest
 
 from viki.contracts import EpisodeLabels, Segment
-from viki.episode import mark_stage, new_episode, read_status, stage_done
+from viki.episode import clear_stage, mark_stage, new_episode, read_status, stage_done
 from viki.labeling import load_labels, save_labels, validate_labels
 
 
@@ -20,6 +20,8 @@ def test_mark_stage_and_stage_done(tmp_path):
     mark_stage(ep, "prepare", frames=412, object_relative=False)
     assert stage_done(ep, "prepare") is True
     assert read_status(ep)["stages"]["prepare"]["frames"] == 412
+    clear_stage(ep, "prepare")
+    assert stage_done(ep, "prepare") is False
 
 
 def test_mark_unknown_stage_raises(tmp_path):

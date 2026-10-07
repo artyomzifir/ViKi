@@ -93,6 +93,7 @@ class RealSenseBackend(CameraBackend):
         align_to_color: bool = False,
         depth_max_m: float = 6.0,
         timeout_ms: int = 5000,
+        inter_cam_sync_mode: int | None = None,
     ) -> None:
         self._serial = serial
         self._color_res = color_resolution
@@ -101,6 +102,11 @@ class RealSenseBackend(CameraBackend):
         self._align_to_color = align_to_color
         self._depth_max_m = float(depth_max_m)
         self._timeout_ms = timeout_ms
+        from viki import config as _cfg
+        self._inter_cam_sync_mode = int(
+            getattr(_cfg, "REALSENSE_INTER_CAM_SYNC_MODE", 0)
+            if inter_cam_sync_mode is None else inter_cam_sync_mode
+        )
 
         self._pipeline: Optional[rs.pipeline] = None
         self._align: Optional[rs.align] = None
@@ -190,6 +196,7 @@ class RealSenseBackend(CameraBackend):
 
         dev = profile.get_device()
         self._resolved_serial = dev.get_info(rs.camera_info.serial_number)
+        self._apply_inter_cam_sync(dev)
 
         try:
             self._depth_units_m = float(
@@ -364,6 +371,60 @@ class RealSenseBackend(CameraBackend):
             fx=intr.fx, fy=intr.fy, cx=intr.ppx, cy=intr.ppy,
             width=intr.width, height=intr.height,
             dist_coeffs=np.array(intr.coeffs),
+        )
+
+    def _apply_inter_cam_sync(self, dev) -> None:
+        """Set ``inter_cam_sync_mode`` on the stereo sensor.
+
+        ``0`` is the SDK default and means free-running: the camera keeps its own
+        cadence, and pairing with another camera is left to software timestamp
+        matching. ``1`` makes it the trigger master, ``2`` a slave waiting on an
+        external trigger — which is how a D435i is driven from an Azure Kinect's
+        SYNC OUT.
+
+        **A slave with no cable never produces a frame.** That is the SDK's
+        behaviour, not a bug, so this stays at 0 unless someone has actually
+        wired the trigger; the mode is logged at startup either way so a silent
+        stream has an obvious first suspect.
+        """
+        mode = self._inter_cam_sync_mode
+        sensor = None
+        for s_ in dev.query_sensors():
+            if s_.supports(rs.option.inter_cam_sync_mode):
+                sensor = s_
+                break
+        if sensor is None:
+            if mode:
+                logger.warning(
+                    "RealSense %s: inter_cam_sync_mode=%d requested but no sensor "
+                    "supports it; staying free-running",
+                    self._resolved_serial or "?", mode,
+                )
+            return
+
+        rng = sensor.get_option_range(rs.option.inter_cam_sync_mode)
+        if not (rng.min <= mode <= rng.max):
+            raise ValueError(
+                f"inter_cam_sync_mode={mode} out of range "
+                f"{int(rng.min)}..{int(rng.max)} for {self._resolved_serial or '?'}"
+            )
+        if mode == 0:
+            logger.info("RealSense %s: free-running (inter_cam_sync_mode=0)",
+                        self._resolved_serial or "?")
+            return
+        try:
+            sensor.set_option(rs.option.inter_cam_sync_mode, float(mode))
+        except Exception:  # noqa: BLE001 — a refused option must not lose the camera
+            logger.warning(
+                "RealSense %s: could not set inter_cam_sync_mode=%d; staying "
+                "free-running", self._resolved_serial or "?", mode, exc_info=True,
+            )
+            return
+        logger.info(
+            "RealSense %s: inter_cam_sync_mode=%d (%s) — a slave with no trigger "
+            "cable will not deliver frames",
+            self._resolved_serial or "?", mode,
+            {1: "master", 2: "slave", 3: "full slave"}.get(mode, "genlock"),
         )
 
     @staticmethod

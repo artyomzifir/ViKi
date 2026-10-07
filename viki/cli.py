@@ -8,13 +8,18 @@ server calls — the CLI just parses args and prints results.
     viki perceive <episode>             # stable fused + hand_fit by default
     viki extract  <episode>
     viki cloud    <episode>            # raw/ -> cloud/ (viewer point cloud)
+    viki auto-prompts <episode>        # calibrated foreground -> SAM prompts
+    viki segment  <episode> ...        # prompted SAM 2.1 masks [+ RGB-D lift]
+    viki object-model <episode>        # semantic cloud -> compact rigid models
+    viki scene <episode>               # auto-prompts -> masks -> 3-D -> models
+    viki object-relative <episode>     # object frames + hand/plan -> relative tracks
     viki prepare  <episode>
     viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
     viki replay   <episode> [--driver dryrun|ur3]
     viki label    <episode> --task "..." --outcome good
     viki export   --out data/datasets/pick <episode>...
-    viki run      <episode>            # extract -> prepare -> retarget -> replay
+    viki run      <episode>            # core pipeline; --scene-objects adds scene branch
 """
 
 from __future__ import annotations
@@ -91,6 +96,143 @@ def _cmd_cloud(a) -> None:
     print(build_cloud(_episode(a.episode)))
 
 
+def _cmd_auto_prompts(a) -> None:
+    from viki.perception import AutoPromptConfig, generate_auto_prompts
+
+    cfg = AutoPromptConfig(
+        frame=a.frame,
+        object_count=a.objects,
+        object_label=a.object_label,
+        depth_stride=a.depth_stride,
+        background_tolerance_mm=a.bg_tolerance_mm,
+        min_object_saturation=a.min_saturation,
+        max_object_extent_m=a.max_object_extent_mm / 1000.0,
+    )
+    print(generate_auto_prompts(
+        _episode(a.episode),
+        a.out,
+        config=cfg,
+    ))
+
+
+def _cmd_segment(a) -> None:
+    from viki.perception.scene import lift_segmented_episode, segment_episode
+
+    def progress(**fields):
+        camera = f" {fields['camera']}" if "camera" in fields else ""
+        print(f"segment{camera}: {fields.get('frame', 0)}/{fields.get('total', 0)}")
+
+    ep = _episode(a.episode)
+    masks = segment_episode(
+        ep,
+        a.prompts,
+        checkpoint=a.checkpoint,
+        chunk_frames=a.chunk_frames,
+        max_frames=a.max_frames,
+        render_overlay=not a.no_overlay,
+        report=progress,
+    )
+    print(f"masks: {masks}")
+    if a.lift_3d:
+        cloud = lift_segmented_episode(
+            ep,
+            masks,
+            stride=a.depth_stride,
+            voxel_m=a.voxel_m,
+            report=progress,
+        )
+        print(f"semantic cloud: {cloud}")
+
+
+def _cmd_segment_lift(a) -> None:
+    from viki.perception.scene import lift_segmented_episode
+
+    def progress(**fields):
+        print(f"segment-lift: {fields.get('frame', 0)}/{fields.get('total', 0)}")
+
+    ep = _episode(a.episode)
+    masks = (
+        Path(a.segmentation_dir)
+        if a.segmentation_dir
+        else ep.segmentation_dir
+    )
+    print(lift_segmented_episode(
+        ep,
+        masks,
+        stride=a.depth_stride,
+        voxel_m=a.voxel_m,
+        report=progress,
+    ))
+
+
+def _cmd_object_model(a) -> None:
+    from viki.perception.object_model import ObjectModelConfig
+    from viki.perception.scene import build_object_models_episode
+
+    def progress(**fields):
+        print(
+            f"{fields.get('stage', 'object-model')}: "
+            f"{fields.get('frame', 0)}/{fields.get('total', 0)} "
+            f"object={fields.get('object_id', '?')}"
+        )
+
+    ep = _episode(a.episode)
+    segmentation = (
+        Path(a.segmentation_dir)
+        if a.segmentation_dir
+        else ep.segmentation_dir
+    )
+    config = ObjectModelConfig(
+        bootstrap_frames=a.bootstrap_frames,
+        component_radius_m=a.component_radius_mm / 1000.0,
+        inlier_distance_m=a.inlier_distance_mm / 1000.0,
+    )
+    print(build_object_models_episode(
+        ep,
+        segmentation,
+        config=config,
+        report=progress,
+    ))
+
+
+def _cmd_scene(a) -> None:
+    from viki.perception.object_model import ObjectModelConfig
+    from viki.perception.scene import ScenePerceptionOpts, scene_perception_episode
+
+    def progress(**fields):
+        camera = f" camera={fields['camera']}" if fields.get("camera") else ""
+        obj = f" object={fields['object_id']}" if fields.get("object_id") else ""
+        print(
+            f"{fields.get('stage', 'scene')}: "
+            f"{fields.get('frame', 0)}/{fields.get('total', 0)}{camera}{obj}"
+        )
+
+    opts = ScenePerceptionOpts(
+        prompts=a.prompts,
+        object_count=a.objects,
+        object_label=a.object_label,
+        checkpoint=a.checkpoint,
+        chunk_frames=a.chunk_frames,
+        render_overlay=not a.no_overlay,
+        depth_stride=a.depth_stride,
+        voxel_m=a.voxel_m,
+        prompt_voxel_m=a.prompt_voxel_m,
+        prompt_min_points=a.prompt_min_points,
+        prompt_radius_m=a.prompt_radius_mm / 1000.0,
+        prompt_min_object_mm=a.prompt_min_object_mm,
+        prompt_frame_attempts=a.prompt_frame_attempts,
+        object_model=ObjectModelConfig(
+            bootstrap_frames=a.bootstrap_frames,
+            component_radius_m=a.component_radius_mm / 1000.0,
+            inlier_distance_m=a.inlier_distance_mm / 1000.0,
+            pose_smoothing_window=a.pose_smoothing_window,
+        ),
+    )
+    print(scene_perception_episode(
+        _episode(a.episode), opts, force=a.force, report=progress,
+    ))
+
+
 def _cmd_prepare(a) -> None:
     from viki.prepare.run import prepare_episode
 
@@ -155,10 +297,18 @@ def _cmd_retarget(a) -> None:
             "adapter_rpy_deg": a.adapter_rpy_deg,
             "adapter_radius_mm": a.adapter_radius_mm,
             "sequential_baseline": a.sequential_baseline,
+            "object_grasp": a.object_grasp,
+            "object_cube_side_mm": a.object_cube_side_mm,
         }.items()
         if value is not None
     }
     print(retarget_episode(_episode(a.episode), robot=a.robot, options=options))
+
+
+def _cmd_object_relative(a) -> None:
+    from viki.object_centric import build_object_relative_episode
+
+    print(build_object_relative_episode(_episode(a.episode)))
 
 
 def _cmd_replay(a) -> None:
@@ -210,17 +360,56 @@ def _cmd_run(a) -> None:
     from viki.perception.profiles import DEFAULT_PERCEPTION_PROFILE
     from viki.prepare.run import prepare_episode
     from viki.replay import replay_episode
-    from viki.retarget.run import retarget_episode
+    from viki.retarget import config_from_options, retarget_episode
 
     ep = _episode(a.episode)
+    retarget_options = {} if a.object_grasp is None else {"object_grasp": a.object_grasp}
+    scene_requested = a.scene_objects > 0 or a.scene_prompts is not None
+    if config_from_options(a.robot, retarget_options).object_grasp and not ep.object_models_npz.is_file():
+        if not scene_requested:
+            raise ValueError(
+                "cube-aware retarget needs a manipulated_object scene: supply "
+                "--scene-prompts, run 'viki scene' first, or opt out with --no-object-grasp"
+            )
+        if a.scene_prompts is None and (
+            a.scene_objects != 1 or a.scene_object_label != "manipulated_object"
+        ):
+            raise ValueError(
+                "automatic cube-aware scene needs exactly one object labelled "
+                "manipulated_object; use --scene-objects 1 --scene-object-label "
+                "manipulated_object, or supply a curated --scene-prompts manifest"
+            )
     steps = [
         ("extract", lambda: extract_episode(ep, backend=a.backend)),
         ("prepare", lambda: prepare_episode(ep, profile=DEFAULT_PERCEPTION_PROFILE)),
-        ("retarget", lambda: retarget_episode(ep, robot=a.robot)),
-        ("replay", lambda: replay_episode(ep, driver=a.driver)),
     ]
+    if a.scene_objects > 0 or a.scene_prompts is not None:
+        from viki.perception.scene import ScenePerceptionOpts, scene_perception_episode
+
+        scene_options = ScenePerceptionOpts(
+            prompts=a.scene_prompts,
+            object_count=max(1, a.scene_objects),
+            object_label=a.scene_object_label,
+            checkpoint=a.scene_checkpoint,
+            chunk_frames=a.scene_chunk_frames,
+        )
+        steps.append((
+            "scene",
+            lambda: scene_perception_episode(ep, scene_options, force=a.force),
+        ))
+    steps.extend([
+        ("retarget", lambda: retarget_episode(ep, robot=a.robot, options=retarget_options)),
+    ])
+    if a.scene_objects > 0 or a.scene_prompts is not None:
+        from viki.object_centric import build_object_relative_episode
+
+        steps.append(("object_relative", lambda: build_object_relative_episode(ep)))
+    steps.append(("replay", lambda: replay_episode(ep, driver=a.driver)))
     for name, fn in steps:
-        if stage_done(ep, name) and not a.force:
+        # The scene branch owns two resumable stages and validates their
+        # artifacts internally; there is intentionally no synthetic `scene`
+        # completion bit that could mask a missing segment or object model.
+        if name != "scene" and stage_done(ep, name) and not a.force:
             print(f"= {name}: already done, skipping")
             continue
         print(f"→ {name}")
@@ -293,6 +482,101 @@ def _build_parser() -> argparse.ArgumentParser:
     pc = sub.add_parser("cloud", help="raw/ -> cloud/ (per-frame coloured point cloud)")
     pc.add_argument("episode")
     pc.set_defaults(func=_cmd_cloud)
+
+    pap = sub.add_parser(
+        "auto-prompts",
+        help="calibrated background foreground -> automatic SAM prompt proposals",
+    )
+    pap.add_argument("episode")
+    pap.add_argument("--out", default=None, help="output prompt JSON")
+    pap.add_argument("--frame", type=int, default=0)
+    pap.add_argument("--objects", type=int, default=3)
+    pap.add_argument(
+        "--object-label",
+        choices=["manipulated_object", "other_object", "other_dynamic"],
+        default="other_dynamic",
+    )
+    pap.add_argument("--depth-stride", type=int, default=2)
+    pap.add_argument("--bg-tolerance-mm", type=float, default=50.0)
+    pap.add_argument("--min-saturation", type=float, default=0.25)
+    pap.add_argument("--max-object-extent-mm", type=float, default=250.0)
+    pap.set_defaults(func=_cmd_auto_prompts)
+
+    ps = sub.add_parser(
+        "segment",
+        help="experimental prompted SAM 2.1 masks and optional RGB-D lift",
+    )
+    ps.add_argument("episode")
+    ps.add_argument("--prompts", required=True, help="viki_sam2_prompts_v1 JSON")
+    ps.add_argument(
+        "--checkpoint",
+        default="models/sam2/sam2.1_hiera_small.pt",
+    )
+    ps.add_argument("--chunk-frames", type=int, default=100)
+    ps.add_argument("--max-frames", type=int, default=None)
+    ps.add_argument("--no-overlay", action="store_true")
+    ps.add_argument("--lift-3d", action="store_true")
+    ps.add_argument("--depth-stride", type=int, default=2)
+    ps.add_argument("--voxel-m", type=float, default=0.004)
+    ps.set_defaults(func=_cmd_segment)
+
+    psl = sub.add_parser(
+        "segment-lift",
+        help="existing SAM masks -> calibrated semantic 3-D cloud",
+    )
+    psl.add_argument("episode")
+    psl.add_argument("--segmentation-dir", default=None)
+    psl.add_argument("--depth-stride", type=int, default=2)
+    psl.add_argument("--voxel-m", type=float, default=0.004)
+    psl.set_defaults(func=_cmd_segment_lift)
+
+    pom = sub.add_parser(
+        "object-model",
+        help="experimental semantic cloud -> compact rigid object models",
+    )
+    pom.add_argument("episode")
+    pom.add_argument("--segmentation-dir", default=None)
+    pom.add_argument("--bootstrap-frames", type=int, default=60)
+    pom.add_argument("--component-radius-mm", type=float, default=12.0)
+    pom.add_argument("--inlier-distance-mm", type=float, default=12.0)
+    pom.set_defaults(func=_cmd_object_model)
+
+    pscene = sub.add_parser(
+        "scene",
+        help="scene RGB-D -> prompts -> SAM masks -> semantic cloud -> object models",
+    )
+    pscene.add_argument("episode")
+    pscene.add_argument("--prompts", default=None, help="prompt JSON; default: derive from background")
+    pscene.add_argument("--objects", type=int, default=1, help="non-operator objects for auto prompts")
+    pscene.add_argument(
+        "--object-label",
+        choices=["manipulated_object", "other_object", "other_dynamic"],
+        default="other_dynamic",
+    )
+    pscene.add_argument("--checkpoint", default="models/sam2/sam2.1_hiera_small.pt")
+    pscene.add_argument("--chunk-frames", type=int, default=100)
+    pscene.add_argument("--no-overlay", action="store_true")
+    pscene.add_argument("--depth-stride", type=int, default=2)
+    pscene.add_argument("--voxel-m", type=float, default=0.004,
+                        help="semantic-cloud voxel")
+    pscene.add_argument("--prompt-voxel-m", type=float, default=0.006,
+                        help="auto-prompt clustering grid; the smallest promptable "
+                             "object scales with it (40 mm cube needs ~0.003)")
+    pscene.add_argument("--prompt-min-points", type=int, default=100,
+                        help="auto-prompt: minimum voxels for a component")
+    pscene.add_argument("--prompt-radius-mm", type=float, default=18.0,
+                        help="auto-prompt: connectivity radius")
+    pscene.add_argument("--prompt-min-object-mm", type=float, default=30.0,
+                        help="smallest object to prompt; tightens the clustering grid")
+    pscene.add_argument("--prompt-frame-attempts", type=int, default=6,
+                        help="seed frames to try before giving up (1 = frame 0 only)")
+    pscene.add_argument("--bootstrap-frames", type=int, default=60)
+    pscene.add_argument("--component-radius-mm", type=float, default=12.0)
+    pscene.add_argument("--inlier-distance-mm", type=float, default=12.0)
+    pscene.add_argument("--pose-smoothing-window", type=int, default=15,
+                        help="frames of non-causal pose smoothing; <=1 disables")
+    pscene.add_argument("--force", action="store_true", help="rebuild completed scene stages")
+    pscene.set_defaults(func=_cmd_scene)
 
     phf = sub.add_parser("hand-fit", help="batch-fit a capsule hand trajectory and append hand_fit_* to cln.npz")
     phf.add_argument("episode")
@@ -376,6 +660,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--adapter-offset-mm", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-rpy-deg", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-radius-mm", type=float, default=None)
+    pt.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
+    pt.add_argument("--object-cube-side-mm", type=float, default=None)
     pt.add_argument(
         "--sequential-baseline",
         action="store_true",
@@ -383,6 +669,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also archive frame-wise IK + post-hoc smoothing for comparison",
     )
     pt.set_defaults(func=_cmd_retarget)
+
+    por = sub.add_parser(
+        "object-relative",
+        help="object models + cln.npz + plan.h5 -> object-relative hand/TCP tracks",
+    )
+    por.add_argument("episode")
+    por.set_defaults(func=_cmd_object_relative)
 
     prp = sub.add_parser("replay", help="plan.h5 -> replay.h5 (stub stage)")
     prp.add_argument("episode")
@@ -416,11 +709,37 @@ def _build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--out", default=None, help="PNG path (default: <episode>/viz-<stage>.png)")
     pv.set_defaults(func=_cmd_viz)
 
-    prn = sub.add_parser("run", help="extract -> prepare -> retarget -> replay")
+    prn = sub.add_parser(
+        "run",
+        help="extract -> prepare -> [scene perception] -> retarget -> replay",
+    )
     prn.add_argument("episode")
     prn.add_argument("--robot", default=None)
+    prn.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
     prn.add_argument("--backend", default=None)
     prn.add_argument("--driver", default="dryrun", choices=["dryrun", "ur3"])
+    prn.add_argument(
+        "--scene-objects",
+        type=int,
+        default=0,
+        help="also build scene/object artifacts for this many non-operator objects",
+    )
+    prn.add_argument(
+        "--scene-object-label",
+        choices=["manipulated_object", "other_object", "other_dynamic"],
+        default="other_dynamic",
+        help="label for automatic prompts; cube-aware retarget requires one manipulated_object",
+    )
+    prn.add_argument(
+        "--scene-prompts",
+        default=None,
+        help="prompt JSON for the scene branch (implies scene perception)",
+    )
+    prn.add_argument(
+        "--scene-checkpoint",
+        default="models/sam2/sam2.1_hiera_small.pt",
+    )
+    prn.add_argument("--scene-chunk-frames", type=int, default=100)
     prn.add_argument("--force", action="store_true", help="rerun done stages")
     prn.set_defaults(func=_cmd_run)
 

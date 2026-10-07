@@ -1,4 +1,4 @@
-# viki.export — datasets  · v0.0.1
+# viki.export — datasets
 
 **Stage 6** · retargeted episodes → a dataset · paper §3.9
 
@@ -23,17 +23,31 @@ viki export <episode>... --out data/pick --format lerobot    # LeRobot
 <out>/dataset.json                    manifest: schema, units, frames, provenance, index
 <out>/episodes/<id>/trajectory.npz    the arrays
 <out>/episodes/<id>/meta.json         that episode's provenance
+<out>/episodes/<id>/object_models.npz optional completed scene-perception sidecar
+<out>/episodes/<id>/object_relative.npz optional post-IK object-relative tracks
 ```
 
 Units are metres, radians, seconds and microseconds. Poses are in the
 **calibration** frame (ChArUco board origin) unless the key ends `_rig`, and the
 manifest says so rather than leaving it to be assumed.
 
+Bundle schema v4 records `segment`, `object_model`, and `object_relative`
+provenance in episode metadata and copies their optional sidecars only when
+their stages are complete. The trajectory arrays remain unchanged.
+
+`object_relative.npz` has one per-frame transform for each tracked object:
+`T_object_hand`, `T_object_target_tcp`, and `T_object_achieved_tcp`. It also
+contains object IDs/labels, `relative_valid`, tracking confidence, rotation
+information, contact flags, and gripper opening. The transforms are estimates
+from the saved object poses, regardless of whether cube-aware IK was
+run; a symmetric cube's yaw is not independently verified. Invalid hand rows are NaN in the hand and
+target transforms and must not become policy examples.
+
 | array | what |
 |---|---|
 | `q`, `joint_velocity`, `joint_acceleration` | robot joint trajectory, rad |
 | `q_approach` | home → first frame, not per-frame |
-| `gripper_opening`, `gripper_opening_m`, `gripper_joint_position` | gripper command |
+| `gripper_opening`, `gripper_opening_m`, `gripper_joint_position` | normalised command, URDF pad-centre gap in plan v9 (linear nominal width in older plans), drive joint |
 | `target_position_calibration`, `target_rotation_calibration` | commanded tool pose |
 | `achieved_position_calibration`, `achieved_rotation_calibration` | forward kinematics |
 | `position_error_m`, `orientation_error_rad` | tracking error |

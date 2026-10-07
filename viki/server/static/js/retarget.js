@@ -28,9 +28,8 @@ function rpyFields(prefix, values, label = 'RPY', step = 1) {
 
 export function mount(view) {
   const defaults = FRONTEND_CONFIG.retarget || {};
-  // v3 resets position-only sessions now that the calibrated orientation term
-  // is part of the default objective.
-  const S = { ...defaults, ...sessionGet('retarget-v5', {}) };
+  // Version the saved form whenever defaults acquire incompatible semantics.
+  const S = { ...defaults, ...sessionGet('retarget-v7', {}) };
   // A fresh tab starts with the neutral assembly instead of an empty scene.
   // Selecting an episode below replaces it with that episode's plan.
   showingPreview = true;
@@ -45,7 +44,8 @@ export function mount(view) {
       <div class="ret-eps" data-role="eps"></div>
       <label class="perc-all"><input type="checkbox" data-role="all"> select all</label>
       <button class="primary" data-role="process">Retarget</button>
-      <div class="hint">cln.npz → one globally optimised plan.h5 per episode</div>
+      <div class="hint" data-role="readiness">Checking episode readiness…</div>
+      <div class="hint">cln.npz + object_models.npz → one optimised plan.h5 per episode</div>
     </aside>
 
     <div class="ret-viewer">
@@ -68,6 +68,10 @@ export function mount(view) {
         <div class="calib-sec-title">1 · Robot & command</div>
         <div class="cfg-row"><label>Robot</label><select data-role="robot"></select></div>
         <div class="hint" data-role="robot-meta">URDF model</div>
+        <div class="cfg-row"><label>IK reference</label><select data-role="reference-policy">
+          <option value="robot_home">robot home (upper workspace)</option>
+          <option value="zero">zero (legacy)</option>
+        </select></div>
         <div class="cfg-row"><label>Pose source</label><select data-role="pose-source">
           <option value="landmarks">landmarks</option><option value="hand_fit">hand fit</option>
         </select></div>
@@ -92,6 +96,14 @@ export function mount(view) {
         ${vectorFields('adapter', S.adapterTranslationMm || [0, 0, 11], 'mm', 'offset', 0.1)}
         ${vectorFields('adapter-rpy', S.adapterRpyDeg || [0, 0, 0], 'deg', 'gripper RPY', 0.1)}
         ${field('adapter-radius', 'cylinder radius, mm', S.adapterRadiusMm ?? 35, 0.5, 0.1)}
+      </section>
+
+      <section class="calib-sec">
+        <div class="calib-sec-title">Cube-aware grasp · default, simulation-unverified</div>
+        <div class="cfg-row"><label>Use cube phases and faces</label><input type="checkbox" data-role="object-grasp"
+          ${S.objectGrasp ? 'checked' : ''}></div>
+        ${field('cube-side', 'cube edge, mm', S.objectCubeSideMm ?? 40, 1, 1)}
+        <div class="hint">Requires a tracked manipulated cube. Holds jaw width during transfer; rejects uncertain face fits.</div>
       </section>
 
       <section class="calib-sec">
@@ -134,6 +146,7 @@ export function mount(view) {
 
   ctl = scene3d.create(root.querySelector('[data-role="canvas"]'), {
     api, log,
+    objectModels: true,
     layers: { cloud: true, trajectory: true, targetTrajectory: true,
       achievedTrajectory: true, sequentialBaseline: true,
       robot: true, fused: false, palm: false,
@@ -147,6 +160,7 @@ export function mount(view) {
     if (frameError) frameError.textContent = frameErrorText(viewedPlan, frameNo);
   });
   root.querySelector('[data-role="pose-source"]').value = S.poseSource || 'landmarks';
+  root.querySelector('[data-role="reference-policy"]').value = S.referencePolicy || 'robot_home';
   root.querySelector('[data-role="target-anchor"]').value = S.targetPositionAnchor || 'pinch_center';
   ctl.onLayerChange(l => sessionSet('retargetLayers', l));
   root.addEventListener('click', onClick);
@@ -211,6 +225,14 @@ async function loadDatasets(want) {
   await loadEpisodes();
 }
 
+function readinessReason(ep) {
+  if (!ep.has?.cln) return 'Run Extract/Prepare first (cln.npz missing)';
+  if (root.querySelector('[data-role="object-grasp"]').checked && !ep.has?.object_model) {
+    return 'Run Scene with a tracked manipulated_object first';
+  }
+  return '';
+}
+
 async function loadEpisodes() {
   const dataset = root.querySelector('[data-role="dataset"]').value;
   if (!dataset) return;
@@ -218,20 +240,27 @@ async function loadEpisodes() {
   const selected = new Set(selectedEpisodes());
   episodes.renderList(root.querySelector('[data-role="eps"]'), epList, {
     select: true, view: true, selected, activeId: viewedEp,
+    disabledReason: readinessReason,
     emptyText: 'no episodes',
   });
+  const ready = epList.filter(ep => !readinessReason(ep)).length;
+  root.querySelector('[data-role="readiness"]').textContent =
+    `${ready} / ${epList.length} ready · Extract builds cln.npz; Scene builds tracked cube models. Nothing runs automatically.`;
   syncAll();
   persist();
 }
 
 function selectedEpisodes() {
-  return [...(root?.querySelectorAll('[data-ep]:checked') || [])].map(el => el.dataset.ep);
+  return [...(root?.querySelectorAll('[data-ep]:checked:not(:disabled)') || [])].map(el => el.dataset.ep);
 }
 
 function syncAll() {
-  const boxes = [...root.querySelectorAll('[data-ep]')];
+  const boxes = [...root.querySelectorAll('[data-ep]:not(:disabled)')];
   const all = root.querySelector('[data-role="all"]');
+  all.disabled = boxes.length === 0;
   all.checked = boxes.length > 0 && boxes.every(box => box.checked);
+  all.indeterminate = boxes.some(box => box.checked) && !all.checked;
+  root.querySelector('[data-role="process"]').disabled = selectedEpisodes().length === 0;
 }
 
 function number(role) { return +root.querySelector(`[data-role="${role}"]`).value; }
@@ -240,6 +269,7 @@ function vector(prefix) { return ['x', 'y', 'z'].map(axis => number(`${prefix}-$
 function options() {
   return {
     robot: root.querySelector('[data-role="robot"]').value,
+    reference_policy: root.querySelector('[data-role="reference-policy"]').value,
     pose_source: root.querySelector('[data-role="pose-source"]').value,
     target_position_anchor: root.querySelector('[data-role="target-anchor"]').value,
     gripper: root.querySelector('[data-role="gripper"]').value,
@@ -262,14 +292,17 @@ function options() {
     collision_min_distance_m: number('collision-distance'),
     approach_sec: number('approach-sec'),
     sequential_baseline: root.querySelector('[data-role="sequential-baseline"]').checked,
+    object_grasp: root.querySelector('[data-role="object-grasp"]').checked,
+    object_cube_side_mm: number('cube-side'),
   };
 }
 
 function persist() {
   if (!root) return;
   const o = options();
-  sessionSet('retarget-v5', {
+  sessionSet('retarget-v7', {
     robot: o.robot, gripper: o.gripper, poseSource: o.pose_source,
+    referencePolicy: o.reference_policy,
     targetPositionAnchor: o.target_position_anchor, basePosition: o.base_position,
     baseRpyDeg: o.base_rpy_deg,
     adapterTranslationMm: o.adapter_translation_mm, adapterRpyDeg: o.adapter_rpy_deg,
@@ -282,6 +315,7 @@ function persist() {
     collisionEnabled: o.collision_enabled, collisionPairs: o.collision_pairs,
     collisionMinDistanceM: o.collision_min_distance_m, approachSec: o.approach_sec,
     sequentialBaseline: o.sequential_baseline,
+    objectGrasp: o.object_grasp, objectCubeSideMm: o.object_cube_side_mm,
     dataset: root.querySelector('[data-role="dataset"]').value,
   });
 }
@@ -309,6 +343,7 @@ async function previewRobot() {
   const [adapterRoll, adapterPitch, adapterYaw] = vector('adapter-rpy');
   const params = new URLSearchParams({
     robot, gripper, x, y, z,
+    reference_policy: root.querySelector('[data-role="reference-policy"]').value,
     base_roll_deg: baseRoll, base_pitch_deg: basePitch, base_yaw_deg: baseYaw,
     adapter_x_mm: adapterX, adapter_y_mm: adapterY, adapter_z_mm: adapterZ,
     adapter_roll_deg: adapterRoll, adapter_pitch_deg: adapterPitch,
@@ -342,6 +377,10 @@ function renderMetrics(data) {
   const baselineText = baseline
     ? `sequential baseline ${Number(baseline.position_rmse_mm).toFixed(1)} mm · objective ${Number(baseline.objective).toPrecision(4)}`
     : 'sequential baseline not requested';
+  const objectGrasp = m.object_grasp;
+  const graspText = objectGrasp
+    ? `cube ${Number(objectGrasp.cube_side_mm).toFixed(0)} mm · carry width ${(1000 * Number(m.object_grasp_carry_width_m)).toFixed(1)} mm · face correction ${Number(objectGrasp.face_orientation_correction_deg).toFixed(1)}° · experimental`
+    : 'hand-only grasp';
   box.innerHTML = `<b>${data.robot_key} + ${data.gripper_model} · ${data.solver_status}</b>
     <span>target ${anchor} → jaw-panel midpoint · adapter ${adapter.toFixed(1)} mm</span>
     <span>position RMSE ${Number(m.position_rmse_mm).toFixed(1)} mm</span>
@@ -349,16 +388,28 @@ function renderMetrics(data) {
     <span data-role="frame-error">${frameErrorText(data, ctl?.frame || 0)}</span>
     <span>${floorText}</span>
     <span>${baselineText}</span>
+    <span>${graspText}</span>
     <span>velocity max ${Number(m.max_joint_velocity_rad_s).toFixed(2)} rad/s</span>`;
 }
 
 function frameErrorText(data, frameNo) {
-  const position = Number(data?.position_error_m?.[frameNo]);
-  const orientation = Number(data?.orientation_error_rad?.[frameNo]);
+  const sceneFps = Number(ctl?.fps) || Number(data?.fps) || 1;
+  const planFps = Number(data?.fps) || sceneFps;
+  const index = Math.max(0, Math.min(
+    Math.round(frameNo * planFps / sceneFps),
+    Math.max(0, Number(data?.n_frames || 1) - 1),
+  ));
+  const position = Number(data?.position_error_m?.[index]);
+  const orientation = Number(data?.orientation_error_rad?.[index]);
   if (!Number.isFinite(position) || !Number.isFinite(orientation)) return 'frame error unavailable';
-  const opening = Number(data?.gripper_opening_m?.[frameNo]);
+  const opening = Number(data?.gripper_opening_m?.[index]);
   const grip = Number.isFinite(opening) ? ` · gripper ${(opening * 1000).toFixed(1)} mm` : '';
-  return `frame error ${(position * 1000).toFixed(1)} mm · ${(orientation * 180 / Math.PI).toFixed(1)}°${grip}`;
+  const bounds = data?.metrics?.object_grasp?.phase_bounds;
+  const phase = bounds ? (index < bounds[0] ? 'approach'
+    : index < bounds[1] ? 'close'
+    : index < bounds[2] ? 'carry'
+    : index < bounds[3] ? 'release' : 'retreat') : null;
+  return `${phase ? `${phase} · ` : ''}frame error ${(position * 1000).toFixed(1)} mm · ${(orientation * 180 / Math.PI).toFixed(1)}°${grip}`;
 }
 
 async function viewEpisode(id) {
@@ -414,13 +465,21 @@ function onClick(event) {
 function onChange(event) {
   const el = event.target;
   if (el.dataset.role === 'dataset') loadEpisodes().catch(e => log('episodes: ' + e, 'error'));
-  else if (el.dataset.role === 'all') root.querySelectorAll('[data-ep]').forEach(box => { box.checked = el.checked; });
+  else if (el.dataset.role === 'all') {
+    root.querySelectorAll('[data-ep]:not(:disabled)').forEach(box => { box.checked = el.checked; });
+    syncAll();
+  }
   else if (el.dataset.ep) syncAll();
+  else if (el.dataset.role === 'object-grasp') {
+    persist();
+    loadEpisodes().catch(e => log('episodes: ' + e, 'error'));
+  }
   else if (el.dataset.role === 'robot') { syncRobotMeta(); persist(); previewRobot(); }
   else if (el.dataset.role === 'gripper') { syncGripperMeta(); persist(); previewRobot(); }
   else if (el.dataset.role) {
     persist();
-    if (el.dataset.role === 'target-anchor' || el.dataset.role.startsWith('base-')
+    if (el.dataset.role === 'reference-policy' || el.dataset.role === 'target-anchor'
+        || el.dataset.role.startsWith('base-')
         || el.dataset.role.startsWith('adapter-')) previewRobot();
   }
 }

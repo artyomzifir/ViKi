@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import cv2
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -164,20 +165,50 @@ async def solve_bundle(
     force: bool = False, cal: CalibrationManager = Depends(get_calibrator)
 ):
     """Joint multi-pose bundle solve (spec §4.3) over every collected set.
-    Refused unless the readiness criteria are met (pass ``force=true`` to
-    override — the result carries ``solve.degenerate`` when the geometry is
-    under-constrained)."""
+
+    Refused unless the readiness criteria are met. ``force=true`` solves anyway —
+    for a rig where a gate is unreachable rather than merely unmet, such as a
+    small board at a fixed working distance, which can never paint enough of the
+    frame to satisfy ``CALIB_MIN_FRAME_COVERAGE``.
+
+    A forced solve is **recorded, not hidden**: the result carries
+    ``solve.readiness_override`` naming every gate that was skipped and the
+    numbers at the time, and ``save-as`` copies it onto the preset. The usual
+    ``solve.degenerate`` still flags geometry the data cannot constrain.
+    """
     if not cal._workers:
         raise HTTPException(400, "no calibration session — start one first")
     rd = cal.readiness()
-    if not rd["ready"] and not force:
-        unmet = [c["name"] for c in rd["criteria"] if not c["ok"]]
-        raise HTTPException(422, f"not ready to solve — unmet: {', '.join(unmet)}")
+    unmet = [c for c in rd["criteria"] if not c.get("ok")]
+    if unmet and not force:
+        raise HTTPException(
+            422,
+            "not ready to solve — unmet: "
+            + ", ".join(c["name"] for c in unmet)
+            + ". Tick 'Solve anyway' to override.",
+        )
     try:
         out = cal.solve_bundle_live(EXTRINSICS_FILENAME)
     except (ValueError, RuntimeError) as exc:
         logger.warning("bundle solve failed: %s", exc)
         raise HTTPException(422, f"bundle solve failed: {exc}") from exc
+
+    override = None
+    if unmet:  # reached only with force=true
+        override = {
+            "forced": True,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "unmet": [
+                {"name": c["name"], "value": c.get("value"), "need": c.get("need")}
+                for c in unmet
+            ],
+        }
+        out["solve"]["readiness_override"] = override
+        logger.warning(
+            "bundle solve FORCED past unmet gates: %s",
+            ", ".join(f"{c['name']} {c.get('value')}/{c.get('need')}" for c in unmet),
+        )
+    cal.last_readiness_override = override
     return {"reference_device": out["reference_device"], "solve": out["solve"]}
 
 
@@ -679,6 +710,10 @@ async def save_preset(
         from viki.calibration import artifacts as _artifacts
 
         _artifacts.ensure_migrated(path.stem)
+        if getattr(cal, "last_readiness_override", None):
+            _artifacts.annotate_solve(
+                path.stem, readiness_override=cal.last_readiness_override
+            )
         live_anchor = cal.world_anchor()
         if live_anchor and live_anchor.get("observations"):
             _artifacts.write_world_anchor(

@@ -838,7 +838,7 @@ def prepare_episode(
     import shutil
     import tempfile
 
-    from viki.episode import mark_stage
+    from viki.episode import clear_stage, mark_stage, stage_done
     from viki.perception.profiles import get_profile
 
     profile_spec = get_profile(profile)
@@ -994,6 +994,8 @@ def prepare_episode(
         hand_fit = hand_fit and "hand_fit_joint_angles" in d
         if articulated is not None:
             hand_fit = "hand_fit_joint_angles" in d
+    if stage_done(ep, "object_relative"):
+        clear_stage(ep, "object_relative")
     mark_stage(ep, "prepare", frames=int(n), object_relative=bool(obj_rel),
                hand_fit=bool(hand_fit), profile=profile or "config",
                baseline=baseline, articulated=articulated,

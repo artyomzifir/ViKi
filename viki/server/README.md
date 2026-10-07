@@ -18,7 +18,7 @@ stream. Scenes are recorded, then extracted / prepared / retargeted offline.
 | `calibration.py` | intrinsics/extrinsics capture + solve + board preview | `CalibrationManager` |
 | `skeleton.py` | `POST /skeleton/capture_base/{id}` — static background depth for offline scene subtraction | — |
 | `recording.py` | `POST /record/start` → `SceneRecorder` in a background job | `cameras.record` |
-| `pipeline.py` | episode geometry/cloud, batch `POST /pipeline/{perceive,retarget}`, retarget robot/plan scene APIs, and jobs | `perception`, `prepare`, `retarget`, `episode` |
+| `pipeline.py` | episode geometry/cloud/object-model diagnostics, batch `POST /pipeline/{perceive,retarget}`, retarget robot/plan scene APIs, and jobs | `perception`, `prepare`, `retarget`, `episode` |
 | `replay.py` | `POST /replay` job | `viki.replay` |
 | `label.py` | `GET/POST /label` | `viki.labeling` |
 | `export.py` | `POST /export` job | `viki.export` |
@@ -34,7 +34,9 @@ return a `job_id`; poll `…/jobs/{job_id}`.
 
 `static/` — plain ES-module HTML/JS, no build step, served at `/`. Panels:
 cameras, calibration, **episodes** (`episodes.js` — list, per-stage job buttons,
-label form, record) and **3-D viewer** (`viewer.js` — a hand-rolled canvas
-orbit view of the wrist trajectory / palm frames / camera frusta / raw points,
-fed by `/pipeline/episode/{id}/geometry`; no WebGL, no vendored deps). No live
+label form, record) and **3-D viewer** (`viewer.js` + `scene3d.js` — a three.js
+orbit view of point clouds, hand/robot trajectories and object-model filter
+diagnostics). The object layers use `/pipeline/episode/{id}/object-model` for
+canonical core/shell + pose tracks and the binary `.../object-model/{frame}`
+endpoint for accepted/rejected/reassigned/ambiguous observations. No live
 skeleton panel. A different UI engine would talk to the same routes.

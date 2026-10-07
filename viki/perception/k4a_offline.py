@@ -45,6 +45,8 @@ class K4ACalibration:
         self._k = kinect_mod
         self._lib = kinect_mod._lib
         self._deproj_cache: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+        self._transformation = None
+        self._color_to_depth_fn = None
 
     # ------------------------------------------------------------------
 
@@ -104,6 +106,139 @@ class K4ACalibration:
 
     # ── projections ───────────────────────────────────────────────────
 
+    def _transformation_handle(self):
+        if self._transformation is None:
+            self._transformation = self._lib.k4a_transformation_create(self._calib)
+            if not self._transformation:
+                raise RuntimeError("k4a_transformation_create failed")
+        return self._transformation
+
+    def close(self) -> None:
+        handle = self._transformation
+        if handle:
+            self._lib.k4a_transformation_destroy(handle)
+            self._transformation = None
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:  # pragma: no cover - interpreter shutdown safety
+            pass
+
+    def _align_bgra_to_depth(
+        self, color_bgra: np.ndarray, depth_mm: np.ndarray
+    ) -> np.ndarray | None:
+        color = np.asarray(color_bgra, dtype=np.uint8)
+        depth = np.ascontiguousarray(depth_mm, dtype=np.uint16)
+        if color.ndim != 3 or color.shape[2] != 4 or depth.ndim != 2:
+            raise ValueError("expected BGRA HxWx4 and depth HxW")
+        color = np.ascontiguousarray(color)
+
+        # Official k4a_image_format_t values.  The camera module's legacy
+        # constants describe capture-format choices and must not be reused for
+        # these explicitly allocated SDK images.
+        image_format_bgra32 = 3
+        image_format_depth16 = 4
+        image_type = self._k.K4AImage
+        depth_image = image_type(None)
+        color_image = image_type(None)
+        aligned_image = image_type(None)
+
+        def create(fmt: int, width: int, height: int, stride: int, out) -> None:
+            result = self._lib.k4a_image_create(
+                fmt, int(width), int(height), int(stride), ctypes.byref(out)
+            )
+            if result != self._k.K4A_RESULT_SUCCEEDED or not out:
+                raise RuntimeError(f"k4a_image_create failed (format={fmt}, result={result})")
+
+        try:
+            dh, dw = depth.shape
+            ch, cw = color.shape[:2]
+            create(image_format_depth16, dw, dh, dw * 2, depth_image)
+            create(image_format_bgra32, cw, ch, cw * 4, color_image)
+            create(image_format_bgra32, dw, dh, dw * 4, aligned_image)
+            ctypes.memmove(
+                self._lib.k4a_image_get_buffer(depth_image),
+                depth.ctypes.data,
+                depth.nbytes,
+            )
+            ctypes.memmove(
+                self._lib.k4a_image_get_buffer(color_image),
+                color.ctypes.data,
+                color.nbytes,
+            )
+
+            if self._color_to_depth_fn is None:
+                fn_type = ctypes.CFUNCTYPE(
+                    ctypes.c_int,
+                    self._k.K4ATransformation,
+                    self._k.K4AImage,
+                    self._k.K4AImage,
+                    self._k.K4AImage,
+                )
+                self._color_to_depth_fn = fn_type(
+                    ("k4a_transformation_color_image_to_depth_camera", self._lib)
+                )
+            result = self._color_to_depth_fn(
+                self._transformation_handle(), depth_image, color_image, aligned_image
+            )
+            if result != self._k.K4A_RESULT_SUCCEEDED:
+                logger.warning("k4a color→depth transform failed (result=%s)", result)
+                return None
+            size = int(self._lib.k4a_image_get_size(aligned_image))
+            raw = ctypes.string_at(self._lib.k4a_image_get_buffer(aligned_image), size)
+            return np.frombuffer(raw, np.uint8).reshape(dh, dw, 4).copy()
+        finally:
+            for image in (aligned_image, color_image, depth_image):
+                if image:
+                    self._lib.k4a_image_release(image)
+
+    def align_color_to_depth(
+        self, color_bgr: np.ndarray, depth_mm: np.ndarray
+    ) -> np.ndarray | None:
+        """Warp native-resolution BGR into the recorded depth geometry.
+
+        Unlike the pinhole colour lookup used historically by ``cloud.py``,
+        this calls libk4a's calibrated transformation and therefore preserves
+        the SDK lens model. Both input images are allocated explicitly; the
+        live backend's old, disabled alignment path passed an unallocated output
+        handle and is intentionally not reused here.
+        """
+        color = np.asarray(color_bgr, dtype=np.uint8)
+        if color.ndim != 3 or color.shape[2] != 3:
+            raise ValueError("expected BGR HxWx3")
+        bgra = np.empty((*color.shape[:2], 4), np.uint8)
+        bgra[:, :, :3] = color
+        bgra[:, :, 3] = 255
+        aligned = self._align_bgra_to_depth(bgra, depth_mm)
+        return None if aligned is None else aligned[:, :, :3]
+
+    def align_masks_to_depth(
+        self, masks: np.ndarray, depth_mm: np.ndarray
+    ) -> np.ndarray | None:
+        """Warp colour-space binary masks into depth pixels with libk4a.
+
+        Four independent masks are packed into BGRA channels per SDK call. This
+        preserves overlaps and avoids one transformation per object. A 0.5
+        threshold turns the SDK's sub-pixel colour interpolation back into a
+        binary membership map.
+        """
+        source = np.asarray(masks, dtype=bool)
+        if source.ndim != 3:
+            raise ValueError("expected masks MxHxW")
+        result = np.zeros((len(source), *np.asarray(depth_mm).shape), dtype=bool)
+        for start in range(0, len(source), 4):
+            chunk = source[start:start + 4]
+            packed = np.zeros((*source.shape[1:], 4), np.uint8)
+            for channel, mask in enumerate(chunk):
+                packed[:, :, channel] = mask.astype(np.uint8) * 255
+            aligned = self._align_bgra_to_depth(packed, depth_mm)
+            if aligned is None:
+                return None
+            for channel in range(len(chunk)):
+                result[start + channel] = aligned[:, :, channel] >= 128
+        return result
+
     def project_color_to_depth(self, u: float, v: float, z: float) -> tuple[float, float] | None:
         """Colour pixel + expected depth ``z`` (metres) → depth-image pixel."""
         k = self._k
@@ -117,6 +252,35 @@ class K4ACalibration:
         )
         if res == k.K4A_RESULT_SUCCEEDED and valid.value:
             return (dst.x, dst.y)
+        return None
+
+    def color_pixel_to_ray(self, u: float, v: float) -> np.ndarray | None:
+        """Colour pixel → exact SDK-undistorted ray in the colour camera frame.
+
+        The returned vector is normalised to ``z=1``.  It is used by the
+        ChArUco bundle solver so calibration and depth-cloud reconstruction use
+        the same factory K4A lens model, independent of output resolution.
+        """
+        k = self._k
+        src = k.K4AFloat2(float(u), float(v))
+        dst = k.K4AFloat3()
+        valid = ctypes.c_int()
+        res = self._lib.k4a_calibration_2d_to_3d(
+            self._calib,
+            ctypes.byref(src),
+            1000.0,
+            k.K4A_CALIBRATION_TYPE_COLOR,
+            k.K4A_CALIBRATION_TYPE_COLOR,
+            ctypes.byref(dst),
+            ctypes.byref(valid),
+        )
+        if (
+            res == k.K4A_RESULT_SUCCEEDED
+            and valid.value
+            and np.isfinite((dst.x, dst.y, dst.z)).all()
+            and abs(float(dst.z)) > 1e-9
+        ):
+            return np.array([dst.x / dst.z, dst.y / dst.z, 1.0], dtype=np.float64)
         return None
 
     def deproject_depth_px(self, u: float, v: float, z_mm: float) -> np.ndarray | None:

@@ -1,6 +1,6 @@
 [project]
 name = "viki"
-version = "0.1.0"
+version = "0.0.2"
 description = "Video-to-Kinematics — robot dataset generation from human RGB-D video"
 requires-python = ">=3.10"
 dependencies = [

@@ -1,5 +1,33 @@
 # Object-centric representation — where it stands, and what to do
 
+> **2026-10-06 default promotion.** The cube-aware planner is now the
+> Retarget default for the UR10/Robotiq cube-transfer workflow. This is a
+> workflow default, not a production-accuracy or simulation-success claim:
+> missing scene evidence blocks queueing and hand-only IK remains an explicit
+> opt-out. The historical decision and measurement caveats below remain valid.
+>
+> **2026-10-06 experimental follow-up.** An opt-in cube-aware grasp planner now
+> uses the tracked object's translation and two supported side planes to shape
+> the IK target and hold the jaw command during transport. This does not lift
+> the gate on production object-driven retargeting: face/phase estimates have
+> no external ground truth or simulated grasp verdict. See
+> `2026-10-06-cube-object-grasp.md`.
+
+> **2026-10-06 update.** A post-IK diagnostic `object_relative.npz` now
+> expresses the observed hand and target/achieved TCP relative to each tracked
+> object. It does not condition IK on object pose and does not establish cube
+> orientation ground truth or simulation success. The original decision below
+> remains the reason not to treat object-driven retarget as validated production
+> behavior; the later cube-specific workflow default is an unvalidated pilot. See
+> `2026-10-06-cube-transfer-full-pipeline.md` for the first pilot.
+
+> **2026-09-14 update.**  This decision still applies to making an unconditional
+> object-pose factor part of production retarget.  The next approved precursor
+> is now to evaluate semantic RGB-D segmentation independently, without treating
+> its output as truth or enabling object-relative retarget by default.  See
+> [`2026-09-14-sam-rgbd-segmentation-plan.md`](2026-09-14-sam-rgbd-segmentation-plan.md)
+> and [`2026-09-13-object-shape-se3-grasp-probe.md`](2026-09-13-object-shape-se3-grasp-probe.md).
+
 Conclusion of the reconnaissance in `object_centric_recon.md`. This is a
 recommendation, not a change: no code was touched.
 

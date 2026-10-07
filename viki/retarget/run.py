@@ -1,10 +1,4 @@
-"""Episode retargeting: rig-frame hand poses to a calibrated robot plan.
-
-The implementation intentionally has no object-centric or implicit legacy
-coordinate path. Input poses are explicitly transformed by the episode's
-calibration anchor; base position plus roll/pitch/yaw define the robot pose in
-that calibrated frame.
-"""
+"""Episode retargeting: rig-frame hand poses to a calibrated robot plan."""
 
 from __future__ import annotations
 
@@ -20,7 +14,7 @@ from scipy.spatial.transform import Rotation, Slerp
 
 import viki.config as app_config
 from viki.contracts import Episode, GripperState, LM, PLAN_KEYS, cln_pose_keys
-from viki.episode import mark_stage
+from viki.episode import clear_stage, mark_stage, stage_done
 from viki.gripper import load_gripper
 from viki.retarget.adapters import CylinderGripperAdapter, GripperAdapter
 from viki.retarget.archive import write_hdf5_archive
@@ -42,6 +36,7 @@ from viki.retarget.grippers import (
     attach_gripper,
     normalize_gripper,
 )
+from viki.retarget.object_grasp import plan_cube_grasp
 from viki.retarget.robots import RobotConfig, normalize_robot
 from viki.retarget.solver import (
     COLLISION_TOLERANCE_M,
@@ -61,6 +56,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class RetargetConfig:
     robot: str
+    reference_policy: str
     base_position: tuple[float, float, float]
     base_rpy_deg: tuple[float, float, float]
     hand_to_ee_translation: tuple[float, float, float]
@@ -69,6 +65,8 @@ class RetargetConfig:
     target_position_anchor: str
     adapter: GripperAdapter
     pose_source: str
+    object_grasp: bool
+    object_cube_side_mm: float
     approach_sec: float
     collision_pairs: int
     collision_min_distance_m: float
@@ -99,6 +97,16 @@ def config_from_options(
 ) -> RetargetConfig:
     """Merge one request over the restart-persisted retarget defaults."""
     values = dict(options or {})
+    reference_policy = str(
+        _setting(
+            values,
+            "reference_policy",
+            "RETARGET_REFERENCE_POLICY",
+            "robot_home",
+        )
+    ).strip().lower()
+    if reference_policy not in {"robot_home", "zero"}:
+        raise ValueError("reference_policy must be 'robot_home' or 'zero'")
     base = validate_base_position(
         _setting(values, "base_position", "RETARGET_ROBOT_BASE_POSITION", [0, 0, 0])
     )
@@ -113,7 +121,7 @@ def config_from_options(
             values,
             "hand_to_ee_rpy_deg",
             "RETARGET_HAND_TO_EE_RPY_DEG",
-            [-175.675, 15.45, -47.922],
+            [4.325, 15.45, -47.922],
         )
     )
     weights = BatchWeights(
@@ -196,6 +204,7 @@ def config_from_options(
     )
     out = RetargetConfig(
         robot=str(robot or _setting(values, "robot", "RETARGET_DEFAULT_ROBOT", "ur10")),
+        reference_policy=reference_policy,
         base_position=tuple(float(x) for x in base),
         base_rpy_deg=tuple(float(x) for x in base_rpy),
         hand_to_ee_translation=tuple(float(x) for x in hand_t),
@@ -206,6 +215,8 @@ def config_from_options(
         pose_source=str(
             _setting(values, "pose_source", "PERCEPTION_HAND_POSE_SOURCE", "landmarks")
         ),
+        object_grasp=bool(_setting(values, "object_grasp", "RETARGET_OBJECT_GRASP_ENABLED", False)),
+        object_cube_side_mm=float(_setting(values, "object_cube_side_mm", "RETARGET_OBJECT_CUBE_SIDE_MM", 40.0)),
         approach_sec=float(
             _setting(values, "approach_sec", "RETARGET_APPROACH_SEC", 2.0)
         ),
@@ -236,6 +247,8 @@ def config_from_options(
     out.solver.validate()
     if out.approach_sec < 0.0:
         raise ValueError("approach_sec must be non-negative")
+    if not np.isfinite(out.object_cube_side_mm) or out.object_cube_side_mm <= 0:
+        raise ValueError("object_cube_side_mm must be positive")
     if out.collision_pairs < 0 or out.collision_min_distance_m < 0.0:
         raise ValueError("collision settings must be non-negative")
     normalize_robot(out.robot)
@@ -519,6 +532,39 @@ def _config_json(cfg: RetargetConfig) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+def retarget_prerequisite_errors(ep: Episode, cfg: RetargetConfig) -> list[str]:
+    """Reject incompatible inputs before loading robot models or queueing IK."""
+    errors = []
+    if not ep.cln_npz.is_file():
+        errors.append("cln.npz is missing; run Extract first")
+    if not cfg.object_grasp:
+        return errors
+    if cfg.gripper != "robotiq_2f85":
+        errors.append("cube-aware grasp requires Robotiq 2F-85")
+    if not (ep.raw_dir / "world_anchor.json").is_file():
+        errors.append("raw/world_anchor.json is missing; calibrated cube grasp needs the scene anchor")
+    if not ep.object_models_npz.is_file():
+        errors.append("object_models.npz is missing; run Scene with a manipulated_object")
+    if errors:
+        return errors
+    try:
+        from viki.perception import OBJECT_MODEL_SCHEMA
+
+        with np.load(ep.object_models_npz, allow_pickle=False) as models:
+            if str(models["schema"]) != OBJECT_MODEL_SCHEMA:
+                errors.append("object_models.npz uses an unsupported schema")
+            if np.count_nonzero(models["object_labels"] == "manipulated_object") != 1:
+                errors.append("scene must contain exactly one manipulated_object")
+            object_frames = len(models["translation_world"])
+        with np.load(ep.cln_npz, allow_pickle=False) as prepared:
+            hand_frames = len(prepared["timestamps"])
+        if object_frames != hand_frames:
+            errors.append(f"object and hand tracks have different lengths ({object_frames} vs {hand_frames})")
+    except (OSError, ValueError, KeyError) as exc:
+        errors.append(f"cannot validate retarget inputs: {exc}")
+    return errors
+
+
 def retarget_episode(
     ep: Episode,
     robot: str | None = None,
@@ -528,11 +574,14 @@ def retarget_episode(
     log: Callable[[str], None] | None = None,
 ) -> str:
     """Optimise ``ep.cln_npz`` into the canonical, self-contained ``plan.h5``."""
-    if not ep.cln_npz.exists():
-        raise FileNotFoundError(f"no cln.npz for episode {ep.id}; run Extract first")
     cfg = config_from_options(robot, options)
+    errors = retarget_prerequisite_errors(ep, cfg)
+    if errors:
+        raise ValueError(f"episode {ep.id} is not ready for retarget: {'; '.join(errors)}")
     robot_cfg: RobotConfig = normalize_robot(cfg.robot)
     gripper_cfg = normalize_gripper(cfg.gripper)
+    arm_model = _load_robot_description(robot_cfg.description)
+    assembly = attach_gripper(arm_model, robot_cfg, gripper_cfg, cfg.adapter)
     targets = load_targets(ep.cln_npz, cfg)
     rig_to_calibration = load_rig_to_calibration(ep.raw_dir)
     hand_calib_p, hand_calib_r = rig_pose_to_calibration(
@@ -546,6 +595,26 @@ def retarget_episode(
         cfg.hand_to_ee_translation,
         cfg.hand_to_ee_rpy_deg,
     )
+    object_grasp = None
+    if cfg.object_grasp:
+        if cfg.gripper != "robotiq_2f85":
+            raise ValueError("experimental cube-face grasp supports only Robotiq 2F-85")
+        object_grasp = plan_cube_grasp(
+            ep.object_models_npz,
+            target_calib_p,
+            target_calib_r,
+            targets.gripper_opening,
+            rig_to_calibration,
+            gripper_cfg.max_width_m,
+            cfg.object_cube_side_mm / 1000.0,
+            gripper_cfg.opening_for_contact_width(
+                assembly, (cfg.object_cube_side_mm - 2.0) / 1000.0
+            ),
+        )
+        target_calib_p = object_grasp.positions
+        target_calib_r = object_grasp.rotations
+        if log is not None:
+            log(f"object grasp: {object_grasp.diagnostics}")
     target_robot_p = calibration_to_robot(
         target_calib_p, cfg.base_position, cfg.base_rpy_deg
     )
@@ -555,14 +624,21 @@ def retarget_episode(
             f"{robot_cfg.description}: {len(target_robot_p)} frames in {CALIBRATION_FRAME}, "
             f"target={targets.position_anchor}+palm, base={list(cfg.base_position)}, "
             f"base_rpy_deg={list(cfg.base_rpy_deg)}, "
+            f"reference={cfg.reference_policy}, "
             f"tool_point={gripper_cfg.grasp_center_name}, "
             f"adapter={cfg.adapter.length_m * 1000.0:.1f} mm, floor=z>=0"
         )
-    arm_model = _load_robot_description(robot_cfg.description)
-    assembly = attach_gripper(arm_model, robot_cfg, gripper_cfg, cfg.adapter)
     dt = 1.0 / targets.fps
-    gripper_opening = gripper_cfg.profile_opening(targets.gripper_opening, dt)
+    gripper_opening = gripper_cfg.profile_opening(
+        object_grasp.opening if object_grasp is not None else targets.gripper_opening, dt
+    )
+    gripper_contact_width = gripper_cfg.contact_widths(assembly, gripper_opening)
     gripper_joint_position = gripper_cfg.joint_positions(gripper_opening)
+    reference_q = (
+        np.asarray(robot_cfg.home_q, dtype=np.float64)
+        if cfg.reference_policy == "robot_home"
+        else np.zeros(len(robot_cfg.joint_names), dtype=np.float64)
+    )
     kinematics = PinocchioKinematics(
         assembly.robot,
         assembly.orientation_frame,
@@ -570,6 +646,7 @@ def retarget_episode(
         collision_min_distance_m=cfg.collision_min_distance_m,
         actuated_joint_names=robot_cfg.joint_names,
         actuated_position_limits=robot_cfg.position_limits,
+        reference_q=reference_q,
         passive_joint_positions={
             assembly.drive_joint: gripper_joint_position,
         },
@@ -691,7 +768,19 @@ def retarget_episode(
         np.gradient(full_velocity, dt, axis=0)
         if len(full_velocity) > 2 else np.zeros_like(full_velocity)
     )
+    supported = targets.confidence > 0.0
+    wrist_joint_id = int(kinematics.model.getJointId(robot_cfg.joint_names[-1]))
+    wrist_height_m = (
+        joint_placements[:, wrist_joint_id, 2, 3] - target_calib_p[:, 2]
+    )
+    target_axis_z = target_calib_r[:, 2, 2]
+    achieved_axis_z = achieved_calib_r[:, 2, 2]
     metrics = {
+        "object_grasp": object_grasp.diagnostics if object_grasp is not None else None,
+        "object_grasp_carry_width_m": (
+            float(np.median(gripper_contact_width[object_grasp.phases == 2]))
+            if object_grasp is not None else None
+        ),
         "position_rmse_mm": float(np.sqrt(np.mean(result.position_error_m ** 2)) * 1000.0),
         "position_p95_mm": float(np.percentile(result.position_error_m, 95) * 1000.0),
         "orientation_rmse_deg": float(
@@ -723,6 +812,18 @@ def retarget_episode(
         "target_position_anchor": targets.position_anchor,
         "adapter_length_mm": cfg.adapter.length_m * 1000.0,
         "approach_duration_sec": len(q_approach) * dt,
+        "reference_policy": cfg.reference_policy,
+        "reference_q": kinematics.q_reference.tolist(),
+        "wrist_above_target_fraction": float(np.mean(wrist_height_m > 0.0)),
+        "wrist_target_height_median_mm": float(
+            1000.0 * np.median(wrist_height_m)
+        ),
+        "target_tool_axis_down_fraction": float(
+            np.mean(target_axis_z[supported] < 0.0)
+        ) if supported.any() else 0.0,
+        "achieved_tool_axis_down_fraction": float(
+            np.mean(achieved_axis_z[supported] < 0.0)
+        ) if supported.any() else 0.0,
     }
     if sequential is not None:
         sequential_velocity = (
@@ -767,7 +868,7 @@ def retarget_episode(
         sequential_metrics = None
     metrics["sequential_baseline"] = sequential_metrics
     plan = {
-        "schema_version": 8,
+        "schema_version": 9,
         "coordinate_frame": CALIBRATION_FRAME,
         "timestamps": targets.timestamps,
         "fps": targets.fps,
@@ -802,9 +903,7 @@ def retarget_episode(
         "gripper_closed": gripper_opening <= 0.05,
         "gripper_opening": gripper_opening.astype(np.float32),
         "gripper_joint_position": gripper_joint_position.astype(np.float32),
-        "gripper_opening_m": gripper_cfg.opening_widths(
-            gripper_opening
-        ).astype(np.float32),
+        "gripper_opening_m": gripper_contact_width.astype(np.float32),
         "omega": targets.confidence.astype(np.float32),
         "target_position_calibration": target_calib_p.astype(np.float32),
         "target_rotation_calibration": target_calib_r.astype(np.float32),
@@ -843,17 +942,22 @@ def retarget_episode(
         "source_pose": targets.pose_source,
     }
     assert set(plan) == set(PLAN_KEYS)
-    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v8")
+    if stage_done(ep, "object_relative"):
+        clear_stage(ep, "object_relative")
+    write_hdf5_archive(ep.plan_h5, plan, schema="viki_plan_hdf5_v9")
     mark_stage(
         ep,
         "retarget",
         robot=robot_cfg.description,
+        object_grasp=cfg.object_grasp,
         coordinate_frame=CALIBRATION_FRAME,
         target_position_anchor=targets.position_anchor,
         adapter_kind=cfg.adapter.kind,
         adapter_length_mm=cfg.adapter.length_m * 1000.0,
         position_rmse_mm=metrics["position_rmse_mm"],
         solver_status=plan["solver_status"],
+        reference_policy=cfg.reference_policy,
+        wrist_above_target_fraction=metrics["wrist_above_target_fraction"],
     )
     logger.info(
         "retarget %s: %s, %.1f mm RMSE",

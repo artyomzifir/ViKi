@@ -8,7 +8,10 @@ artifacts inside an **episode directory**.
 record        cameras/      live RGB-D  ->  episodes/<id>/raw/
 extract       perception/   raw/        ->  rec.npz      per-camera hand landmark trajectories
 prepare       prepare/      rec.npz     ->  cln.npz      fused + smoothed landmarks + palm pose + gripper
+segment       perception/   raw/        ->  intermediates/segmentation/  instance masks + semantic cloud
+object        perception/   segmentation -> object_models.npz  rigid core/shell + pose/confidence
 retarget      retarget/     cln.npz     ->  plan.h5      pinch/palm target -> adapter -> gripper TCP -> robot joints
+object-rel    object_centric.py  object_models.npz + cln.npz + plan.h5 -> intermediates/object_relative.npz
 replay        replay/       plan.h5     ->  replay.h5    proprioception attained on hardware   [stub]
 label         labeling.py   -> meta.json["labels"]       task string / phase segments / outcome
 export        export/       episodes/*  ->  datasets/<name>/   trajectory bundle; LeRobot  [partial]
@@ -16,7 +19,7 @@ export        export/       episodes/*  ->  datasets/<name>/   trajectory bundle
 calibration/  intrinsics + extrinsics (board -> world), a side input to perception
 render/       depth colourise, MJPEG, 3-D matplotlib views — no FastAPI, no hardware
 server/       transport only: FastAPI over the offline stages + camera preview
-cli.py        `viki record|extract|prepare|retarget|replay|label|export|run`
+cli.py        `viki record|extract|scene|prepare|retarget|object-relative|replay|label|export|run`
 ```
 
 ## Cross-cutting
@@ -26,6 +29,7 @@ cli.py        `viki record|extract|prepare|retarget|replay|label|export|run`
 | `contracts.py` | every cross-stage DTO, `LM` enum, Protocols, `Episode`/`EpisodeLabels`, `*_KEYS` schema tuples |
 | `config.py` | `Config` (frozen) + `load()`; UPPER_SNAKE keys mirror `data/*_configuration.json` |
 | `episode.py` | episode-directory helpers: `new_episode`, meta/status r/w, `mark_stage` |
+| `object_centric.py` | post-IK object-relative hand and TCP sidecar, never implicit IK input |
 | `dsp.py` | Savitzky-Golay + NaN interpolation for perception preparation |
 | `gripper.py` | `Gripper` ABC + default continuous `LinearGripper`; legacy `BinaryGripper` |
 

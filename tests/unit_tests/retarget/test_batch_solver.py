@@ -96,6 +96,24 @@ class NonlinearCollision:
         return self.collision_margins(q), np.array([[-2.0 * q[0]]])
 
 
+class CountingCollision(NonlinearCollision):
+    def __init__(self):
+        self.exact_calls = 0
+        self.linearization_calls = 0
+
+    @staticmethod
+    def _margin(q):
+        return np.array([0.25 - q[0] ** 2])
+
+    def collision_margins(self, q):
+        self.exact_calls += 1
+        return self._margin(q)
+
+    def collision_linearization(self, q):
+        self.linearization_calls += 1
+        return self._margin(q), np.array([[-2.0 * q[0]]])
+
+
 def test_difference_operators_are_velocity_and_acceleration():
     x = np.array([0.0, 0.5, 1.0, 1.5])
     np.testing.assert_allclose(difference_matrix(4, 1, 0.5) @ x, [1, 1, 1])
@@ -299,6 +317,27 @@ def test_collision_is_rechecked_after_the_nonlinear_step():
     )
     assert result.q[0, 0] <= 0.5 + 1e-9
     assert result.min_collision_margin >= -1e-9
+
+
+def test_current_collision_margin_is_reused_from_linearization():
+    pytest.importorskip("qpsolvers")
+    if "osqp" not in pytest.importorskip("qpsolvers").available_solvers:
+        pytest.skip("OSQP backend unavailable")
+    kinematics = CountingCollision()
+    result = solve_trajectory(
+        kinematics,
+        np.array([[0.45, 0.0, 0.0]]),
+        np.eye(3)[None],
+        np.ones(1),
+        0.1,
+        BatchWeights(position=1, orientation=0, velocity=0, acceleration=0, posture=0),
+        BatchOptions(max_iterations=1, max_step_rad=0.05, collision_enabled=True),
+    )
+    assert result.min_collision_margin >= -1e-9
+    assert kinematics.linearization_calls == 1
+    # One exact candidate acceptance check plus one final safety check. The
+    # current trajectory is not swept a second time after linearisation.
+    assert kinematics.exact_calls == 2
 
 
 def test_sequential_baseline_reports_post_smoothing_constraint_violations():

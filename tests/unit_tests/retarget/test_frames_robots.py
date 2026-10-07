@@ -168,13 +168,14 @@ def test_default_retarget_config_tracks_orientation_with_explicit_offset():
 
     cfg = config_from_options("ur10")
     assert cfg.weights.orientation == pytest.approx(0.01)
+    assert cfg.reference_policy == "robot_home"
     assert cfg.target_position_anchor == "pinch_center"
     np.testing.assert_allclose(cfg.base_rpy_deg, [0.0, 0.0, 0.0])
     assert cfg.adapter.kind == "user_cylinder"
     assert cfg.adapter.length_m == pytest.approx(0.011)
     np.testing.assert_allclose(
         cfg.hand_to_ee_rpy_deg,
-        [-175.675, 15.45, -47.922],
+        [4.325, 15.45, -47.922],
     )
 
 
@@ -209,3 +210,12 @@ def test_invalid_target_anchor_and_adapter_are_rejected():
         config_from_options("ur10", {"target_position_anchor": "thumb_tip"})
     with pytest.raises(ValueError, match="adapter radius"):
         config_from_options("ur10", {"adapter_radius_mm": 0.0})
+    with pytest.raises(ValueError, match="reference_policy"):
+        config_from_options("ur10", {"reference_policy": "guess"})
+
+
+def test_zero_reference_policy_remains_available_for_legacy_comparisons():
+    from viki.retarget.run import config_from_options
+
+    cfg = config_from_options("ur10", {"reference_policy": "zero"})
+    assert cfg.reference_policy == "zero"

@@ -8,11 +8,10 @@ relative to the manipulated object::
 
     T_obj_hand[t] = inv(T_world_obj[t]) @ T_world_hand[t]
 
-STUB: ViKi has no object-pose tracker yet. Until one exists, ``object_relative``
-returns ``None`` and :mod:`viki.prepare.run` writes ``cln.npz`` with the
-workspace-anchored form only (``status.json`` records ``object_relative=false``).
-When a tracker lands, feed its per-frame ``T_world_obj`` here — the maths below
-is already correct.
+Prepare runs before scene perception, so its call still passes ``None`` and
+``cln.npz`` remains workspace-anchored. The post-IK ``viki object-relative``
+stage calls this helper with the tracked object pose and writes a separate
+sidecar without modifying the protected hand baseline.
 """
 
 from __future__ import annotations

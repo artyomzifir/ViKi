@@ -470,6 +470,15 @@ button.scene-legend-row:focus-visible { outline: 1px solid var(--accent); outlin
 .viewer-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
 .viewer-field select { width: 100%; }
 .viewer-status { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.viewer-object-status {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 8px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); font-size: 10px; line-height: 1.45;
+}
+.viewer-object-status[hidden] { display: none; }
+.viewer-object-title { color: var(--accent); font-weight: 600; }
+.viewer-object-row { display: flex; flex-direction: column; gap: 1px; color: var(--muted); }
+.viewer-object-row strong { color: var(--text); font-weight: 500; }
 .viewer-build { align-self: flex-start; }
 .viewer-hud { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 11px; }
 .viewer-hud dt { color: var(--muted); }
@@ -620,3 +629,4 @@ button.scene-legend-row:focus-visible { outline: 1px solid var(--accent); outlin
 .wiz-crit .crit.ok { color: #4ade80; }
 .wiz-crit .crit.bad { color: #f87171; }
 .wiz-crit .crit.green { color: #4ade80; } .wiz-crit .crit.amber { color: #fbbf24; } .wiz-crit .crit.red { color: #f87171; }
+.wiz-crit .crit.warn, .wiz-crit .crit.unknown { color: #fbbf24; }  /* not scored — not the same as wrong */

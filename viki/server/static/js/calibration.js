@@ -23,6 +23,7 @@ let openedPreset = null;   // name of the preset whose sets are shown, or null (
 // "current, unsaved" (a fresh solve, will Save as a NEW preset); "<name>" = a
 // specific preset the user picked.
 let presetChoice = null;
+let lastReadiness = null;
 
 // ── template ──────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ function template() {
     type: 'aruco',
     cols: c.aruco.boardSize?.[0] ?? 8, rows: c.aruco.boardSize?.[1] ?? 10,
     square: c.aruco.squareSize ?? 0.05, marker: c.aruco.markerSize ?? 0.035,
-    dict: c.aruco.defaultDict,
+    dict: ARUCO_DICTS[c.aruco.dictId] ?? 'DICT_5X5_50',
   };
   const arucoOpts = ARUCO_DICTS.map(n =>
     `<option ${n === b.dict ? 'selected' : ''}>${n}</option>`).join('');
@@ -111,6 +112,13 @@ function template() {
           <button id="calib-start-session" class="primary">Start session</button>
           <button id="calib-capture-all" class="primary">Capture set</button>
           <div id="calib-readiness" class="wiz-crit"></div>
+          <label class="hint" style="display:block;margin:.4em 0">
+            <input type="checkbox" id="calib-force" ${sessionGet('calibForce', false) ? 'checked' : ''}>
+            Solve anyway — ignore unmet gates. For a rig where a gate is
+            <b>unreachable</b>, not just unmet (a small board at a fixed distance
+            can never cover enough of the frame). The override is recorded on the
+            preset.
+          </label>
           <button id="calib-solve" class="primary" disabled>Solve (bundle)</button>
         </div>
 
@@ -132,8 +140,11 @@ function template() {
         <div class="wiz-step" data-step="validate">
           <div class="wiz-head"><span class="wiz-dot"></span><b>4 · Validate</b>
             <span class="wiz-state" data-role="st-validate">—</span></div>
-          <div class="hint">Empty scene. Checks the per-camera clouds actually
-            overlap. Recording is blocked on a <b>red</b> verdict.</div>
+          <div class="hint">Empty scene. Checks the per-camera clouds agree
+            <i>where both cameras can see</i>. Recording is blocked on a
+            <b>red</b> verdict; <b>unknown</b> means too little shared view to
+            judge and asks for a confirm. A green result does not verify
+            moving hands or objects above the table.</div>
           <button id="calib-validate" class="primary" disabled>Run validation</button>
           <div id="calib-validation" class="wiz-crit"></div>
         </div>
@@ -243,8 +254,13 @@ async function captureAll() {
 
 async function solve() {
   log('Bundle solve…');
+  const force = forceOn();
   try {
-    const r = await api('POST', '/api/calibration/solve');
+    const r = await api('POST', '/api/calibration/solve' + (force ? '?force=true' : ''));
+    const ov = r.solve?.readiness_override;
+    if (ov) log('⚠ Solved with gates overridden: '
+      + ov.unmet.map(c => `${c.name.replace(/_/g, ' ')} ${c.value}/${c.need}`).join(', ')
+      + ' — recorded on the preset', 'error');
     const rms = Object.entries(r.solve?.rms_reproj_px || {})
       .map(([d, v]) => `${d} ${(+v).toFixed(2)}px`).join(', ');
     log(`Extrinsics solved (ref ${r.reference_device}; ${rms})`
@@ -289,7 +305,7 @@ async function runValidate() {
     const r = await api('POST', '/api/calibration/validate');
     renderValidation(r);
     log(`Validation: ${r.verdict.toUpperCase()}`,
-      r.verdict === 'green' ? 'ok' : r.verdict === 'amber' ? 'warn' : 'error');
+      r.verdict === 'green' ? 'ok' : r.verdict === 'red' ? 'error' : 'warn');
   } catch (e) { log('Validation failed: ' + e, 'error'); }
   refreshSetup();
 }
@@ -301,7 +317,10 @@ function setStepState(step, txt, cls) {
   if (el) { el.textContent = txt; el.className = 'wiz-state ' + (cls || ''); }
 }
 
+function forceOn() { return !!view?.querySelector('#calib-force')?.checked; }
+
 function renderReadiness(rd) {
+  lastReadiness = rd || null;
   const box = view?.querySelector('#calib-readiness');
   if (!box) return;
   if (!rd || !rd.criteria) { box.innerHTML = ''; return; }
@@ -309,7 +328,13 @@ function renderReadiness(rd) {
     `<div class="crit ${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓' : '·'} ${c.name.replace(/_/g, ' ')}
       <span>${c.value} / ${c.need}</span></div>`).join('');
   const solveBtn = view.querySelector('#calib-solve');
-  if (solveBtn) solveBtn.disabled = !rd.ready;
+  if (solveBtn) solveBtn.disabled = !rd.ready && !forceOn();
+}
+
+// Re-evaluate the Solve button without refetching readiness.
+function syncSolveEnabled() {
+  const solveBtn = view?.querySelector('#calib-solve');
+  if (solveBtn) solveBtn.disabled = !(lastReadiness?.ready || forceOn());
 }
 
 function renderValidation(v) {
@@ -319,9 +344,14 @@ function renderValidation(v) {
   box.innerHTML =
     `<div class="crit ${v.verdict}">verdict <b>${v.verdict}</b></div>` +
     v.pairs.map(p => p.skipped
-      ? `<div class="crit bad">${p.a}–${p.b}: ${p.reason}</div>`
-      : `<div class="crit ${p.verdict}">${p.a}–${p.b}: NN ${p.nn_median_mm}mm ·
-         ICP ${p.icp_translation_mm}mm / ${p.icp_rotation_deg}°</div>`).join('');
+      ? `<div class="crit warn">${p.a}–${p.b}: not scored — ${p.reason}</div>`
+      : `<div class="crit ${p.verdict}">${p.a}–${p.b}: NN ${p.nn_median_mm}mm${
+          p.nn_median_ab_mm !== undefined
+            ? ` (→ ${p.nn_median_ab_mm} / ← ${p.nn_median_ba_mm})` : ''} ·
+         ICP ${p.icp_translation_mm}mm / ${p.icp_rotation_deg}°${p.shared_view
+        ? ` · shared view ${Math.round(100 * Math.min(p.shared_view.a_frac,
+            p.shared_view.b_frac))}%` : ' · whole box (no frustum)'}${p.note
+        ? ` · ${p.note}` : ''}</div>`).join('');
 }
 
 async function refreshSetup() {
@@ -613,7 +643,13 @@ function onClick(e) {
 
 function onChange(e) {
   const el = e.target;
-  if (el.id === 'board-type') { syncBoardFieldVisibility(); syncParams(); }
+  if (el.id === 'calib-force') {
+    sessionSet('calibForce', el.checked);
+    syncSolveEnabled();
+    if (el.checked) log('Readiness gates will be overridden on the next solve — '
+      + 'the preset records which ones', 'error');
+  }
+  else if (el.id === 'board-type') { syncBoardFieldVisibility(); syncParams(); }
   else if (['board-width', 'board-height', 'square-size', 'marker-size'].includes(el.id)
     || el.id === 'aruco-dict') { syncParams(); }
   else if (el.id === 'calib-preset') {
