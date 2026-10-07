@@ -38,53 +38,39 @@ This guide covers the complete one-time setup for running ViKi on a fresh Ubuntu
 | Device | Role | USB requirement |
 |---|---|---|
 | Intel RealSense D435i | Observation camera (policy input) | USB 3.0 (5 Gbps) |
-| Azure Kinect DK | Kinematics extraction | USB 3.2 Gen 2 (10 Gbps) per device — **one per host controller**, see the warning below |
+| Azure Kinect DK | Kinematics extraction | USB 3 SuperSpeed; **one independent host controller per Kinect** |
 | 3.5mm mono cable | Hardware sync between Kinects | Any length under ~3m |
 
-> ### ⚠ Two Kinects on one controller hard-lock the host
+> ### Two-Kinect USB-controller issue: resolved on the current rig
 >
-> On this rig both Kinects, the keyboard and the mouse hang off a single Intel
-> Alder Lake-S PCH xHCI controller. Starting both cameras freezes the machine —
-> picture first, then black screen, then gone — with no panic and usually no
-> crash dump. Reproduced on kernels `6.17.0-40` and `7.0.0-28`, with and without
-> `usbcore.autosuspend=-1`, with and without a prior stop/start. Lowering the
-> load only buys time: full rate died in 2 seconds, MJPG at 15 fps with binned
-> depth lasted 3.5 minutes.
->
-> **A single Kinect has never failed.** Run one Kinect plus a RealSense until a
-> PCIe USB card giving each camera its own controller is fitted (Renesas
-> µPD720202 or FL1100 — untested here). Different sockets on the case are not
-> different controllers: check with `lspci | grep -i usb`.
->
-> After a freeze the cameras stay unresponsive until physically unplugged,
-> power included — a warm reboot does not clear it.
+> Two Kinects sharing the Intel Alder Lake-S PCH xHCI previously hard-locked this
+> host. The second Kinect now uses an independent Renesas µPD720201 PCIe xHCI;
+> dual-camera vendor and ViKi captures work on this wiring. For this rig, use
+> **one independent host controller per Kinect**. Two ports or hubs under one
+> controller do not provide that isolation. The old failure and its recovery
+> procedure are retained as history in
+> [`docs/camera_freeze_investigation.md`](docs/camera_freeze_investigation.md).
 
-### USB bandwidth requirements
+### USB controller requirement
 
-Each Azure Kinect DK streams depth + color simultaneously and consumes ~2.5–3 Gbps of USB bandwidth. This means:
+Each Kinect streams colour and depth using SuperSpeed USB. The old failure was
+at the **shared host controller**, not merely a shared hub. This rig runs one
+Kinect on the Intel PCH xHCI (`0000:00:14.0`) and the other on the independent
+Renesas PCIe xHCI (`0000:08:00.0`). Both cameras enumerate at `5000M` and work;
+a `10000M` link is not required by this measured setup.
 
-- **One Kinect**: any single USB 3.2 Gen 2 port works.
-- **Two Kinects**: each must be connected to a **separate USB hub running at 10 Gbps**. Two Kinects on the same hub will fail — the combined bandwidth exceeds what a single hub can deliver.
-
-Verify your USB topology with:
+Check the current wiring with:
 
 ```bash
 lsusb -t
+lspci -nn | grep -i 'USB controller'
 ```
 
-Look for two separate hubs each showing `10000M`, with one Kinect per hub. Example of a working configuration:
-
-```
-Bus 002: xhci_hcd/9p, 20000M
-  Port 001: Hub, 10000M
-    Port 001: Kinect color (uvcvideo)
-    Port 002: Kinect depth MCU (Vendor Specific)
-  Port 003: Hub, 10000M
-    Port 001: Kinect color (uvcvideo)
-    Port 002: Kinect depth MCU (Vendor Specific)
-```
-
-If both Kinects land on the same hub, try different physical ports. If the board only has one xHCI controller (common on consumer motherboards), a PCIe USB expansion card with an independent controller (e.g. Inateck with Renesas NEC µPD720201, ~€25) solves this permanently.
+The current working topology has one Kinect beneath Bus 002 (`xhci_hcd`, Intel)
+and one beneath Bus 004 (`xhci-pci-renesas`, Renesas). The PCI devices above are
+different controllers. Do not infer isolation from different sockets, hubs, or
+USB bus numbers alone: one xHCI can expose both USB 2 and USB 3 buses. For more
+Kinects on this rig, budget one independent controller per camera.
 
 ---
 
@@ -174,9 +160,9 @@ depth engine create and initialize failed with error code: 204
 
 ## 5. USB wiring for two Azure Kinects
 
-1. Connect each Kinect to a **different physical USB port** on the machine, ideally ports that route to different internal hubs.
-2. After connecting, run `lsusb -t` and confirm each Kinect is on a separate `10000M` hub (see [Requirements](#1-requirements)).
-3. Reconnect the cameras if needed — USB device numbers change when you move cables, but the topology check (`lsusb -t`) always shows the current state.
+1. Connect one Kinect to a motherboard Intel port and the other to the Renesas PCIe card.
+2. Run `lsusb -t` and `lspci -nn | grep -i 'USB controller'`; confirm each camera is beneath a different PCI xHCI controller (see [Requirements](#1-requirements)).
+3. Recheck after moving cables. Device indices and USB bus numbers can change; physical controller isolation is the invariant.
 
 Each Azure Kinect DK appears as two USB devices:
 - A `Video` class device (color camera, `uvcvideo` driver)
@@ -206,8 +192,8 @@ rig automatically: every subordinate first, then the master.
 
 With two or more connected Kinects, standalone mode is forbidden. ViKi checks
 the SDK-reported SYNC IN/SYNC OUT jack state and refuses to start a partial or
-miswired rig. It also verifies actual K4A timestamps against the configured
-subordinate delay (500 µs tolerance). Recording has a second gate and cannot
+miswired rig. It also verifies that the per-device K4A timestamp offset
+stays stable within 500 µs across buffered frames. Recording has a second gate and cannot
 bypass this check with the debug `force` option. Clicking **Stop** on either
 Kinect stops the whole rig.
 
@@ -283,7 +269,7 @@ For manipulation tasks at 0.5–1.5m: `NFOV_UNBINNED` gives the best depth accur
 | Kinect fails: `depth engine error 204` | X11 not accessible | Run `xhost +local:` before `docker compose up` |
 | Kinect fails: `depth engine error 207 — OpenGL 4.4 context creation failed` | DRI not accessible or wrong driver | Check `/dev/dri` exists in container; ensure `GALLIUM_DRIVER=llvmpipe` is set |
 | Second Kinect fails: `LIBUSB_ERROR_IO errno=12` | USB DMA memory limit | Apply GRUB `usbfs_memory_mb=1000` fix and reboot |
-| Second Kinect fails: `LIBUSB_ERROR_BUSY` | Both Kinects on same USB hub | Move second Kinect to a different physical USB port on a separate hub |
+| Second Kinect fails: `LIBUSB_ERROR_BUSY` | USB resource conflict | Check that each Kinect is on its own PCI xHCI controller, then retry after stopping the rig |
 | Kinect fails: `k4a_device_open failed` after stop/start | USB not released yet | Wait 2–3 seconds after stopping before restarting |
 | RealSense fails: `Couldn't resolve requests` | Unsupported resolution/fps | Use 640×480 or 1280×720; avoid 4K |
 | RealSense: very low framerate or timeouts | USB 2.0 port or shared hub | Connect to a USB 3.0 port directly on the motherboard |

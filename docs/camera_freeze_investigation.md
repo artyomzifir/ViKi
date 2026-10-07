@@ -1,6 +1,27 @@
 # Multi-Kinect host freeze investigation
 
-Status: root cause captured; the original `uvcvideo` explanation is retracted.
+Status: **closed for the current hardware layout (2026-10-04)**. The historical
+experiments below explain the old shared-controller failure; they are not
+current operating instructions. The original `uvcvideo` explanation remains
+retracted.
+
+## Resolution on the current rig — 2026-10-04
+
+The two Azure Kinects are now on **separate PCI xHCI controllers**: motherboard
+Intel `0000:00:14.0` (Bus 002) and Renesas µPD720201 PCIe `0000:08:00.0`
+(Bus 004). Both enumerate at USB SuperSpeed `5000M`. This isolates their
+isochronous traffic at the host-controller level; separate physical sockets or
+hubs on the same xHCI did not. Use one independent controller per Kinect on this
+rig, and check the actual topology after moving cables.
+
+With this wiring, one vendor dual-camera capture (~22 s, despite requesting
+5 s) and two five-second ViKi 1280×720/30 fps captures completed without the
+old host lockup. After a software frame-pairing fix, all 150 saved pairs in the
+second ViKi capture were within 133–167 µs in device time. See
+[`2026-10-04-kinect-sync-and-cleanup.md`](2026-10-04-kinect-sync-and-cleanup.md)
+for the measurements. The original single-controller incident is operationally
+resolved; the former one-Kinect-plus-RealSense workaround is retired. These
+short runs do not prove that unrelated USB or host faults are impossible.
 
 ## Observed failure
 
@@ -17,10 +38,10 @@ failed. EFI pstore from the later reproductions now proves that the failure is
 inside the host's xHCI kernel path, rather than merely being correlated with
 USB traffic.
 
-Both Kinects (`2-1` and `2-3`), the keyboard, mouse, and all other USB devices
-share the machine's only USB controller, Intel Alder Lake-S PCH xHCI
-`0000:00:14.0`. A controller failure can therefore remove both cameras and all
-local input together. The cameras being on different motherboard sockets does
+At the time of the failures, both Kinects (`2-1` and `2-3`), the keyboard,
+mouse, and all other USB devices shared the machine's only USB controller,
+Intel Alder Lake-S PCH xHCI `0000:00:14.0`. A failure of that controller could
+therefore remove both cameras and all local input together. The cameras being on different motherboard sockets does
 not provide controller isolation.
 
 ## Retracted `uvcvideo` hypothesis
@@ -552,3 +573,12 @@ The only untested items are hardware or near-hardware:
 2. **A discrete PCIe USB controller**, a real controller per port (Renesas
    µPD720202, FL1100), so the second Kinect stops sharing
    `0000:00:14.0` with the first, the keyboard and the mouse.
+
+## Closure note — 2026-10-04
+
+The "untested PCIe card" and "two Kinects are retired" conclusions above were
+valid at the time of the old experiments, but are superseded by the working
+Intel-plus-Renesas setup described at the top. Keep the old logs and rejected
+hypotheses as provenance; do not reopen this incident merely because new
+multi-Kinect sessions use both cameras. Investigate again only if a new failure
+is observed with one Kinect per independent controller.

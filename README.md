@@ -27,7 +27,10 @@ and not everything advertised below is finished.**
 
 - The capture → skeleton → retarget → **trajectory export** path runs end to end.
   `v0.0.2` also adds resolution-independent K4A geometry and a resumable
-  scene-perception branch that produces compact rigid-object models.
+  scene-perception branch that produces compact rigid-object models and a
+  separate post-IK object-relative trajectory sidecar. Cube-aware grasp is
+  now the default retarget method for the UR10/Robotiq setup, but requires a
+  tracked cube and has not been validated in simulation.
 - **Accuracy is still being tuned.** Triangulation gating, multi-camera sync and
   the articulated hand-fit model are the subject of ongoing measurement — see
   [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md).
@@ -70,7 +73,8 @@ be re-run, compared or audited on its own:
 
 ```
 raw/ → rec.npz → cln.npz → plan.h5 → (replay.h5) → dataset
-  └→ SAM masks → semantic cloud → object_models.npz ────────┘
+  └→ SAM masks → semantic cloud → object_models.npz
+                           + plan.h5 → object_relative.npz → dataset
 ```
 
 ---
@@ -86,14 +90,16 @@ docker compose up --build      # web UI + API on http://localhost:8000
 ```
 
 Read [SETUP_GUIDE.md](SETUP_GUIDE.md) **before** plugging in cameras — Azure
-Kinect needs a GRUB `usbfs` bump, `xhost +local:`, a separate 10 Gbps USB hub per
-device, and a sync cable for multi-Kinect capture.
+Kinect needs a GRUB `usbfs` bump, `xhost +local:`, one independent USB host
+controller per Kinect, and a sync cable for multi-Kinect capture.
 
-> **Two Azure Kinects on one USB host controller hard-lock the machine.**
-> Reproduced on this rig across two kernels, with and without every documented
-> workaround; each camera alone is fine. Until a PCIe USB card with a dedicated
-> controller per port is in place, run **one Kinect plus a RealSense** for the
-> second view. See [`bugs.md`](bugs.md) row 1 and
+> **Two Kinects require two independent USB host controllers on this rig.**
+> The old single-controller wiring hard-locked the host. The current setup puts
+> one camera on the motherboard Intel xHCI and one on the Renesas PCIe xHCI;
+> dual-camera capture and wired sync now work. Separate sockets or hubs on the
+> *same* controller are not sufficient. Check the PCI controller topology after
+> rewiring; see [SETUP_GUIDE.md](SETUP_GUIDE.md#5-usb-wiring-for-two-azure-kinects).
+> The historical failure is closed in [`bugs.md`](bugs.md) and
 > [`docs/camera_freeze_investigation.md`](docs/camera_freeze_investigation.md).
 
 ### Requirements
@@ -103,7 +109,7 @@ device, and a sync cable for multi-Kinect capture.
 | OS | Linux (tested on Ubuntu) |
 | Runtime | Docker + Docker Compose |
 | GPU | optional for the hand/retarget path; NVIDIA CUDA is required by the scene-perception SAM 2.1 image |
-| Cameras | Intel RealSense D435i and/or Azure Kinect DK — **one Kinect per host**, see below |
+| Cameras | Intel RealSense D435i and/or Azure Kinect DK — one independent USB controller per Kinect |
 | Robot | a URDF from `robot_descriptions` — UR3/UR5/UR10/UR5e/UR10e, iiwa14 (default: `ur10`) |
 
 You can run the perception stages on pre-recorded episodes with no cameras
@@ -144,9 +150,10 @@ produced on first use; some of it you have to go and get.
 | calibrate | [`viki/calibration`](viki/calibration/README.md) | works |
 | extract (skeleton) | [`viki/perception`](viki/perception/README.md) | works — accuracy tuning ongoing |
 | segment (instances + RGB-D lift) | [`viki/perception`](viki/perception/README.md#scene-perception) | works as an explicit CUDA stage; missing pixels remain unknown |
-| object-model (rigid core/shell) | [`viki/perception`](viki/perception/README.md#scene-perception) | works as a compact side artifact; not consumed by retarget yet |
+| object-model (rigid core/shell) | [`viki/perception`](viki/perception/README.md#scene-perception) | required for default cube-aware retarget; built by the explicit CUDA scene stage |
+| object-relative (hand/TCP tracks) | [`viki/object_centric.py`](viki/object_centric.py) | post-IK diagnostic sidecar; cube-aware IK is a separate geometric pilot |
 | prepare (fuse + smooth) | [`viki/prepare`](viki/prepare/README.md) | works — accuracy tuning ongoing |
-| retarget (IK) | [`viki/retarget`](viki/retarget/README.md) | works |
+| retarget (IK) | [`viki/retarget`](viki/retarget/README.md) | cube-aware default with readiness checks; geometric pilot only, no simulated grasp verdict |
 | replay (hardware validation) | [`viki/replay`](viki/replay/README.md) | **stub** — no hardware validation |
 | export → trajectory bundle | [`viki/export`](viki/export/README.md) | works (numpy only) |
 | export → LeRobot dataset | [`viki/export`](viki/export/README.md) | partial — needs optional deps; object-relative annotation is a placeholder |
@@ -191,9 +198,10 @@ docker compose run --rm sam2 segment ...   # optional masks + semantic 3-D cloud
 docker compose run --rm sam2 scene <ep> --objects 3  # complete scene branch
 docker compose run --rm cli prepare  ...   # rec.npz -> cln.npz
 docker compose run --rm cli retarget ...   # cln.npz -> plan.h5
+docker compose run --rm cli object-relative <ep>  # model + plan -> relative tracks
 docker compose run --rm cli export   ...   # plan.h5 -> dataset
 docker compose run --rm cli run      ...   # extract -> prepare -> retarget -> replay
-docker compose run --rm sam2 run <ep> --scene-objects 3  # core + scene branch
+docker compose run --rm sam2 run <ep> --scene-prompts data/prompts/<scene>.json  # labelled scene + core
 ```
 
 ---
@@ -217,7 +225,7 @@ unless `pyproject.toml` changes.
 | [`docs/roadmap.md`](docs/roadmap.md) | current shipped, experimental and remaining work |
 | [`docs/releases/v0.0.2.md`](docs/releases/v0.0.2.md) | v0.0.2 release scope, measurements and limits |
 | [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md) | measurement protocols and results (E6–E14) |
-| [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why object-relative representation is not built yet |
+| [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why production object-driven retarget remains gated |
 | [`docs/paper_code_divergences.md`](docs/paper_code_divergences.md) | where the thesis text and the code disagree, and why |
 | [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | hardware bring-up, USB, sync wiring |
 

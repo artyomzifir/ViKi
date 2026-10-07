@@ -27,6 +27,7 @@ prepare    prepare/      rec.npz     ->  cln.npz     fused + smoothed + palm pos
 segment    perception/   raw/        ->  intermediates/segmentation/  masks + semantic cloud
 object     perception/   segmentation -> object_models.npz  rigid core/shell + pose/confidence
 retarget   retarget/     cln.npz     ->  plan.h5     targets -> adapter -> TCP -> robot joints
+object-rel object_centric.py  object_models.npz + cln.npz + plan.h5 -> intermediates/object_relative.npz
 replay     replay/       plan.h5     ->  replay.h5   proprioception on hardware        [stub]
 label      labeling.py   ->  meta.json["labels"]     task / phase segments / outcome
 export     export/       episodes/*  ->  datasets/<name>/
@@ -53,17 +54,20 @@ docker compose run --rm test              # full test suite
 docker compose run --rm cli <verb> ...    # one pipeline stage (viki <verb> ...)
 ```
 
-One `docker-compose.yml`, one image (Dockerfile `test` target). Services: `web`
-(default, `up`), and `test` / `cli` / `terminal` behind the `tools` profile,
-meant for `run`. `test` and `cli` append their args to `pytest` / `viki`.
+One `docker-compose.yml` defines the normal `viki` image plus a dedicated
+`sam2` CUDA image for scene perception. `web` starts on `up`; `test`, `cli`,
+`terminal`, and `sam2` are tools-profile services meant for `run`. `test` and
+`cli` append their args to `pytest` / `viki`.
 
 The server serves UI + API at `http://localhost:8000` (`network_mode: host`).
 `viki/` is bind-mounted, so code edits apply on container restart — no rebuild
 unless `pyproject.toml` changes.
 
 Kinect has host-level prerequisites (GRUB `usbcore.usbfs_memory_mb=1000`,
-`xhost +local:`, a separate 10 Gbps USB hub per Kinect, sync cable). Read
-`SETUP_GUIDE.md` before touching camera bring-up.
+`xhost +local:`, one independent PCI xHCI controller per Kinect, sync cable).
+The current Intel motherboard + Renesas PCIe two-controller wiring resolves the
+old shared-controller host freeze; do not revive the one-Kinect-only workaround.
+Read `SETUP_GUIDE.md` before changing camera wiring.
 
 ## The CLI
 
@@ -78,6 +82,7 @@ viki export   <episode>... --out <dir> [--format trajectory|lerobot]
 viki run      <episode>           # extract -> prepare -> [scene] -> retarget -> replay
 viki cloud    <episode>           # raw/ -> cloud/ (viewer artifact only)
 viki scene    <episode>           # auto-prompts -> SAM -> semantic 3-D -> object models
+viki object-relative <episode>    # models + cln.npz + plan.h5 -> relative tracks
 viki hand-fit <episode>           # batch capsule-hand fit, appends hand_fit_* to cln.npz
 viki viz      <episode>           # headless 3-D figure (rec|cln)
 ```
@@ -94,9 +99,10 @@ background FIFO job queue (`viki/server/jobs.py`, one worker).
 
 ## Configuration
 
-All tunables live in `data/user_configuration.json`, copied from
-`data/default_configuration.json` on first run. `viki/config.py` reads that file
-**once at import** and injects every key into its module globals, so code does
+Runtime tunables live in `data/user_configuration.json`, copied from the tracked
+`data/default_configuration.json` on first run. The user file is local and
+ignored by Git; never commit a rig-specific active calibration or paths.
+`viki/config.py` reads that file **once at import** and injects every key into its module globals, so code does
 `from viki.config import RETARGET_IK_SOLVER`.
 
 Changing config at runtime means editing the JSON and restarting — the
@@ -135,7 +141,7 @@ hardware quirks and API tables not repeated here.
 Cross-cutting modules: `contracts.py` (every cross-stage DTO, the `LM` enum,
 Protocols, `Episode`, `*_KEYS` schema tuples), `config.py`, `episode.py`
 (episode-directory helpers, `mark_stage`), `dsp.py`, `gripper.py`, `labeling.py`,
-`datasets.py`, `cli.py`.
+`datasets.py`, `object_centric.py`, `cli.py`.
 
 `cameras/` owns one daemon worker thread per active camera, each writing into a
 bounded ring buffer under a lock. All consumers **pull** via `latest_frame()` /
@@ -175,9 +181,10 @@ All mounted under `/api`. Router ↔ stage mapping, since it is easy to guess wr
 
 ## Adding a tunable
 
-Add the key to **both** `data/default_configuration.json` and
-`data/user_configuration.json`, then declare its type annotation in
-`viki/config.py`. All three, or it silently won't exist.
+Add the key to the tracked `data/default_configuration.json`, declare its type
+annotation in `viki/config.py`, and update your local
+`data/user_configuration.json` when testing on this rig. Do not commit the
+user file. Runtime imports still read the user file once, so restart after edits.
 
 ## Frontend
 
@@ -232,6 +239,6 @@ standing between a refactor and a silently broken stage. Check any touched JS wi
 | [`bugs.md`](bugs.md) | narrow traps: off-by-one constants, settings that do nothing, hardware that does not work — read before debugging the rig |
 | [`docs/math.md`](docs/math.md) | the full mathematical description of the pipeline |
 | [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md) | measurement protocols and results (E6–E14) |
-| [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why object-relative representation is not built yet |
+| [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why production object-driven retarget remains gated |
 | [`docs/paper_code_divergences.md`](docs/paper_code_divergences.md) | where the thesis text and the code disagree |
 | [`docs/licensing_todo.md`](docs/licensing_todo.md) | open licence audit items |
