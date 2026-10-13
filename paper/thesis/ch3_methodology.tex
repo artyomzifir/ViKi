@@ -140,7 +140,7 @@ may be adjusted discontinuously by time synchronisation daemons, which would
 corrupt interval computations mid-recording.
 
 Residual alignment jitter is measured rather than assumed
-(Section~\ref{sec:res-calib}), and hardware synchronisation of the Kinect pair
+(Section~\ref{sec:current-results}), and hardware synchronisation of the Kinect pair
 is verified by confirming bounded drift in the inter-camera timestamp
 difference \cite{ridgerun}.
 
@@ -282,6 +282,23 @@ one. This single scalar remains the entire hand representation beyond the wrist
 frame, following the convention established for parallel-jaw targets in
 \cite{opentv, ace}.
 
+\section{External Hand-Joint Reference Protocol}
+\label{sec:hocap-method}
+
+Two right-hand HO-Cap subject-1 sequences are imported with 120 frames from
+each of eight RealSense cameras. They are separate from the local cube cohort
+and do not measure its Azure Kinect calibration. Published camera poses and
+MANO hand-joint annotations are expressed in one world frame; Extract and
+Prepare run without access to the reference labels. Predicted 21-joint 3-D
+positions are matched by exact imported frame index and synthetic capture
+timestamp, with no root alignment, Procrustes fit, time search or
+reference-guided frame filtering. MPJPE is the mean Euclidean distance over
+finite matched joints; coverage is matched joints divided by all valid
+annotated joints. P95 and PCK@20~mm are reported alongside coverage.
+Partially written \texttt{cln.npz} files are excluded unless Prepare marks
+the stage complete. The two-view pair was selected after screening all 28
+pairs on these same sequences, so its scores are in-sample pilot results.
+
 \section{Object-Centric Representation}
 \label{sec:objcentric}
 
@@ -408,7 +425,7 @@ weighted frames, and the measurements in Chapter~\ref{ch:disc} show the
 solver drifting further from the target for want of the support the fabricated
 frames were supplying. Recovering that support---rather than reinstating the
 fabrication---is identified as future work in
-Section~\ref{sec:limitations}. The construction
+Section~\ref{sec:implications}. The construction
 is the offline analogue of the distance-dependent switching weights used in
 online teleoperation retargeting \cite{opentv}: frames in which the hand is
 partially occluded or poorly observed exert proportionally less influence on
@@ -515,7 +532,7 @@ re-recording.
 \label{sec:assumptions}
 
 The following assumptions delimit the scope of the work and are revisited in
-Section~\ref{sec:limitations}.
+Section~\ref{sec:implications}.
 
 \begin{enumerate}[leftmargin=2em]
   \item \emph{Parallel-jaw target.} The hand is reduced to a wrist pose and a

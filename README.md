@@ -22,6 +22,18 @@ skeleton next to the robot arm converging onto the retargeted trajectory.*
 
 ## 🚧 Project status — read this first
 
+**`dev-eval` recovery (October 2026):** The local workspace was deleted after
+`v0.0.2`. This branch restores the recoverable MuJoCo experiments,
+cube-aware retarget changes, HO-Cap importer/evaluator, tests, and thesis
+edits from Git history and task logs. The ignored recordings, calibrations,
+simulator model assets, checkpoints and generated metrics/figures were **not**
+in Git and are not restored. Historical numeric results in `paper/` and
+`docs/` must be regenerated before submission. See
+[`experiments/README.md`](experiments/README.md),
+[`viki/benchmark/README.md`](viki/benchmark/README.md), and
+[`paper/README.md`](paper/README.md). The pinned 28-sequence HO-Cap download
+plan is in `tools/hocap_pnp_plan.json`; the 48-GB download remains paused.
+
 **ViKi is research code under active development. It is not a finished product,
 and not everything advertised below is finished.**
 

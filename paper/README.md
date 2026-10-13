@@ -1,77 +1,30 @@
-# ViKi — черновик ВКР (LaTeX)
+# ViKi thesis and research proposal
 
-Материалы восстановлены из переписки от 24 августа 2026 (чат «Механики
-ретаргетинга и калибровки стереокамер») — тогда контейнер с исходными файлами
-уже закрылся, поэтому весь LaTeX-код был вытащен из истории диалога и заново
-скомпилирован. Постранично совпадает с тем, что было тогда: `thesis.pdf` —
-50 стр., `annotation_ru.pdf` — 18 стр.
+The editable thesis is in `paper/thesis/`; the English/Russian abstracts are
+in `paper/thesis/thesis.tex`. The separate Real2Sim2Real proposal is
+`paper/research_proposal_real2sim2real.md` and its submission copy is the
+adjacent `.docx` file. Build the thesis with `make -C paper/thesis` (XeLaTeX).
 
-## Новый research proposal
+## Evidence in the manuscript
 
-`research_proposal_real2sim2real.docx` — отдельный документ для отправки;
-`research_proposal_real2sim2real.md` — его редактируемый текстовый источник.
-Существующие `thesis/` и `annotation-ru/` отражают прежнюю тему и пока не
-синхронизированы с этим предложением.
+- The local 78-episode cube-transfer cohort and MuJoCo experiments are
+  **historical results**. Their original raw episodes and derived artifacts
+  were lost during the October 2026 workspace deletion. The source code and
+  results text have been recovered from Git and task logs, but the numbers
+  require regeneration from new recordings before a reproducible submission.
+- The external HO-Cap pilot used two 120-frame subject-1 sequences, a
+  selected camera pair and all eight cameras. Historical smoothed-observed
+  MPJPE was 10.50–11.67 mm with 2,520/2,520 matched joints per comparison.
+  The pair was selected on the same sequences, and HO-Cap labels are
+  semi-automatic MANO annotations, not metrological ground truth for the
+  local Kinect rig. See `docs/2026-10-13-hocap-real-sample-pilot.md`.
+- Simulated robot execution is not a real-robot or sim-to-real validation.
+  No RL training or deployed visual policy is claimed.
 
-## Раскладка
+Run `scripts/build_thesis_results.py` only after the input artifacts listed in
+the script have been regenerated. Figures under `paper/thesis/figures/` were
+not recovered from the deleted workspace. The current PDF in Git predates
+the restored October source edits; rebuild it before submission.
 
-Один самостоятельный документ на подпапку; общий преамбул — в `common/`.
-
-| Папка | Документ | Что это |
-|---|---|---|
-| `thesis/` | `thesis.pdf` | основной текст ВКР на английском (50 стр.), abstract EN + RU |
-| `annotation-ru/` | `annotation_ru.pdf` | аннотация на русском (18 стр.), самостоятельный документ |
-| `demo/` | `demo.pdf` | демо-документ (RU), самостоятельный |
-| `common/` | — | `preamble.tex` (шрифты, геометрия, макросы, нотация) + `latex.mk` |
-
-## Сборка
-
-Требуется **XeLaTeX** (кириллица через polyglossia + fontspec, шрифт FreeSerif).
-Каждая подпапка — свой `Makefile`, двойной прогон (оглавление + перекрёстные
-ссылки) уже внутри цели:
-
-```bash
-make                # все документы
-make thesis         # только thesis/thesis.pdf
-make -C annotation-ru
-make clean          # убрать промежуточные файлы (.aux/.log/…), PDF остаются
-make distclean      # убрать и PDF
-```
-
-`common/latex.mk` подставляет `TEXINPUTS=../common:` — поэтому `\input{preamble}`
-в исходниках трогать не нужно. Источники — ручной `thebibliography`, biber/bibtex
-не запускается.
-
-## Структура `thesis/`
-
-| Файл | Содержание |
-|---|---|
-| `thesis.tex` | титул, abstract EN/RU, благодарности, оглавление, `\input` глав |
-| `ch1_introduction.tex` | введение, research questions, гипотезы H1–H3, FINER |
-| `ch2_literature.tex` | обзор литературы (Preamble / Body / Conclusion по гайду) |
-| `ch3_methodology.tex` | архитектура, калибровка, синхронизация, fusion, cost functional |
-| `ch4_implementation.tex` | реализация, протокол оценки, таблицы результатов (заглушки) |
-| `ch5_discussion.tex` | интерпретация, error budget, ограничения, threats to validity |
-| `ch6_conclusion.tex` | выводы, ответы на RQ, future work |
-| `references.tex` | список источников в стиле IEEE (`thebibliography`) |
-| `appendix.tex` | нотация, схема датасета, конфигурация солвера |
-
-## Заглушки
-
-Все незаполненные значения обёрнуты в макрос `\ph{...}` и отрисованы тёмно-красным.
-Найти все разом:
-
-```bash
-grep -rn '\\ph{' thesis/
-grep -rn '\\TODO{' thesis/
-```
-
-`\TODO{...}` — методологические указания о том, какой вывод корректно сделать
-при каком исходе эксперимента, а не просто «вставить число».
-
-## Что не вошло
-
-Обзор литературы отдельным .docx (`ViKi_LR_obzor_literatury.docx`, 12 стр.) в
-этот архив не включён — просили именно tex/pdf, а не docx. Его содержание
-практически целиком вошло во вторую главу `thesis.pdf`. Скажи, если нужен и он —
-могу восстановить и его тем же способом.
+The degree/regulation audit is in `paper/REGULATORY_AUDIT.md`; verify its
+conclusions against the applicable DSAI 2023 intake rules before filing.

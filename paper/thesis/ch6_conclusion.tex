@@ -4,120 +4,71 @@
 \section{Summary}
 \label{sec:summary}
 
-This thesis has addressed the question of how manipulation demonstrations
-recorded passively, with a human using their own hands and no teleoperation
-interface, can be converted into datasets suitable for training visuomotor
-imitation policies. The work has argued that the two established approaches to
-this problem are each incomplete: online teleoperation systems have converged
-on a sound retargeting formulation---a single weighted cost functional
-combining data fidelity, temporal smoothness and kinematic constraints---but
-produce no dataset, while offline video-to-robot pipelines produce datasets but
-retarget either not at all, through sparse object keyframes, or through a
-sequential filter--solve--filter pattern whose smoothing is applied in the wrong
-space to guarantee the property it is intended to provide.
-
-\viki\ has been presented as a system occupying the intersection. It captures
-demonstrations with a metrically calibrated multi-camera RGB-D rig anchored to
-a ChArUco workspace frame; represents the hand minimally, as a wrist pose in
-$\SE$ with a binary gripper state; stores each demonstration both relative to
-the manipulated object and relative to the workspace anchor; retargets by
-minimising one weighted functional in which the data term is scaled by
-per-frame perception confidence and robustified by a Huber loss, and in which
-velocity and acceleration penalties act directly in joint space; validates the
-result by executing it on the physical manipulator before export; and writes a
-LeRobot-compatible dataset containing the proprioception the robot actually
-attained rather than the states the optimiser predicted.
+ViKi converts passive two-view RGB-D recordings of a human cube transfer
+into separate hand, object and proposed UR10 trajectory artifacts. A
+geometric plan is not itself a robot demonstration; dynamic replay with
+free objects supplies the stricter simulation test. This thesis reports
+the measured chain on 78 recordings and a local layout-conditioned
+learning experiment rather than promising a later unmeasured result.
 
 \section{Answers to the Research Questions}
 \label{sec:answers}
 
-\paragraph{RQ1.} \ph{[State the measured effect of the single-functional
-formulation on fidelity and smoothness relative to the sequential baseline, and
-whether the trade-off frontier moved rather than merely shifted along.]}
+\textbf{RQ1: pipeline yield.} Seventy-three of 78 recordings pass the
+articulated hand gate; 44 of those pass the original object-quality gate
+and 70 pass after independent scratch track recovery. Of 26 newly
+recovered scenes, 22 pass geometric retargeting. Seventeen of those 22
+also produce released stable stacks in the provisional MuJoCo replay.
+The branch-specific denominators and the red-support contact in all 24
+replayed scratch plans preclude one unqualified success percentage.
+The external HO-Cap pilot measured 10.50--11.67~mm smoothed hand-joint MPJPE
+against semi-automatic annotations on two short sequences using either the
+selected pair or all eight views; it does not ground-truth the local cube
+recordings or their object and robot trajectories. Its source episodes and
+the local cohort were lost after the pilot and must be reacquired for a
+reproducible final evaluation.
 
-\paragraph{RQ2.} \ph{[State the achieved wrist-pose accuracy and how the
-residual decomposes across landmark noise, calibration error and
-representation dependency, per Table~\ref{tab:errbudget}.]}
+\textbf{RQ2: local demonstration generation.} One recovered human
+motion generated 46 successful simulator variants in a 48-layout
+$\pm20$~mm sweep and 27 in an independent 48-layout $\pm50$~mm sweep.
+All derive from that one motion and touch the red support. This is
+local, physics-filtered candidate generation, not arbitrary scene or
+robot-configuration transfer.
 
-\paragraph{RQ3.} \ph{[State the proportion of episodes rejected by replay
-screening, the dominant rejection causes, and the resulting change in the
-executable fraction of the exported dataset.]}
+\textbf{RQ3: learned correction.} A phase- and initial-layout-conditioned
+model trained on 73 generated variants outperformed unchanged source
+commands on the same 14 held-out teacher-selected layouts (14/14 versus
+4/14) and 30 separately sampled layouts (30/30 versus 0/30). The earlier
+plain state BC failed in all 17 closed-loop trials. The successful model
+retains the source trajectory and observes privileged initial cube
+positions; it is not RL or a vision-based closed-loop policy.
 
-\section{Contributions}
+\section{Claim Boundary and Next Validation}
 \label{sec:contrib-final}
 
-The contributions of this work are the transfer of the single-cost-functional
-retargeting formulation from the online teleoperation regime, for which it was
-developed, into the offline object-centric dataset-generation regime, where the
-review of Chapter~\ref{ch:lit} found it unused; the coupling of that
-formulation to a metrically calibrated multi-view RGB-D front end with
-confidence-weighted fusion and explicit cross-device timestamp handling; the
-use of physical replay as a pre-export dataset-curation stage rather than a
-post-training evaluation; and an error decomposition that separates the three
-independent contributions to residual pose error rather than reporting an
-aggregate.
+The evidence supports a camera-to-simulation proof of concept for one
+human source trajectory, local cube-layout changes, one old-UR10/Robotiq
+model and one provisional contact configuration. It does not demonstrate
+collision-free grasping, independent 3-D orientation accuracy,
+source-disjoint generalization, visual-policy performance, benefit over
+a separately trained no-data learner or real-robot transfer. Those
+claims require additional tests rather than a larger number of
+synthetic variants of the same source motion.
 
-It is worth restating what is \emph{not} claimed. The cost functional is not
-novel as an operator; its components appear in \cite{anyteleop, dexflow,
-opentv, dexteleop0}, and a claim of algorithmic novelty would be refuted by
-that prior art. Object-centric representation, ChArUco anchoring,
-confidence-weighted depth fusion and host-clock synchronisation are all
-established practice. The contribution is the conjunction and the regime
-transfer, which the positioning analysis of Section~\ref{sec:positioning} found
-unoccupied.
-
-\section{Limitations}
-\label{sec:concl-limits}
-
-The system is restricted to parallel-jaw targets, rigid objects, single-arm
-quasi-static tabletop tasks and a fixed workspace; it performs kinematic
-transfer only, estimating no forces; its accuracy is bounded below by
-centimetre-level cross-camera agreement; and its evaluation uses a single
-demonstrator on a constrained task class. These are stated in full in
-Section~\ref{sec:limitations}.
-
-\section{Future Work}
-\label{sec:future}
-
-Several directions follow from the limitations.
-
-\begin{enumerate}[leftmargin=2em]
-  \item \emph{Dexterous targets.} Extending beyond a binary gripper requires
-        reinstating a finger-level representation. The ablation evidence of
-        \cite{keyobj} suggests that the wrist objective should remain weakly
-        weighted relative to fingertip objectives, which would change the
-        balance of terms in \eqref{eq:cost} rather than its structure.
-  \item \emph{Deformable objects.} Replacing the rigid object pose of
-        \eqref{eq:objrel} with a flow-based object representation
-        \cite{novaflow} would remove the rigidity assumption at the cost of a
-        less compact transfer rule.
-  \item \emph{Closing the replay loop.} Currently, replay failures trigger
-        bounded re-solution with hand-adjusted weights. Learning the weight
-        adjustment from the failure mode would make the loop automatic.
-  \item \emph{Cross-embodiment transfer.} The object-relative representation is
-        embodiment-agnostic by construction; the same recorded demonstrations
-        could be retargeted to the KUKA iiwa14 available in the laboratory, and
-        the degree to which policy performance transfers would test the
-        representational claim directly.
-  \item \emph{Scaling demonstrator diversity.} Recording from multiple
-        demonstrators with differing hand morphologies would test whether the
-        fixed hand-to-end-effector offset $\bT^{H}_{E}$ of
-        \eqref{eq:transfer} requires per-demonstrator calibration.
-  \item \emph{Downstream curation.} The confidence weights and replay residuals
-        retained in the exported dataset support curation experiments in the
-        manner of \cite{demoscore} without re-recording; whether the replay
-        residual is a better curation signal than a learned rollout classifier
-        is an open question.
-\end{enumerate}
+A small measurement-only set with known geometry, marked orientation
+and independently held-out human trials is the practical next step
+for the thesis evidence. Support-object clearance and contact-model
+sensitivity need correction before treating a simulated success as a
+robot-ready reference. A physical UR10 evaluation would additionally
+require camera-to-robot registration and hardware safety validation;
+it is not part of the present result.
 
 \section{Concluding Remarks}
 \label{sec:remarks}
 
-The practical claim of this work is modest and, for that reason, defensible:
-a formulation already accepted in one part of the robot-learning literature
-works in another part where it had not been applied, and the infrastructure
-required to apply it---metric multi-view sensing, honest cross-device
-synchronisation, physical validation before export---is buildable at the scale
-of a single laboratory. If the results hold, the cost of producing
-imitation-learning data falls without the cost being transferred to policy
-robustness, which is the trade that passive capture has historically demanded.
+The result is useful precisely because the stages are not conflated:
+recording completeness, reconstruction coverage, model acceptance,
+geometric IK, dynamic stack success and learning on new layouts are
+reported separately. The local learning result is positive; the
+red-support collisions and failed plain BC are equally important
+boundaries on what ViKi has actually established.

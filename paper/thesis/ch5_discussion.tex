@@ -1,197 +1,124 @@
 \chapter{Analysis and Discussion}
 \label{ch:disc}
 
-\section{Interpretation of the Results}
+\section{What the Results Establish}
 \label{sec:interpretation}
 
-\TODO{This section interprets rather than restates Chapter~\ref{ch:impl}. Write
-it after the numbers are in, structured as: what the key findings mean for each
-hypothesis; which results support them and which do not; how the findings
-compare with prior work; explanation of discrepancies; unexpected findings.}
+The 78-episode audit demonstrates an operational camera-to-plan route with
+visible attrition. Five recordings fail the articulated hand gate. Of 73
+prepared episodes, the original object gate accepts 44 and an independent
+track-recovery scratch procedure accepts 70. The 22/26 geometric retarget
+result applies only to the previously rejected and then recovered subset;
+the 40 canonical plan files belong to a different branch. Adding these
+counts into one apparently homogeneous end-to-end percentage would
+misrepresent their selection and different planner modes.
 
-The three hypotheses of Section~\ref{sec:rq} address separable mechanisms, and
-the argument for each is independent of the others.
+Dynamic execution is no longer merely prospective. Seventeen of 22
+geometrically accepted recovered plans produce released stable stacks in
+the tested MuJoCo model. Yet the robot hits the red support in every one of
+the 24 replayed scratch scenes. Consequently the simulation result is
+evidence for a task predicate under provisional contacts, not for a safe
+collision-free trajectory oracle. The 122~mm canonical target-RMSE outlier
+also shows why solver convergence alone is not a plan-quality gate.
 
-\paragraph{H1 --- formulation.} The claim is that posing retargeting as one
-weighted functional dominates the sequential pipeline on both fidelity and
-smoothness simultaneously. The distinction matters because the sequential
-pipeline can be made arbitrarily smooth by increasing filter strength, at the
-cost of fidelity; the interesting question is therefore not whether either
-metric can be improved in isolation but whether the trade-off frontier itself
-moves. \ph{[Insert result.]} If the proposed method improves one metric while
-degrading the other, the correct conclusion is that the frontier has not moved
-and the improvement is a re-parameterisation of the same trade-off.
+The failed plain BC experiment matters: 17 physics-successful source
+rollouts and low offline action loss did not yield a single closed-loop
+stack. The later 14/14 and 30/30 outcomes are for a \emph{different},
+phase- and initial-layout-conditioned policy that retains a successful
+source command trajectory. It cannot be described as the same BC method
+with a larger dataset. The one source plan itself stacked in 22/22
+near-fixed layouts, exposing how little variation those original scenes
+provided. The learned correction has a measurable advantage over unchanged
+commands on shifted layouts, not over a newly designed geometric controller
+or a separately trained no-ViKi model.
 
-\paragraph{H2 --- confidence weighting.} The mechanism proposed in
-Section~\ref{sec:retarget} predicts a specific signature: the benefit of
-weighting should concentrate on frames where perception is degraded, because
-that is where uniform weighting drags the solution toward a bad observation.
-A uniform improvement across occlusion strata would indicate that the weighting
-is acting as a global regulariser rather than through the proposed mechanism.
-\ph{[Insert result.]}
-
-\paragraph{H3 --- replay screening.} The claim is about dependability rather
-than accuracy: screening should raise the executable fraction of the exported
-dataset. \ph{[Insert result.]} The stronger claim---that screening improves
-downstream policy success---requires the paired training run noted in
-Section~\ref{sec:res-policy} and should not be asserted on the executability
-metric alone.
-
-\section{Comparison with Prior Work}
-\label{sec:comparison}
-
-Direct numerical comparison with the systems reviewed in
-Chapter~\ref{ch:lit} is not meaningful, since none is evaluated on the same
-task suite, embodiment or sensing configuration. What can be compared is
-qualitative behaviour and the class of guarantees provided.
-
-Relative to OKAMI \cite{okami}, the present system discards the parametric
-body-and-hand reconstruction and the two-stage warp-then-solve structure. The
-expected consequence is a lower perception error floor---time-of-flight depth
-in place of a mesh fit---at the cost of being restricted to parallel-jaw
-targets. Relative to ORION \cite{orion}, the present system retains the dense
-wrist trajectory that ORION discards, which should preserve velocity-profile
-information at the cost of a dependency on reliable hand observation. Relative
-to the online teleoperation systems \cite{anyteleop, opentv, ace}, the
-formulation is the same but the operating regime is not: the offline setting
-permits whole-trajectory optimisation with a well-defined acceleration term at
-every interior timestep and admits a physical validation stage, neither of
-which an interactive-rate solver can perform.
-
-The measured cross-camera registration error
-(Table~\ref{tab:calib}) should be compared against the $7.4$--$21.4$~mm range
-reported by Romeo et al.\ \cite{romeo}. \TODO{State whether the measured value
-falls in that range and, if not, diagnose the cause rather than reporting the
-discrepancy without explanation.}
-
-\section{Error Budget}
+\section{Error Sources and Reference Frames}
 \label{sec:errbudget}
 
-A central methodological commitment of this work is that residual error is
-decomposed rather than reported as a single aggregate figure. Three
-contributions are independent in origin and demand different remedies;
-conflating them would make the aggregate uninformative about what to improve.
+The stage metrics use different references and cannot be added as an
+absolute geometric error budget. The separate HO-Cap pilot obtained
+10.50--11.67~mm hand-joint MPJPE on two imported sequences, but its camera
+pair was selected on those same frames and its semi-automatic MANO labels do
+not measure local Kinect calibration, object orientation or robot execution:
 
 \begin{enumerate}[leftmargin=2em]
-  \item \emph{Landmark detection noise.} Error in the image-plane hand
-        landmarks, propagated through depth lifting. This contribution is
-        reduced by multi-view triangulation \eqref{eq:triangulate}, which
-        constrains the point by camera geometry instead of averaging per-view
-        depth lifts, and it is characterised by the wrist-position repeatability
-        measurement of Table~\ref{tab:calib}. It is not reduced by better
-        calibration.
-  \item \emph{Calibration error.} Error in the camera-to-workspace and
-        robot-to-workspace transforms \eqref{eq:extrinsic}. This contribution
-        is systematic within a session, appears as a constant offset rather
-        than as noise, and is characterised by the reprojection and
-        cross-camera registration measurements. It is not reduced by
-        multi-view fusion, since all views inherit it.
-  \item \emph{Representation dependency.} Error introduced by the choice of
-        reference frame, specifically the sensitivity of world-frame
-        trajectories to object displacement. This contribution is zero when
-        the object is where it was during demonstration and grows with
-        displacement; it is characterised by the comparison of
-        Table~\ref{tab:repr} rather than by any calibration measurement.
+  \item \emph{Camera geometry.} The large ChArUco board restored visually
+        useful cloud overlap, but neither a green automatic validation
+        report nor cloud nearest-neighbour agreement proves absolute
+        calibration accuracy. Board scale, coverage, depth calibration and
+        near-field finger returns remain potential biases.
+  \item \emph{Temporal pairing.} The 155~$\mu$s median Kinect
+        device-timestamp gap is small for this cohort, but exposure timing,
+        RGB--depth offsets and rolling object motion may still cause
+        moving-hand disagreement. Host-arrival drift is a separate metric.
+  \item \emph{Perception.} Solved-joint and supported-frame fractions
+        measure coverage, not position accuracy. Object identity and track
+        recovery decide which frames enter the downstream sample. The
+        $46.2\times47.7\times49.7$~mm median surfel extents for a nominal
+        40~mm cube are a concrete model-geometry warning, though surfel
+        bounds are not true solid dimensions.
+  \item \emph{Retargeting.} Position RMSE compares a robot plan to estimated
+        targets generated within the same pipeline. It does not validate
+        the human trajectory or the true cube pose. The red support is not
+        enforced as an obstacle in the current IK.
+  \item \emph{Physical replay.} Pad compliance, friction, cube mass,
+        command slowdown and the simulator-only grasp-pressure bias affect
+        pickup and release. The exceptionally small wrist-FK and gripper-gap
+        discrepancies only verify agreement between software models.
 \end{enumerate}
 
-\begin{table}[htbp]
-\caption{Decomposition of Residual Wrist-Pose Error by Source}
-\label{tab:errbudget}
-\centering
-\small
-\begin{tabular}{llcc}
-\toprule
-Source & Character & Magnitude (mm) & Reduced by \\
-\midrule
-Landmark detection & random  & \ph{X.X} & fusion, confidence weighting \\
-Calibration        & systematic & \ph{X.X} & board size, view count \\
-Representation     & conditional & \ph{X.X} & object-relative frame \\
-\midrule
-Combined           & --- & \ph{XX.X} & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
+Errors need not be independent. Correlated hand and cube offsets can partly
+cancel in an object-relative grasp, while an oversized model can bias both
+grasp side and obstacle clearance. An external calibration target at table
+and carry heights, and a marked asymmetric object for orientation, would
+provide independent checks that the current data cannot supply.
 
-\TODO{Populate and discuss. If the combined figure differs materially from the
-quadrature sum of the independent contributions, the sources are not
-independent and the decomposition must be revised rather than presented as if
-it held.}
-
-\section{Limitations}
-\label{sec:limitations}
-
-The assumptions of Section~\ref{sec:assumptions} translate into the following
-limitations, which are stated plainly rather than deferred to future work.
-
-\begin{enumerate}[leftmargin=2em]
-  \item \emph{Gripper abstraction.} A binary gripper state cannot represent
-        in-hand manipulation, regrasping or force-modulated grasps. Tasks
-        requiring these are outside the demonstrated capability, and extending
-        to dexterous hands would require reinstating the finger-level
-        representation that Section~\ref{sec:lit-hand} rejects.
-  \item \emph{Rigid-object assumption.} The object-relative transform
-        \eqref{eq:objrel} is undefined for deformable objects. Cloth, cable and
-        granular manipulation are excluded.
-  \item \emph{Dependence on object pose estimation.} The object-relative
-        representation inherits the error of the object pose estimator. Where
-        that estimator fails---textureless, symmetric or occluded objects---the
-        representation degrades to worse than the world-frame alternative it is
-        meant to improve upon.
-  \item \emph{Kinematic transfer only.} No force or contact model is estimated.
-        Success on tasks with a force-regulation component is not claimed.
-  \item \emph{Single demonstrator, constrained task class.} The evaluation uses
-        \ph{one} demonstrator and \ph{three} task types. Generalisation across
-        demonstrators, hand morphologies and task families is not established.
-  \item \emph{Sensing floor.} Cross-camera agreement at the centimetre level
-        \cite{romeo} bounds achievable accuracy. Tasks with tolerances below
-        that bound cannot be addressed by this sensing configuration
-        regardless of the retargeting formulation.
-  \item \emph{Cross-family synchronisation.} Alignment between the Kinect pair
-        and the RealSense is software-based and therefore millisecond-scale;
-        fast motion may exhibit residual misalignment between those streams.
-\end{enumerate}
-
-\section{Threats to Validity}
+\section{Attribution and Statistical Validity}
 \label{sec:validity}
 
-\paragraph{Internal validity.} Metrics were fixed before the final runs
-(Section~\ref{sec:metrics}) to prevent selection of criteria after observing
-outcomes. Baselines B1--B5 differ from the proposed method in exactly one
-component each, so attribution of any observed difference is unambiguous. The
-principal residual threat is that the sequential baseline's filter parameters
-are themselves tunable; an unfavourable choice would make the comparison
-misleading. \TODO{State how B1 filter parameters were selected---ideally by
-tuning them to optimise the baseline's own fidelity, not by adopting a default.}
+The 14-layout held-out comparison is paired, but the layouts were sampled
+only from teacher-successful cases. The 30-layout independent-seed test
+instead includes all samples in its specified $\pm50$~mm range, including
+12 that the direct path-IK generator rejected. This is a useful robustness
+check on the \emph{frozen} learned checkpoint, not evidence that the rejected
+layouts are physically unreachable. Wilson intervals describe uncertainty
+from finite layout trials under the chosen sampling distribution; they do
+not include training-seed, source-demonstration or physics-model variation.
 
-\paragraph{External validity.} The constrained task class was chosen for
-measurability, which necessarily limits generalisation. Results should not be
-read as claims about manipulation in general.
+Every one of the 73 teacher layouts shares the same human motion and
+simulator. Layout-disjoint splitting prevents literal leakage of a target
+layout into training but cannot test source-motion generalization. The
+time-conditioned model knows the task phase and source reference. It reads
+simulator-truth cube positions once at the start, so it does not solve
+visual recognition or closed-loop recovery after disturbances. A fixed
+template is a meaningful no-learning comparator, but it is not a trained
+no-demonstration baseline. No causal claim about the benefit of ViKi
+relative to RL from scratch is supported.
 
-\paragraph{Construct validity.} Spectral arc length measures smoothness of the
-velocity profile, which is a proxy for the property actually of interest---that
-a policy can imitate the trajectory. The proxy is standard but imperfect, and
-the downstream policy results of Section~\ref{sec:res-policy} are the more
-direct evidence.
+The 18-layout placement-quality search is explicitly in-sample:
+variants are selected and assessed on the same scenes. The mean centre
+error improvement is real within those saved replays, but it is not a
+generalization estimate. Its unchanged 1.222~N\,s mean red-contact
+impulse and universal red contact show that better placement alone does
+not fix pickup clearance. The success predicate must be presented with
+these diagnostics, not as a collision-free success rate.
 
-\section{Implications}
+\section{Scope and Implications}
 \label{sec:implications}
 
-Three implications extend beyond the specific system.
+For the narrow cube task, passive RGB-D capture can lead to simulated
+stable-stack examples and a learned local correction that outperforms
+unchanged source commands on new placements. This is the completed
+proof-of-concept claim. It neither establishes a generally useful
+trajectory oracle nor a policy deployable on a UR10. Simulation contacts
+and executed states have not been validated against hardware; no
+Real-to-Sim-to-Real transfer is claimed.
 
-First, the transferability of the online retargeting formulation to the offline
-regime suggests that the separation between the teleoperation and
-video-imitation literatures is a historical accident rather than a technical
-necessity. The offline setting is strictly less constrained---no causality
-requirement, no latency budget---and therefore able to use the same formulation
-more thoroughly than the setting for which it was designed.
-
-Second, moving curation upstream of export, so that infeasible trajectories are
-removed before they enter the dataset rather than filtered after they have
-degraded a policy, is applicable to any pipeline that synthesises rather than
-records actions. The cost is one physical execution per episode; the benefit is
-that the exported dataset contains proprioception the robot actually attained.
-
-Third, the error decomposition of Section~\ref{sec:errbudget} is a
-transferable methodological point. Reporting a single aggregate accuracy figure
-for a multi-stage perception pipeline obscures which stage limits performance,
-and consequently which engineering effort would pay.
+The most valuable additional recordings would be \emph{measurement-only}
+controls rather than more repetitions to train the current model:
+held-out large-board poses across the task height, static known geometry
+at both camera ranges, a marked cube or asymmetric object for orientation,
+and disjoint human trials to expose source dependence. These controls
+could quantify errors without motion capture, but they cannot turn
+self-consistency into millimetre ground truth by assertion. Pouring is
+outside the study scope.
