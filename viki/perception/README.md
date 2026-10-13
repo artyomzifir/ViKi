@@ -148,6 +148,13 @@ requires one labelled `manipulated_object`, while hand-only IK ignores it.
 Trajectory export copies a completed `object_models.npz` as a
 sidecar and records its stage provenance. Object-relative IK remains separately
 gated until pose observability and contact phases have acceptance tests.
+The blue-object tracker predicts motion from each camera's visible centroid.
+It permits a larger frame step only when both cameras agree, and a lost track
+may reacquire from their last reliable centroid-to-model offsets only when the
+two views and the re-fitted model agree. Single-view jumps cannot trigger this
+reacquisition. Low-confidence tracks still fail the batch quality gate. The
+October cube-batch measurements are in
+[`experiments/2026-10-09-status.md`](../../experiments/2026-10-09-status.md).
 
 Measured results and known failure modes from the first two real scenes are in
 [`docs/2026-09-14-sam2-segmentation-probe.md`](../../docs/2026-09-14-sam2-segmentation-probe.md)

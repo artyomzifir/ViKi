@@ -1,0 +1,24 @@
+services:
+  sim:
+    build:
+      context: .
+      dockerfile: experiments/Dockerfile
+    image: viki-experiments
+    working_dir: /app
+    user: "${VIKI_UID:-1000}:${VIKI_GID:-1000}"
+    volumes:
+      - ./viki:/app/viki:ro
+      - ./experiments:/app/experiments
+      - ./data:/app/data:ro
+      - ./models:/app/models:ro
+      - ./data/experiments/bc-v1:/app/output
+    environment:
+      - PYTHONPATH=/app
+      - HOME=/tmp
+      - MUJOCO_GL=egl
+    mem_limit: 11g
+    memswap_limit: 11g
+    cpus: "12"
+    pids_limit: 512
+    entrypoint: ["python3"]
+    command: ["-c", "import mujoco, gymnasium, stable_baselines3; print(mujoco.__version__, gymnasium.__version__, stable_baselines3.__version__)"]

@@ -17,6 +17,7 @@ x-common: &common
     target: test
   image: viki
   network_mode: host
+  user: "${VIKI_UID:-1000}:${VIKI_GID:-1000}"
   gpus: all                      # host NVIDIA GPU for model inference (nvidia-container-toolkit)
   # ── resource ceilings ──────────────────────────────────────────────────────
   # The box is 16 core / 15 GiB / 4 GiB swap. Without caps a runaway (an
@@ -55,10 +56,12 @@ x-common: &common
     - ./tests:/app/tests
     - ./data:/app/data
     - ./scripts:/app/scripts
+    - ./experiments:/app/experiments
     - ./models:/app/models
   environment:
     - PYTHONUNBUFFERED=1
     - PYTHONPATH=/app
+    - HOME=/app/data/.home
     - GIT_PYTHON_REFRESH=quiet
     - DISPLAY=${DISPLAY}
     # Cap BLAS/OpenMP so no single numpy/scipy stage (hand_fit lsmr, retarget IK)

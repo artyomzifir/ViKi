@@ -67,6 +67,11 @@ class ObjectModelConfig:
     reacquire_confidence: float = 0.25
     max_prediction_correction_m: float = 0.025
     max_component_step_m: float = 0.035
+    max_consistent_component_step_m: float = 0.070
+    component_agreement_m: float = 0.020
+    max_multiview_reacquire_m: float = 0.150
+    max_reacquire_seed_disagreement_m: float = 0.030
+    min_multiview_reacquire_confidence: float = 0.50
     max_rotation_step_deg: float = 12.0
     contact_distance_m: float = 0.012
     contact_fraction: float = 0.05
@@ -390,7 +395,7 @@ def _camera_motion_seed(
     """
 
     centers: dict[int, np.ndarray] = {}
-    deltas = []
+    camera_deltas: dict[int, np.ndarray] = {}
     for camera in np.unique(cameras):
         camera_id = int(camera)
         points = observed[cameras == camera]
@@ -408,12 +413,40 @@ def _camera_motion_seed(
         center = candidates[selected]
         centers[camera_id] = center
         if old is not None:
-            delta = center - old
-            if float(np.linalg.norm(delta)) <= cfg.max_component_step_m:
-                deltas.append(delta)
+            camera_deltas[camera_id] = center - old
+    deltas = [delta for delta in camera_deltas.values()
+              if float(np.linalg.norm(delta)) <= cfg.max_component_step_m]
+    if len(camera_deltas) == 2:
+        first, second = camera_deltas.values()
+        if (max(float(np.linalg.norm(first)), float(np.linalg.norm(second)))
+                <= cfg.max_consistent_component_step_m
+                and float(np.linalg.norm(first - second)) <= cfg.component_agreement_m):
+            deltas = [first, second]
     if not deltas:
         return previous_translation, centers
     return previous_translation + np.median(np.asarray(deltas), axis=0), centers
+
+
+def _multiview_reacquisition_seed(
+    centers: dict[int, np.ndarray],
+    reliable_offsets: dict[int, np.ndarray],
+    previous_translation: np.ndarray,
+    cfg: ObjectModelConfig,
+) -> np.ndarray | None:
+    common = sorted(centers.keys() & reliable_offsets.keys())
+    if len(common) != 2:
+        return None
+    candidates = np.asarray([
+        centers[camera] - reliable_offsets[camera] for camera in common
+    ])
+    if (float(np.linalg.norm(candidates[0] - candidates[1]))
+            > cfg.max_reacquire_seed_disagreement_m):
+        return None
+    seed = np.median(candidates, axis=0)
+    if (float(np.linalg.norm(seed - previous_translation))
+            > cfg.max_multiview_reacquire_m):
+        return None
+    return seed
 
 
 def _contact_track(
@@ -574,6 +607,7 @@ def _track_model(
     current_rotation = np.eye(3, dtype=np.float64)
     current_translation = np.asarray(initial_translation, np.float64).copy()
     previous_camera_centers: dict[int, np.ndarray] = {}
+    reliable_camera_offsets: dict[int, np.ndarray] = {}
     tree = cKDTree(model)
 
     for frame_index, frame in enumerate(frames):
@@ -643,6 +677,33 @@ def _track_model(
                     inlier, med, high, cov, keep_fraction, score = alt_metrics
                     implausible = False
 
+        if (score < cfg.min_multiview_reacquire_confidence or implausible) and len(observed):
+            multiview_seed = _multiview_reacquisition_seed(
+                camera_centers, reliable_camera_offsets, predicted_translation, cfg
+            )
+            if multiview_seed is not None:
+                alt_rotation, alt_translation, alt_distance, alt_match = _fit_pose(
+                    model, tree, observed, current_rotation, multiview_seed, cfg
+                )
+                alt_metrics = _pose_metrics(alt_distance, alt_match, len(model), cfg)
+                camera_inlier = alt_distance <= cfg.inlier_distance_m
+                views_supported = all(
+                    int(np.count_nonzero(camera_inlier & (observed_cameras == camera)))
+                    >= cfg.min_component_points
+                    for camera in reliable_camera_offsets
+                )
+                if (views_supported
+                        and alt_metrics[-1] >= cfg.min_multiview_reacquire_confidence
+                        and alt_metrics[-1] > score
+                        and float(np.linalg.norm(alt_translation - multiview_seed))
+                        <= cfg.max_prediction_correction_m
+                        and _rotation_angle(alt_rotation @ current_rotation.T)
+                        <= np.deg2rad(cfg.max_rotation_step_deg)):
+                    fitted_rotation, fitted_translation = alt_rotation, alt_translation
+                    distance, match = alt_distance, alt_match
+                    inlier, med, high, cov, keep_fraction, score = alt_metrics
+                    implausible = False
+
         if implausible:
             score = 0.0
 
@@ -660,6 +721,13 @@ def _track_model(
             )
         else:
             current_rotation, current_translation = fitted_rotation, fitted_translation
+        if score >= 0.8:
+            supported = distance <= cfg.inlier_distance_m
+            for camera, center in camera_centers.items():
+                if int(np.count_nonzero(
+                    supported & (observed_cameras == camera)
+                )) >= cfg.min_component_points:
+                    reliable_camera_offsets[camera] = center - current_translation
 
         rotation[frame_index] = current_rotation
         translation[frame_index] = current_translation

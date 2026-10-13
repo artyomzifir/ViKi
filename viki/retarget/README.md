@@ -30,17 +30,29 @@ perpendicular side planes in the static canonical cloud. Missing or ambiguous
 evidence raises an error; it never silently falls back to hand-only IK.
 
 The planner infers approach, close, carry, release and retreat intervals from
-the object translation and proximity-contact track. It ramps the opening to
-the specified cube edge minus 2 mm, holds that commanded width throughout
-carry, then opens after placement. The target TCP position during carry follows
+the object translation and proximity-contact track. In the v3 grasp mode it
+pre-aligns the jaws to the selected cube faces, keeps them fully open during
+approach, and starts closing only after the task point is close to the cube.
+If it cannot reach the cube early enough to close before lift, it rejects the
+episode instead of executing an edge-first pickup. It commands a pad-centre
+separation of the cube edge minus 2 mm during carry, then opens fully after
+placement. The target TCP position during carry follows
 the observed object translation with a fixed pickup offset; the local Robotiq
 jaw axis is aligned horizontally to one supported side-plane normal and its
 tool axis points downward. The closest of the two face pairs to the observed
-human approach is used. Orientation is held during carry rather than following
-the known-unreliable per-frame object rotation. Both pose and opening blend
-into and out of the phase; ordinary joint, floor and self-collision constraints
-still apply. Phase bounds and the selected plane normals are saved in the plan
-metrics and displayed in the Retarget tab.
+human approach is used. Orientation is held from first contact through carry
+rather than following the known-unreliable per-frame object rotation. Ordinary
+joint, floor and self-collision constraints still apply. Phase bounds, the
+pre-alignment/closing frames, and the selected plane normals are saved in the
+plan metrics and displayed in the Retarget tab.
+On release the target holds its horizontal position and rises 60 mm while the
+jaws open, then stays above the target cube until it has moved laterally clear.
+This avoids sweeping the right distal phalanx through the green support in the
+five-scene MuJoCo pilot; it is a cube-specific heuristic, not an object
+collision constraint. The batch driver rejects plans exceeding 20 mm overall
+position RMSE, 15 mm pickup-to-release RMSE or 20 mm pickup-to-release p95,
+even if numerical optimisation says "converged". A large error confined to
+the later retreat is reported but is not mistaken for a failed grasp.
 
 The opening command is inverted through the attached gripper's URDF
 contact-panel geometry. For Robotiq 2F-85, a naive normalised "38 mm" command
@@ -56,7 +68,10 @@ neither object collision nor simulation success is checked. The mode is
 enabled by default for the current cube-transfer setup and supports only
 Robotiq 2F-85 for now. Other tasks must explicitly opt out until their object
 models and grasp policy are supported. See
-`docs/2026-10-06-cube-object-grasp.md` for the measured pilot.
+`docs/2026-10-06-cube-object-grasp.md` for the earlier geometric pilot and
+`experiments/2026-10-09-status.md` for the separate MuJoCo contact pilot. The
+simulator's phase-limited pressure offset is not encoded in `plan.h5` and does
+not establish a calibrated physical grasp force.
 
 For the default two-finger semantics, target position is
 `(thumb_tip + index_tip) / 2`, target orientation is the stable palm frame, and
