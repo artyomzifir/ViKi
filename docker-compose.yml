@@ -18,6 +18,10 @@ x-common: &common
   image: viki
   network_mode: host
   user: "${VIKI_UID:-1000}:${VIKI_GID:-1000}"
+  group_add:
+    - "${VIKI_VIDEO_GID:-44}"
+    - "${VIKI_PLUGDEV_GID:-46}"
+    - "${VIKI_RENDER_GID:-992}"
   gpus: all                      # host NVIDIA GPU for model inference (nvidia-container-toolkit)
   # ── resource ceilings ──────────────────────────────────────────────────────
   # The box is 16 core / 15 GiB / 4 GiB swap. Without caps a runaway (an
@@ -52,6 +56,7 @@ x-common: &common
     - /dev:/dev                  # V4L2 nodes for librealsense (see note above)
     - /run/udev:/run/udev:ro
     - /tmp/.X11-unix:/tmp/.X11-unix
+    - ./docker/entrypoint.sh:/app/docker/entrypoint.sh:ro
     - ./viki:/app/viki
     - ./tests:/app/tests
     - ./data:/app/data

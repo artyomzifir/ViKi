@@ -62,6 +62,7 @@ def test_build_cloud_writes_parseable_frames(tmp_path):
     assert stage_done(ep, "cloud")
     meta = json.loads((ep.cloud_dir / "meta.json").read_text())
     assert meta["n_frames"] == 2
+    assert meta["background_tolerance_mm"] == config.CLOUD_BG_TOLERANCE_MM
     assert meta["fps"] == pytest.approx(1e6 / 66_000, rel=0.1)
 
     n, xyz, rgb = _unpack((ep.cloud_dir / "000000.bin").read_bytes())

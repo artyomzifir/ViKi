@@ -565,6 +565,8 @@ def build_cloud(
         "voxel": voxel,
         "stride": stride,
         "cameras": [c["dev"] for c in cams],
+        "background_subtract": bg_subtract,
+        "background_tolerance_mm": bg_tol_mm,
         "edge_filter": edge_filter,
         "edge_radius_rad": edge_radius_rad,
         "edge_jump_mm": edge_jump_mm,

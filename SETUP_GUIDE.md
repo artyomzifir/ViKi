@@ -215,6 +215,17 @@ docker compose up
 
 Open `http://localhost:8000` in your browser.
 
+Compose runs as the host file owner (UID/GID `1000:1000` on the reference
+rig), so new recordings, calibrations, models and experiment outputs remain
+editable outside Docker. On other hosts, set `VIKI_UID=$(id -u)` and
+`VIKI_GID=$(id -g)` before `docker compose up` or `run`. The reference rig
+also passes the host `video`, `plugdev` and `render` groups (GIDs 44, 46,
+992); override `VIKI_VIDEO_GID`, `VIKI_PLUGDEV_GID` and `VIKI_RENDER_GID`
+from `getent group` if they differ. Host udev rules from `host_setup.sh` must
+grant USB/DRI access; the container no longer changes device permissions.
+For files left root-owned by an older container, run
+`sudo chown -R "$(id -u):$(id -g)" data models` once.
+
 To open a debug terminal inside the container:
 
 ```bash
