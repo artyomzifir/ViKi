@@ -354,6 +354,48 @@ def _cmd_viz(a) -> None:
     print(out)
 
 
+def _cmd_hocap_import(a) -> None:
+    from viki.benchmark.hocap import import_sequence, render_report
+
+    result = import_sequence(
+        a.hocap_root,
+        a.subject,
+        a.sequence,
+        out_root=a.out,
+        cameras=a.cameras,
+        fps=a.fps,
+        max_frames=a.max_frames,
+        overwrite=a.force,
+        viki_episode_dir=a.viki_ref,
+        run_backend_check=a.backend_check,
+        run_pipeline_check=a.pipeline_check,
+        depth_frame=a.depth_frame,
+    )
+    if result.skipped and not result.acceptance:
+        print(f"SKIPPED {a.subject}/{a.sequence}: {result.skipped[0]['reason']}")
+        return
+    print(result.summary())
+    report_path = result.episode_dir / "hocap_import.md"
+    render_report([result], out_path=report_path)
+    print(f"report: {report_path}")
+    if a.report:
+        print(f"report: {render_report([result], out_path=a.report)}")
+
+
+def _cmd_hocap_evaluate(a) -> None:
+    import json
+
+    from viki import benchmark
+
+    result = benchmark.evaluate_episode(a.episode)
+    payload = json.dumps(result, indent=2)
+    if a.out:
+        output = Path(a.out)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(payload + "\n")
+    print(payload)
+
+
 def _cmd_run(a) -> None:
     from viki.episode import stage_done
     from viki.perception.extract import extract_episode
@@ -708,6 +750,27 @@ def _build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--stage", default="cln", choices=["rec", "cln"])
     pv.add_argument("--out", default=None, help="PNG path (default: <episode>/viz-<stage>.png)")
     pv.set_defaults(func=_cmd_viz)
+
+    phc = sub.add_parser("hocap-import", help="import a multi-view HO-Cap sequence")
+    phc.add_argument("hocap_root")
+    phc.add_argument("--subject", required=True)
+    phc.add_argument("--sequence", required=True)
+    phc.add_argument("--cameras", nargs="+", metavar="CAM")
+    phc.add_argument("--out", default="data/datasets/hocap")
+    phc.add_argument("--fps", type=float, default=None)
+    phc.add_argument("--max-frames", type=int, default=None)
+    phc.add_argument("--force", action="store_true")
+    phc.add_argument("--viki-ref", default=None)
+    phc.add_argument("--report", default=None)
+    phc.add_argument("--backend-check", action="store_true")
+    phc.add_argument("--pipeline-check", action="store_true")
+    phc.add_argument("--depth-frame", choices=["color", "sensor"], default="color")
+    phc.set_defaults(func=_cmd_hocap_import)
+
+    phe = sub.add_parser("hocap-evaluate", help="score an imported HO-Cap episode")
+    phe.add_argument("episode")
+    phe.add_argument("--out", default=None)
+    phe.set_defaults(func=_cmd_hocap_evaluate)
 
     prn = sub.add_parser(
         "run",

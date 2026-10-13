@@ -1,0 +1,299 @@
+{
+  "dataset": "JWRoboticsVision/HO-Cap-Dataset",
+  "revision": "2b24836d5e51ad39e56ed4db3fc0c166e755332e",
+  "criterion": "task_id=1 and mano_sides=[left] or [right]",
+  "sequences": [
+    {
+      "id": "subject_1-20231025_165502",
+      "hand": "left",
+      "frames": 676
+    },
+    {
+      "id": "subject_1-20231025_165807",
+      "hand": "left",
+      "frames": 798
+    },
+    {
+      "id": "subject_2-20231022_201942",
+      "hand": "left",
+      "frames": 1561
+    },
+    {
+      "id": "subject_7-20231023_162803",
+      "hand": "left",
+      "frames": 1092
+    },
+    {
+      "id": "subject_1-20231025_170105",
+      "hand": "right",
+      "frames": 831
+    },
+    {
+      "id": "subject_1-20231025_170650",
+      "hand": "right",
+      "frames": 741
+    },
+    {
+      "id": "subject_1-20231025_170959",
+      "hand": "right",
+      "frames": 874
+    },
+    {
+      "id": "subject_2-20231022_201316",
+      "hand": "right",
+      "frames": 828
+    },
+    {
+      "id": "subject_2-20231022_202617",
+      "hand": "right",
+      "frames": 1271
+    },
+    {
+      "id": "subject_2-20231023_163929",
+      "hand": "right",
+      "frames": 1129
+    },
+    {
+      "id": "subject_3-20231024_154531",
+      "hand": "right",
+      "frames": 1686
+    },
+    {
+      "id": "subject_3-20231024_155008",
+      "hand": "right",
+      "frames": 1046
+    },
+    {
+      "id": "subject_3-20231024_161209",
+      "hand": "right",
+      "frames": 1071
+    },
+    {
+      "id": "subject_3-20231024_161937",
+      "hand": "right",
+      "frames": 1269
+    },
+    {
+      "id": "subject_3-20231024_162327",
+      "hand": "right",
+      "frames": 878
+    },
+    {
+      "id": "subject_3-20231024_162756",
+      "hand": "right",
+      "frames": 946
+    },
+    {
+      "id": "subject_4-20231026_163223",
+      "hand": "right",
+      "frames": 939
+    },
+    {
+      "id": "subject_4-20231026_164812",
+      "hand": "right",
+      "frames": 974
+    },
+    {
+      "id": "subject_5-20231027_112303",
+      "hand": "right",
+      "frames": 702
+    },
+    {
+      "id": "subject_6-20231025_110646",
+      "hand": "right",
+      "frames": 1292
+    },
+    {
+      "id": "subject_6-20231025_111118",
+      "hand": "right",
+      "frames": 1272
+    },
+    {
+      "id": "subject_6-20231025_112546",
+      "hand": "right",
+      "frames": 1311
+    },
+    {
+      "id": "subject_7-20231022_193506",
+      "hand": "right",
+      "frames": 1136
+    },
+    {
+      "id": "subject_8-20231024_180651",
+      "hand": "right",
+      "frames": 985
+    },
+    {
+      "id": "subject_9-20231027_123403",
+      "hand": "right",
+      "frames": 992
+    },
+    {
+      "id": "subject_9-20231027_123725",
+      "hand": "right",
+      "frames": 1134
+    },
+    {
+      "id": "subject_9-20231027_124057",
+      "hand": "right",
+      "frames": 1136
+    },
+    {
+      "id": "subject_9-20231027_125315",
+      "hand": "right",
+      "frames": 1136
+    }
+  ],
+  "files": [
+    {
+      "name": "calibration.tar",
+      "size": 51200,
+      "sha256": "4f06f92b8d3e86586794bf33ed22bf97010716c212afcb76ef7199e640566fdb"
+    },
+    {
+      "name": "sequence_labels.tar",
+      "size": 40478720,
+      "sha256": "be3be5f9e5beacab45d75d996c96d3fc959a6d822e31e402214ca899342416e2"
+    },
+    {
+      "name": "subject_1-20231025_165502.tar",
+      "size": 1074759680,
+      "sha256": "0889653bef4c9193fd55eddde93fb2a2c6cb703a1d78b521419d19b6e84dee2f"
+    },
+    {
+      "name": "subject_1-20231025_165807.tar",
+      "size": 1255751680,
+      "sha256": "97514ca96564cfff0f823cf85f816b42125dd3af0a0fe7d10b604a28cc940468"
+    },
+    {
+      "name": "subject_2-20231022_201942.tar",
+      "size": 2483824640,
+      "sha256": "2975afe08557e9dfc0e8b58d63cbc723de8e152bcd1fb8a68cd5f561d2fd961e"
+    },
+    {
+      "name": "subject_7-20231023_162803.tar",
+      "size": 1825443840,
+      "sha256": "4a296c9f6239311d7e918bd6f10cb86ad03acab3734b5be818440af838ba6299"
+    },
+    {
+      "name": "subject_1-20231025_170105.tar",
+      "size": 1314160640,
+      "sha256": "89bea132d3f04cc49dc0b2a7e503ce435679d65d8ca3e92546ebb8c6419f7bce"
+    },
+    {
+      "name": "subject_1-20231025_170650.tar",
+      "size": 1209989120,
+      "sha256": "0c648564de5c1ade98ec89dbe8417957a5740d27f3adb4843df45669adac9090"
+    },
+    {
+      "name": "subject_1-20231025_170959.tar",
+      "size": 1359534080,
+      "sha256": "e30616d036ea7541eb840abc380eda633f07e6a08dff62ddc10e8b6119a27625"
+    },
+    {
+      "name": "subject_2-20231022_201316.tar",
+      "size": 1306746880,
+      "sha256": "bd7fa263c8f0a31d9a0d4fc8ef289fb3ca01454dd628428a3ddaf683f71f2371"
+    },
+    {
+      "name": "subject_2-20231022_202617.tar",
+      "size": 2018385920,
+      "sha256": "bb5bdc555a1148e089f7a11749d749af58162549a5d01e6cbf2f4237aebcd6de"
+    },
+    {
+      "name": "subject_2-20231023_163929.tar",
+      "size": 1861570560,
+      "sha256": "607060e8873d1e3974b9b971df8f5513dbe73b65558086426d1fb32e1d71399c"
+    },
+    {
+      "name": "subject_3-20231024_154531.tar",
+      "size": 2764472320,
+      "sha256": "8246bc079c1ada1eadb23c9696a6338d193fdbc74e008d300b36fa845dc03c3c"
+    },
+    {
+      "name": "subject_3-20231024_155008.tar",
+      "size": 1713848320,
+      "sha256": "1a99689751db0567b2d59698f94bb067dbd7e05351bb3a157b1040cca724bcb5"
+    },
+    {
+      "name": "subject_3-20231024_161209.tar",
+      "size": 1805608960,
+      "sha256": "c475c25c6e43ef16a79fafd05510e3068a235c3bff131a7a287fe05c894f6c09"
+    },
+    {
+      "name": "subject_3-20231024_161937.tar",
+      "size": 2028144640,
+      "sha256": "30658f980aaee19877009046247c48f2369a02f36417163693aacaa5d0d72673"
+    },
+    {
+      "name": "subject_3-20231024_162327.tar",
+      "size": 1431767040,
+      "sha256": "e76b2161470867f56d9365ca1e39527ecc69af21ecf7c715a23161487b99f7ce"
+    },
+    {
+      "name": "subject_3-20231024_162756.tar",
+      "size": 1513216000,
+      "sha256": "9a4c85a2e46819acb35dd64bcdd8b2057a6935b01125d16f8237ca1d09c3d57c"
+    },
+    {
+      "name": "subject_4-20231026_163223.tar",
+      "size": 1564928000,
+      "sha256": "65813664dc136439f84f49b268f869663008b5245b1434d71cf7504c1aa3192d"
+    },
+    {
+      "name": "subject_4-20231026_164812.tar",
+      "size": 1586728960,
+      "sha256": "b5666cfa8537aa13408e8a315f7040745273c2ed92a79e61bc4f79b07969ddee"
+    },
+    {
+      "name": "subject_5-20231027_112303.tar",
+      "size": 1126983680,
+      "sha256": "fba84b104e747c88737e61e5c1b18835270e33b139f95df8d4ccaa1d686587f7"
+    },
+    {
+      "name": "subject_6-20231025_110646.tar",
+      "size": 2040934400,
+      "sha256": "6839af9e06602a0d9db8764e479d194da4c920d3675f54c00cc11e8077cf3838"
+    },
+    {
+      "name": "subject_6-20231025_111118.tar",
+      "size": 2034380800,
+      "sha256": "cf522cbbfceefc925210518669a58eb7ca1a0cddae362d24d05f1e2affb9d712"
+    },
+    {
+      "name": "subject_6-20231025_112546.tar",
+      "size": 2124922880,
+      "sha256": "61aa46c4382584673a6135649e0426dd144a1382e717f41996d7f3cf65a90304"
+    },
+    {
+      "name": "subject_7-20231022_193506.tar",
+      "size": 1852303360,
+      "sha256": "ad0fb5768cc32be6cfd090dc4617f65a8ee8422fd66ccfe98295aa5f9690f1e9"
+    },
+    {
+      "name": "subject_8-20231024_180651.tar",
+      "size": 1649674240,
+      "sha256": "4d500b4f2aef697117cd4d66a4813e2555bd1a45396623e179eec2cee90f8026"
+    },
+    {
+      "name": "subject_9-20231027_123403.tar",
+      "size": 1672376320,
+      "sha256": "291a73d48bc9755d3c4bf3114bd6183ad506460a22b45c3a8e08533152f06bbf"
+    },
+    {
+      "name": "subject_9-20231027_123725.tar",
+      "size": 1871349760,
+      "sha256": "377b9491a361ae17c108763b46e1e8e8b014123be7c1696a54bcb4879beec3d4"
+    },
+    {
+      "name": "subject_9-20231027_124057.tar",
+      "size": 1888614400,
+      "sha256": "1ab0e1da7bd2745261916071bfadd18ae18caadc5a92a45c13d169cad62e1582"
+    },
+    {
+      "name": "subject_9-20231027_125315.tar",
+      "size": 1839247360,
+      "sha256": "25bafe0c80c57b51a52eb8d986d2ffce27e8b1c31bf66129080d323e454e3cc0"
+    }
+  ]
+}
