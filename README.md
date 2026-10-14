@@ -111,7 +111,7 @@ controller per Kinect, and a sync cable for multi-Kinect capture.
 > dual-camera capture and wired sync now work. Separate sockets or hubs on the
 > *same* controller are not sufficient. Check the PCI controller topology after
 > rewiring; see [SETUP_GUIDE.md](SETUP_GUIDE.md#5-usb-wiring-for-two-azure-kinects).
-> The historical failure is closed in [`bugs.md`](bugs.md) and
+> The historical failure is closed in [`docs/bugs.md`](docs/bugs.md) and
 > [`docs/camera_freeze_investigation.md`](docs/camera_freeze_investigation.md).
 
 ### Requirements

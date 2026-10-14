@@ -1,4 +1,8 @@
-# bugs.md — narrow traps, and what they cost
+# Historical bug notes — narrow traps, and what they cost
+
+This is an archived investigation log, not a current issue tracker. Entries
+refer to past hardware setups and recordings; verify their status against the
+current code and rig before treating them as open defects.
 
 A running table of the small, specific defects that are expensive to rediscover:
 off-by-one constants, settings that silently do nothing, hardware combinations
