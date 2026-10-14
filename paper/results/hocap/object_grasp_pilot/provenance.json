@@ -1,0 +1,14 @@
+{
+  "object_id": "G10_4",
+  "physics_frames": [
+    440,
+    600
+  ],
+  "source_episode": "subject_1_20231025_170105",
+  "source_frames": [
+    420,
+    600
+  ],
+  "track_path": "data/_retarget_diagnostics/hocap_g10_4_object_pilot/object_track.npz",
+  "track_sha256": "23ab866c4fe888d3fba24ef5a13f8456174762c4456c76c6fecc4eb58644149b"
+}

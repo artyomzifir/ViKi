@@ -37,6 +37,7 @@ from viki.retarget.grippers import (
     normalize_gripper,
 )
 from viki.retarget.object_grasp import plan_cube_grasp
+from viki.retarget.tracked_grasp import plan_tracked_grasp
 from viki.retarget.robots import RobotConfig, normalize_robot
 from viki.retarget.solver import (
     COLLISION_TOLERANCE_M,
@@ -68,6 +69,9 @@ class RetargetConfig:
     pose_source: str
     object_grasp: bool
     object_cube_side_mm: float
+    object_track_path: str | None
+    object_id: int | None
+    object_contact_overlap_mm: float
     approach_sec: float
     velocity_limit_scale: float
     collision_pairs: int
@@ -222,6 +226,9 @@ def config_from_options(
         ),
         object_grasp=bool(_setting(values, "object_grasp", "RETARGET_OBJECT_GRASP_ENABLED", False)),
         object_cube_side_mm=float(_setting(values, "object_cube_side_mm", "RETARGET_OBJECT_CUBE_SIDE_MM", 40.0)),
+        object_track_path=str(values["object_track_path"]) if values.get("object_track_path") else None,
+        object_id=int(values["object_id"]) if values.get("object_id") is not None else None,
+        object_contact_overlap_mm=float(values.get("object_contact_overlap_mm", 6.0)),
         approach_sec=float(
             _setting(values, "approach_sec", "RETARGET_APPROACH_SEC", 2.0)
         ),
@@ -259,6 +266,15 @@ def config_from_options(
         raise ValueError("table_plane_z_m must be finite")
     if not np.isfinite(out.object_cube_side_mm) or out.object_cube_side_mm <= 0:
         raise ValueError("object_cube_side_mm must be positive")
+    if (out.object_track_path is None) != (out.object_id is None):
+        raise ValueError("object_track_path and object_id must be supplied together")
+    if out.object_track_path and not out.object_grasp:
+        raise ValueError("tracked grasp requires object_grasp enabled")
+    if (not np.isfinite(out.object_contact_overlap_mm)
+            or not 0.0 <= out.object_contact_overlap_mm <= 12.0):
+        raise ValueError("object_contact_overlap_mm must be finite and in [0, 12]")
+    if out.object_track_path is None and out.object_contact_overlap_mm != 6.0:
+        raise ValueError("object_contact_overlap_mm requires an explicit object track")
     if out.collision_pairs < 0 or out.collision_min_distance_m < 0.0:
         raise ValueError("collision settings must be non-negative")
     normalize_robot(out.robot)
@@ -583,7 +599,30 @@ def retarget_prerequisite_errors(ep: Episode, cfg: RetargetConfig) -> list[str]:
     if not cfg.object_grasp:
         return errors
     if cfg.gripper != "robotiq_2f85":
-        errors.append("cube-aware grasp requires Robotiq 2F-85")
+        errors.append("object-aware grasp requires Robotiq 2F-85")
+    if cfg.object_track_path is not None:
+        if not Path(cfg.object_track_path).is_file():
+            errors.append("selected object track does not exist")
+        if errors:
+            return errors
+        try:
+            from viki.perception import OBJECT_MODEL_SCHEMA
+
+            with np.load(cfg.object_track_path, allow_pickle=False) as models:
+                if str(models["schema"]) != OBJECT_MODEL_SCHEMA:
+                    errors.append("object track uses an unsupported schema")
+                if np.count_nonzero(models["object_ids"] == cfg.object_id) != 1:
+                    errors.append("selected object ID is absent or ambiguous")
+                object_frames = len(models["translation_world"])
+            with np.load(ep.cln_npz, allow_pickle=False) as prepared:
+                hand_frames = len(prepared["timestamps"])
+                if str(prepared["coordinate_frame"]) != "hocap_tag_1":
+                    errors.append("tracked grasp pilot requires hocap_tag_1 input")
+            if object_frames != hand_frames:
+                errors.append(f"object and hand tracks have different lengths ({object_frames} vs {hand_frames})")
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f"cannot validate tracked grasp inputs: {exc}")
+        return errors
     if not (ep.raw_dir / "world_anchor.json").is_file():
         errors.append("raw/world_anchor.json is missing; calibrated cube grasp needs the scene anchor")
     if not ep.object_models_npz.is_file():
@@ -651,19 +690,36 @@ def retarget_episode(
     object_grasp = None
     if cfg.object_grasp:
         if cfg.gripper != "robotiq_2f85":
-            raise ValueError("experimental cube-face grasp supports only Robotiq 2F-85")
-        object_grasp = plan_cube_grasp(
-            ep.object_models_npz,
-            target_calib_p,
-            target_calib_r,
-            targets.gripper_opening,
-            rig_to_calibration,
-            gripper_cfg.max_width_m,
-            cfg.object_cube_side_mm / 1000.0,
-            gripper_cfg.opening_for_contact_width(
-                assembly, (cfg.object_cube_side_mm - 2.0) / 1000.0
-            ),
-        )
+            raise ValueError("experimental grasp supports only Robotiq 2F-85")
+        if cfg.object_track_path is not None:
+            with np.load(ep.cln_npz, allow_pickle=False) as prepared:
+                landmark_ids = np.asarray(prepared["landmark_ids"], dtype=int)
+                tip_indices = []
+                for landmark in (LM.THUMB_TIP, LM.INDEX_TIP):
+                    matches = np.flatnonzero(landmark_ids == int(landmark))
+                    if len(matches) != 1:
+                        raise ValueError(f"prepared hand has no unique {landmark.name} landmark")
+                    tip_indices.append(int(matches[0]))
+                hand_points = np.mean(prepared["smoothed_points"][:, tip_indices], axis=1)
+            object_grasp = plan_tracked_grasp(
+                Path(cfg.object_track_path), cfg.object_id, target_calib_p,
+                target_calib_r, hand_points, gripper_cfg.max_width_m,
+                lambda width: gripper_cfg.opening_for_contact_width(assembly, width),
+                cfg.object_contact_overlap_mm,
+            )
+        else:
+            object_grasp = plan_cube_grasp(
+                ep.object_models_npz,
+                target_calib_p,
+                target_calib_r,
+                targets.gripper_opening,
+                rig_to_calibration,
+                gripper_cfg.max_width_m,
+                cfg.object_cube_side_mm / 1000.0,
+                gripper_cfg.opening_for_contact_width(
+                    assembly, (cfg.object_cube_side_mm - 2.0) / 1000.0
+                ),
+            )
         target_calib_p = object_grasp.positions
         target_calib_r = object_grasp.rotations
         if log is not None:

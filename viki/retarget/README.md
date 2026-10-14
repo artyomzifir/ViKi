@@ -23,6 +23,34 @@ The PoC consumes the hand landmarks and palm orientation in `cln.npz` and writes
 
 ## Experimental object-aware cube grasp
 
+### HO-Cap single-object side-grasp pilot
+
+An explicit `--object-grasp --object-track-path <object_models.npz> --object-id N`
+selects an experimental, non-default rigid-track planner instead of the local
+40-mm-cube planner. It accepts only an aligned `hocap_tag_1` prepared trajectory
+and a selected object with a complete, confident track. It infers approach,
+lift, placement and withdrawal from the hand/object tracks, estimates the
+object's cross-section at the human grasp height, chooses the side or top jaw
+orientation closest to the observed tool pose, holds a constant
+URDF-calibrated pad separation during carry, and follows an object-fixed
+grasp point. Ambiguous transfers and objects wider than the gripper fail
+closed. No local `world_anchor.json` is used or relabelled for this mode.
+
+`--object-contact-overlap-mm N` (0–12, default 6) is an opt-in tuning
+parameter for this explicit-track mode only. It subtracts `N` millimetres
+from the observed object cross-section when inverting the URDF pad-centre
+opening; it does not specify a contact force or guarantee a physical overlap.
+The one-scene MuJoCo sensitivity check found that 4 mm raised peak lift
+slightly but all tested gaps still lost the object. See the dated pilot report.
+
+The mode is a one-scene geometric pilot, not a generic object-grasp policy.
+The HO-Cap object models currently use supplied oracle instance masks and a
+first-frame reference-pose alignment; they do not provide independent absolute
+object pose. The planner does not model grasp force, object collision, human
+collision, support geometry, or simulator contact. Physical grasp must be
+tested separately; a converged IK plan alone does not demonstrate one. See
+`docs/2026-10-14-hocap-object-grasp-pilot.md` for the controlled A/B protocol.
+
 `viki retarget <episode>` (cube-aware by default) requires prepared
 `cln.npz`, `raw/world_anchor.json`, and a current `object_models.npz` with
 exactly one `manipulated_object` aligned to the hand frames. The Retarget tab

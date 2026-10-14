@@ -15,14 +15,15 @@ def pressure_commands(drive: np.ndarray, object_grasp: dict | None,
     if offset_rad == 0:
         return command.copy()
     supported_modes = {"experimental_cube_face_transfer_v2",
-                       "experimental_cube_face_transfer_v3"}
+                       "experimental_cube_face_transfer_v3",
+                       "experimental_tracked_side_grasp_v1"}
     if not object_grasp or object_grasp.get("mode") not in supported_modes:
-        raise ValueError("pressure control requires a v2/v3 cube-grasp plan")
+        raise ValueError("pressure control requires a supported phased grasp plan")
     grasp_start = int(object_grasp["grasp_start"])
     close_complete = int(object_grasp["close_complete"])
     _, carry_start, release_start, open_end = object_grasp["phase_bounds"]
     if not 0 <= grasp_start < close_complete < carry_start < release_start < open_end < len(command):
-        raise ValueError("invalid cube-grasp phase bounds")
+        raise ValueError("invalid grasp phase bounds")
     release_end = min(open_end, release_start + 15)
     pressure = np.zeros_like(command)
     pressure[grasp_start:close_complete + 1] = np.linspace(

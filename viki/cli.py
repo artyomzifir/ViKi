@@ -304,6 +304,9 @@ def _cmd_retarget(a) -> None:
             "sequential_baseline": a.sequential_baseline,
             "object_grasp": a.object_grasp,
             "object_cube_side_mm": a.object_cube_side_mm,
+            "object_track_path": a.object_track_path,
+            "object_id": a.object_id,
+            "object_contact_overlap_mm": a.object_contact_overlap_mm,
         }.items()
         if value is not None
     }
@@ -717,6 +720,9 @@ def _build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--adapter-radius-mm", type=float, default=None)
     pt.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
     pt.add_argument("--object-cube-side-mm", type=float, default=None)
+    pt.add_argument("--object-track-path", default=None)
+    pt.add_argument("--object-id", type=int, default=None)
+    pt.add_argument("--object-contact-overlap-mm", type=float, default=None)
     pt.add_argument(
         "--sequential-baseline",
         action="store_true",
