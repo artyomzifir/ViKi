@@ -14,6 +14,22 @@ from pathlib import Path
 from viki.retarget.archive import load_archive
 
 
+HAND_TO_EE_RPY_DEG = {
+    "left": [-175.675, 15.45, -47.922],
+    "right": [4.325, 15.45, -47.922],
+}
+
+
+def _hand_to_ee_rpy_deg(episode: Path) -> list[float]:
+    metadata = json.loads((episode / "meta.json").read_text())
+    if metadata.get("source") != "hocap" or metadata.get("hocap_world_frame") != "tag_1":
+        raise ValueError(f"unexpected source/frame in {episode}")
+    sides = metadata.get("hocap_mano_sides_meta")
+    if not isinstance(sides, list) or len(sides) != 1 or sides[0] not in HAND_TO_EE_RPY_DEG:
+        raise ValueError(f"expected exactly one known HO-Cap hand side in {episode}: {sides}")
+    return HAND_TO_EE_RPY_DEG[sides[0]]
+
+
 def _write_json(path: Path, payload: dict) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -21,6 +37,7 @@ def _write_json(path: Path, payload: dict) -> None:
 
 
 def _plan_metrics(path: Path) -> dict:
+    expected_rpy = _hand_to_ee_rpy_deg(path.parent)
     with load_archive(path) as plan:
         if plan["coordinate_frame"] != "hocap_tag_1":
             raise ValueError(f"unexpected plan frame in {path}")
@@ -31,7 +48,12 @@ def _plan_metrics(path: Path) -> dict:
             or config["base_position"] != [0.0, -1.0, 0.0]
             or config["table_plane_z_m"] != 0.0
             or config["approach_sec"] != 0.0
+            or config["reference_policy"] != "zero"
             or config["object_grasp"]
+            or not config["solver"]["collision_enabled"]
+            or config["collision_pairs"] < 1
+            or config.get("velocity_limit_scale", 1.0) != 1.0
+            or not np.allclose(config["hand_to_ee_rpy_deg"], expected_rpy, atol=1e-6, rtol=0)
         ):
             raise ValueError(f"unexpected plan configuration in {path}")
         joint_positions = np.asarray(plan["q"])
@@ -59,6 +81,8 @@ def _process_episode(dataset: Path, episode: Path) -> dict:
         "viki", "retarget", str(episode), "--robot", "ur10",
         "--gripper", "robotiq_2f85", "--base-position", "0", "-1", "0",
         "--table-plane-z-m", "0", "--approach-sec", "0", "--no-object-grasp",
+        "--reference-policy", "zero",
+        "--hand-to-ee-rpy-deg", *(str(value) for value in _hand_to_ee_rpy_deg(episode)),
     ]
     environment = os.environ.copy()
     for variable in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -80,37 +104,60 @@ def _process_episode(dataset: Path, episode: Path) -> dict:
         return {"status": "invalid_new_plan", "error": str(exc)}
 
 
+def _validate_smoke(smoke: dict) -> None:
+    scores = smoke["metrics"]
+    thresholds = {
+        "position_rmse_mm": (None, 30.0),
+        "position_p95_mm": (None, 50.0),
+        "orientation_rmse_deg": (None, 45.0),
+        "velocity_repair_max_rad": (0.0, 1e-3),
+        "min_velocity_limit_margin_rad_s": (-1e-7, None),
+        "min_urdf_velocity_limit_margin_rad_s": (-1e-7, None),
+        "min_floor_margin_mm": (-0.1, None),
+        "min_collision_margin": (-0.0001, None),
+    }
+    failures = []
+    if smoke["frames"] != 676 or smoke["solver_status"] != "converged":
+        failures.append("frame count or convergence")
+    for name, (lower, upper) in thresholds.items():
+        value = scores.get(name)
+        if (
+            value is None or not np.isfinite(value)
+            or (lower is not None and value < lower)
+            or (upper is not None and value > upper)
+        ):
+            failures.append(name)
+    if failures:
+        raise ValueError(f"smoke did not pass numerical/geometry gate: {failures}; {scores}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset", type=Path)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--require-smoke", action="store_true")
+    parser.add_argument("--preflight-only", action="store_true")
     args = parser.parse_args()
     if args.workers < 1 or args.workers > 4:
         raise ValueError("workers must be between 1 and 4")
     episodes = sorted(path for path in args.dataset.iterdir() if path.is_dir())
     if len(episodes) != 28:
         raise ValueError(f"expected 28 HO-Cap episodes, found {len(episodes)}")
+    for episode in episodes:
+        _hand_to_ee_rpy_deg(episode)
+        if not (episode / "cln.npz").is_file():
+            raise ValueError(f"missing cln.npz in {episode}")
+        if (episode / "plan.h5").is_file():
+            _plan_metrics(episode / "plan.h5")
     if args.require_smoke:
         smoke = _plan_metrics(episodes[0] / "plan.h5")
-        scores = smoke["metrics"]
-        if (
-            smoke["frames"] != 676
-            or scores["position_rmse_mm"] > 30.0
-            or scores["position_p95_mm"] > 50.0
-            or scores["orientation_rmse_deg"] > 45.0
-            or scores["velocity_repair_max_rad"] > 1e-3
-            or scores["min_velocity_limit_margin_rad_s"] < -1e-7
-            or scores["min_floor_margin_mm"] < -0.1
-            or (
-                scores["min_collision_margin"] is not None
-                and scores["min_collision_margin"] < -0.0001
-            )
-        ):
-            raise ValueError(f"smoke did not pass numerical/geometry gate: {scores}")
+        _validate_smoke(smoke)
+    if args.preflight_only:
+        print(f"preflight passed for {len(episodes)} episodes", flush=True)
+        return
     status_path = args.dataset / "retarget_batch_status.json"
     status = {
-        "protocol": "HO-Cap hand-only UR10/Robotiq, base [0,-1,0] in hocap_tag_1, table z=0, no home approach",
+        "protocol": "HO-Cap hand-only UR10/Robotiq, base [0,-1,0] in hocap_tag_1, table z=0, zero IK reference, no home approach",
         "workers": args.workers,
         "episodes": {episode.name: {"status": "queued"} for episode in episodes},
     }

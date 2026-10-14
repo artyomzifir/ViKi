@@ -6,6 +6,8 @@ The PoC consumes the hand landmarks and palm orientation in `cln.npz` and writes
 - Local `cln.npz` has `coordinate_frame == "rig"` (reference-camera rig);
 - HO-Cap episodes explicitly retain `coordinate_frame == "hocap_tag_1"`; the retarget input is already in the published tag_1 world frame, so its input-to-plan transform is identity and the plan keeps `hocap_tag_1`. This path is selected only when episode metadata has `source: hocap` and `hocap_world_frame: tag_1`. It does not relabel HO-Cap as a local rig or reuse a local Kinect anchor;
 - For the offline HO-Cap trajectory benchmark, pass `--approach-sec 0`: the synthetic path from robot home to the first human pose is not part of the recorded demonstration and its safety is not established by the benchmark. The recorded trajectory still undergoes joint, velocity, tabletop and self-collision checks;
+- `--velocity-limit-scale 2` is an offline diagnostic override: it doubles the URDF joint-speed bounds inside IK and archives both the scale and the margin against the unscaled URDF. Plans with a scale above 1 are not UR10 hardware-ready and must not be counted as physical-feasibility results;
+- `--hand-to-ee-rpy-deg R P Y` overrides the fixed palm-to-TCP rotation for a named experiment; the HO-Cap left-hand clips require checking this mapping rather than applying the right-hand calibration blindly;
 - protected V1 artifacts labelled `robot_base` are recognised as the historical
   metadata bug they are; their arrays still take this same rig-frame path;
 - the episode's `raw/world_anchor.json:T_world_display` maps rig coordinates to
@@ -100,10 +102,18 @@ editable until it is replaced by a physical hand-to-tool calibration.
 The batch trajectory is initialised and regularised around the selected robot's
 registered `home_q` by default (`reference_policy=robot_home`).  This biases the
 solve toward the upper-workspace IK branch and selected that branch throughout
-some, but not all, measured UR10 scenes.  `zero` remains available for legacy
-comparisons.  Every plan records the policy and reference vector, plus
+some, but not all, measured UR10 scenes.  `zero` remains available for
+explicit experiments. Every plan records the policy and reference vector, plus
 wrist-above-target and tool-axis-hemisphere diagnostics; the later approach
 still starts from the robot's registered hardware home in either policy.
+
+For the HO-Cap hand-only batch, `--reference-policy zero` is explicit and the
+synthetic home approach is disabled. On two complete episodes this avoided a
+bad joint branch that produced hundreds of millimetres of error with the
+`robot_home` reference; it does not change the local-capture default or
+establish safe motion from hardware home. The HO-Cap batch also selects an
+explicit palm-to-TCP rotation from single-hand episode metadata (left/right).
+See `docs/2026-10-14-hocap-retarget-full-smoke.md` for measured A/B results.
 
 ## Interchangeable grippers
 

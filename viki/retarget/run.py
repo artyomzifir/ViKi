@@ -69,6 +69,7 @@ class RetargetConfig:
     object_grasp: bool
     object_cube_side_mm: float
     approach_sec: float
+    velocity_limit_scale: float
     collision_pairs: int
     collision_min_distance_m: float
     sequential_baseline: bool
@@ -224,6 +225,7 @@ def config_from_options(
         approach_sec=float(
             _setting(values, "approach_sec", "RETARGET_APPROACH_SEC", 2.0)
         ),
+        velocity_limit_scale=float(values.get("velocity_limit_scale", 1.0)),
         collision_pairs=(
             int(_setting(values, "collision_pairs", "RETARGET_COLLISION_PAIRS", 8))
             if collision_enabled else 0
@@ -251,6 +253,8 @@ def config_from_options(
     out.solver.validate()
     if out.approach_sec < 0.0:
         raise ValueError("approach_sec must be non-negative")
+    if not np.isfinite(out.velocity_limit_scale) or not 1.0 <= out.velocity_limit_scale <= 5.0:
+        raise ValueError("velocity_limit_scale must be finite and in [1, 5]")
     if not np.isfinite(out.table_plane_z_m):
         raise ValueError("table_plane_z_m must be finite")
     if not np.isfinite(out.object_cube_side_mm) or out.object_cube_side_mm <= 0:
@@ -708,6 +712,8 @@ def retarget_episode(
         floor_normal=base_rotation(cfg.base_rpy_deg).T @ np.array([0.0, 0.0, 1.0]),
         floor_offset_m=cfg.table_plane_z_m - float(cfg.base_position[2]),
     )
+    urdf_velocity_limit = kinematics.velocity_limit.copy()
+    kinematics.velocity_limit *= cfg.velocity_limit_scale
     result = solve_trajectory(
         kinematics,
         target_robot_p,
@@ -838,6 +844,11 @@ def retarget_episode(
             np.rad2deg(np.sqrt(np.mean(result.orientation_error_rad ** 2)))
         ),
         "max_joint_velocity_rad_s": float(np.max(np.abs(full_velocity))),
+        "velocity_limit_scale": cfg.velocity_limit_scale,
+        "min_urdf_velocity_limit_margin_rad_s": (
+            float(np.min(urdf_velocity_limit - np.abs(np.diff(full_q, axis=0) / dt)))
+            if len(full_q) > 1 else None
+        ),
         "max_joint_acceleration_rad_s2": float(np.max(np.abs(full_acceleration))),
         "iterations": result.iterations,
         "converged": result.converged,

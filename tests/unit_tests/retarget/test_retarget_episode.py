@@ -58,6 +58,7 @@ def test_retarget_episode_real_ik(tmp_path):
         "collision_enabled": True,
         "collision_pairs": 2,
         "approach_sec": 0.2,
+        "velocity_limit_scale": 1.5,
         "w_orientation": 0.0,
         "sequential_baseline": True,
         "base_position": [0.7, 0.0, 0.0],
@@ -98,6 +99,10 @@ def test_retarget_episode_real_ik(tmp_path):
         assert str(plan["target_position_anchor"]) == "pinch_center"
         assert str(plan["adapter_kind"]) == "user_cylinder"
         metrics = json.loads(str(plan["metrics_json"]))
+        config = json.loads(str(plan["config_json"]))
+        assert config["velocity_limit_scale"] == pytest.approx(1.5)
+        assert metrics["velocity_limit_scale"] == pytest.approx(1.5)
+        assert metrics["min_urdf_velocity_limit_margin_rad_s"] is not None
         assert metrics["reference_policy"] == "robot_home"
         np.testing.assert_allclose(
             metrics["reference_q"],
