@@ -405,19 +405,25 @@ def test_gt_frame_convention_detected_as_camera(imported):
     assert meta["gt_frame_convention"] == "camera"
 
 
-@pytest.mark.parametrize("hands", [("right", "left"), ("left",)])
-def test_non_right_hand_sequences_skipped_not_imported(tmp_path, hands):
+def test_bimanual_sequence_skipped_not_imported(tmp_path):
     root = tmp_path / "hocap"
-    subject, sequence, *_ = build_hocap_tree(root, hands=hands)
-    res = import_sequence(
-        root, subject, sequence, out_root=tmp_path / "datasets" / "hocap",
-    )
-    assert res.skipped and "right-hand single-hand" in res.skipped[0]["reason"]
-    assert res.skipped[0]["hands_in_labels"] == sorted(hands)
-    assert not res.acceptance
-    assert not (tmp_path / "datasets" / "hocap").exists() or not any(
-        (tmp_path / "datasets" / "hocap").iterdir()
-    )
+    subject, sequence, *_ = build_hocap_tree(root, hands=("right", "left"))
+    res = import_sequence(root, subject, sequence, out_root=tmp_path / "episodes")
+    assert res.skipped and "not a single-hand sequence" in res.skipped[0]["reason"]
+    assert res.skipped[0]["hands_in_labels"] == ["left", "right"]
+    assert not (tmp_path / "episodes").exists()
+
+
+def test_left_hand_sequence_imported_with_correct_slot(tmp_path):
+    root = tmp_path / "hocap"
+    subject, sequence, *_ = build_hocap_tree(root, hands=("left",))
+    result = import_sequence(root, subject, sequence, out_root=tmp_path / "episodes")
+    assert not result.skipped
+    meta = json.loads((result.episode_dir / "meta.json").read_text())
+    assert meta["hand"] == "left"
+    with np.load(result.episode_dir / "gt/joints3d_world.npz") as ground_truth:
+        assert str(ground_truth["handedness"]) == "left"
+        assert ground_truth["valid"].any()
 
 
 def test_labels_slots_override_mislabelled_meta(tmp_path):
@@ -445,6 +451,23 @@ def test_reimport_needs_force_and_respects_separate_out_dirs(tmp_path):
     r2 = import_sequence(root, subject, sequence, out_root=out2)
     assert r2.episode_dir != r1.episode_dir
     assert r1.episode_dir.is_dir()  # untouched
+
+
+def test_import_without_media_retains_gt_and_calibration(tmp_path):
+    root = tmp_path / "hocap"
+    subject, sequence, *_ = build_hocap_tree(root)
+    result = import_sequence(root, subject, sequence, out_root=tmp_path / "episodes",
+                             cameras=_SERIALS[:2], write_media=False)
+    raw = result.episode_dir / "raw"
+    assert not list(raw.glob("*.mp4"))
+    assert not list(raw.glob("*_depth"))
+    assert (raw / "timestamps.json").is_file()
+    assert (result.episode_dir / "gt/joints3d_world.npz").is_file()
+    meta = json.loads((result.episode_dir / "meta.json").read_text())
+    assert meta["media_materialized"] is False
+    with pytest.raises(ValueError, match="require materialized"):
+        import_sequence(root, subject, sequence, out_root=tmp_path / "other",
+                        write_media=False, run_pipeline_check=True)
 
 
 def test_manual_camera_override(tmp_path):

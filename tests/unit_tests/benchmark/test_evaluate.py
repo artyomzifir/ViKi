@@ -60,8 +60,12 @@ def test_scores_coverage_and_does_not_count_filled_points_as_observed(scored_epi
     assert camera["matched_joints"] == 42
     assert camera["coverage"] == pytest.approx(2 / 3)
     assert camera["mpjpe_mm"] == pytest.approx(10.0, abs=0.001)
+    assert camera["consecutive_matched_joints"] == 21
+    assert camera["consecutive_coverage"] == pytest.approx(0.5)
+    assert camera["displacement_error_mm"] == pytest.approx(0.0, abs=0.001)
     assert report["rec_per_camera"]["cam_b"]["matched_joints"] == 0
     assert report["rec_per_camera"]["cam_b"]["mpjpe_mm"] is None
+    assert report["rec_per_camera"]["cam_b"]["displacement_error_mm"] is None
     prepared = report["prepare"]
     assert prepared["smoothed_all"]["matched_joints"] == 63
     assert prepared["smoothed_observed"]["matched_joints"] == 42

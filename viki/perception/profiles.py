@@ -13,6 +13,7 @@ from viki.contracts import HAND_LM_COUNT
 
 
 CLEAN_LANDMARKS_V1 = "clean-triangulated-landmarks-v1"
+HOCAP_MEDIAPIPE_TRI_V1 = "hocap-mediapipe-triangulated-v1"
 STABLE_FUSED_HAND_V1 = "stable-fused-hand-v1"
 STABLE_FUSED_HAND_V2 = "stable-fused-hand-v2"
 STABLE_FUSED_HAND_V2_1 = "stable-fused-hand-v2.1"
@@ -198,6 +199,13 @@ _PROFILES = {
         },
     ),
 }
+
+_PROFILES[HOCAP_MEDIAPIPE_TRI_V1] = replace(
+    _PROFILES[CLEAN_LANDMARKS_V1],
+    name=HOCAP_MEDIAPIPE_TRI_V1,
+    description="HO-Cap MediaPipe triangulation in the tag_1 world frame.",
+    coordinate_frame="hocap_tag_1",
+)
 
 # V1 remains byte-for-byte immutable for protected baselines. V2 changes only
 # the interpolator and gripper: linear filling still holds the nearest observed

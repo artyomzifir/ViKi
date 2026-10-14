@@ -59,6 +59,7 @@ class RetargetConfig:
     reference_policy: str
     base_position: tuple[float, float, float]
     base_rpy_deg: tuple[float, float, float]
+    table_plane_z_m: float
     hand_to_ee_translation: tuple[float, float, float]
     hand_to_ee_rpy_deg: tuple[float, float, float]
     gripper: str
@@ -207,6 +208,9 @@ def config_from_options(
         reference_policy=reference_policy,
         base_position=tuple(float(x) for x in base),
         base_rpy_deg=tuple(float(x) for x in base_rpy),
+        table_plane_z_m=float(
+            _setting(values, "table_plane_z_m", "RETARGET_TABLE_PLANE_Z_M", 0.0)
+        ),
         hand_to_ee_translation=tuple(float(x) for x in hand_t),
         hand_to_ee_rpy_deg=tuple(float(x) for x in hand_rpy),
         gripper=physical_gripper.key,
@@ -247,6 +251,8 @@ def config_from_options(
     out.solver.validate()
     if out.approach_sec < 0.0:
         raise ValueError("approach_sec must be non-negative")
+    if not np.isfinite(out.table_plane_z_m):
+        raise ValueError("table_plane_z_m must be finite")
     if not np.isfinite(out.object_cube_side_mm) or out.object_cube_side_mm <= 0:
         raise ValueError("object_cube_side_mm must be positive")
     if out.collision_pairs < 0 or out.collision_min_distance_m < 0.0:
@@ -341,14 +347,20 @@ def _pinch_centers(
     return 0.5 * (thumb + index), finite, anchor_confidence
 
 
-def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
+def load_targets(
+    path: Path, cfg: RetargetConfig, *, source_frame: str = "rig"
+) -> RetargetTargets:
     """Read the canonical cln artifact and make finite batch-solver targets."""
     with np.load(path, allow_pickle=False) as data:
         required = {"timestamps", "positions", "rotations", "valid", "coordinate_frame"}
         missing = sorted(required.difference(data.files))
         if missing:
             raise KeyError(f"{path} is missing cln keys: {', '.join(missing)}")
-        require_rig_frame(data["coordinate_frame"])
+        if source_frame == "hocap_tag_1":
+            if str(np.asarray(data["coordinate_frame"]).item()) != source_frame:
+                raise ValueError("HO-Cap cln must be in hocap_tag_1 coordinates")
+        else:
+            require_rig_frame(data["coordinate_frame"])
         p_key, r_key = cln_pose_keys(data.files, cfg.pose_source)
         # The fallback in cln_pose_keys is deliberate - it keeps old episodes
         # readable - but it is the single field that defines the IK target, and
@@ -460,6 +472,8 @@ def _approach(
     trajectory: np.ndarray,
     seconds: float,
     dt: float,
+    *,
+    derivative_mode: str = "matched",
 ) -> np.ndarray:
     """Blend neutral into the first trajectory sample with matched derivatives.
 
@@ -475,15 +489,15 @@ def _approach(
     if q.ndim != 2 or q.shape[0] == 0 or q.shape[1:] != start.shape:
         raise ValueError("trajectory must have shape (T, len(reference)) with T > 0")
 
-    if len(q) >= 3:
+    if derivative_mode not in {"matched", "velocity", "rest"}:
+        raise ValueError(f"unsupported approach derivative mode {derivative_mode!r}")
+    end_velocity = np.zeros_like(start)
+    end_acceleration = np.zeros_like(start)
+    if derivative_mode == "matched" and len(q) >= 3:
         end_velocity = (-3.0 * q[0] + 4.0 * q[1] - q[2]) / (2.0 * dt)
         end_acceleration = (q[0] - 2.0 * q[1] + q[2]) / (dt * dt)
-    elif len(q) == 2:
+    elif derivative_mode != "rest" and len(q) >= 2:
         end_velocity = (q[1] - q[0]) / dt
-        end_acceleration = np.zeros_like(start)
-    else:
-        end_velocity = np.zeros_like(start)
-        end_acceleration = np.zeros_like(start)
 
     duration = count * dt
     displacement = q[0] - start
@@ -508,19 +522,44 @@ def _velocity_limited_approach(
     """Stretch the approach until every discrete joint velocity is feasible."""
     if minimum_seconds <= 0.0:
         return _approach(reference, trajectory, minimum_seconds, dt)
-    duration = float(minimum_seconds)
     limit = np.asarray(velocity_limit, dtype=np.float64)
     finite_limit = np.isfinite(limit) & (limit > 0.0)
-    for _attempt in range(8):
-        approach = _approach(reference, trajectory, duration, dt)
-        full = np.concatenate((approach, np.asarray(trajectory, dtype=np.float64)), axis=0)
-        if len(full) < 2 or not finite_limit.any():
-            return approach
-        speed = np.abs(np.diff(full, axis=0) / dt)
-        ratio = float(np.max(speed[:, finite_limit] / limit[finite_limit]))
-        if ratio <= 1.0 + 1e-9:
-            return approach
-        duration *= max(1.1, 1.02 * ratio)
+    track = np.asarray(trajectory, dtype=np.float64)
+    if len(track) > 1 and finite_limit.any():
+        track_speed = np.abs(np.diff(track, axis=0) / dt)
+        track_excess = float(
+            np.max(track_speed[:, finite_limit] - limit[finite_limit])
+        )
+        if track_excess > NUMERIC_TOLERANCE:
+            raise RuntimeError(
+                "retarget trajectory itself exceeds joint velocity limits "
+                f"by {track_excess:.12g} rad/s; extending the approach cannot fix it"
+            )
+    for derivative_mode in ("matched", "velocity", "rest"):
+        duration = float(minimum_seconds)
+        for _attempt in range(8):
+            approach = _approach(
+                reference, trajectory, duration, dt,
+                derivative_mode=derivative_mode,
+            )
+            full = np.concatenate((approach, track), axis=0)
+            if len(full) < 2 or not finite_limit.any():
+                return approach
+            speed = np.abs(np.diff(full, axis=0) / dt)
+            ratio = float(np.max(speed[:, finite_limit] / limit[finite_limit]))
+            excess = float(np.max(speed[:, finite_limit] - limit[finite_limit]))
+            if excess <= NUMERIC_TOLERANCE:
+                if derivative_mode != "matched":
+                    logger.warning(
+                        "approach uses %s endpoint derivatives to satisfy joint "
+                        "velocity limits; initial trajectory curvature is too high",
+                        derivative_mode,
+                    )
+                return approach
+            next_duration = min(30.0, duration * max(1.1, 1.02 * ratio))
+            if next_duration <= duration:
+                break
+            duration = next_duration
     raise RuntimeError(
         "could not construct an approach within the robot velocity limits"
     )
@@ -582,8 +621,18 @@ def retarget_episode(
     gripper_cfg = normalize_gripper(cfg.gripper)
     arm_model = _load_robot_description(robot_cfg.description)
     assembly = attach_gripper(arm_model, robot_cfg, gripper_cfg, cfg.adapter)
-    targets = load_targets(ep.cln_npz, cfg)
-    rig_to_calibration = load_rig_to_calibration(ep.raw_dir)
+    metadata = json.loads(ep.meta_path.read_text()) if ep.meta_path.is_file() else {}
+    is_hocap = metadata.get("source") == "hocap"
+    if is_hocap and metadata.get("hocap_world_frame") != "tag_1":
+        raise ValueError("HO-Cap retarget requires the tag_1 world frame")
+    plan_frame = "hocap_tag_1" if is_hocap else CALIBRATION_FRAME
+    targets = load_targets(
+        ep.cln_npz, cfg, source_frame="hocap_tag_1" if is_hocap else "rig"
+    )
+    rig_to_calibration = (
+        np.eye(4, dtype=np.float64)
+        if is_hocap else load_rig_to_calibration(ep.raw_dir)
+    )
     hand_calib_p, hand_calib_r = rig_pose_to_calibration(
         targets.position_rig,
         targets.rotation_rig,
@@ -621,12 +670,13 @@ def retarget_episode(
     target_robot_r = calibration_rotation_to_robot(target_calib_r, cfg.base_rpy_deg)
     if log is not None:
         log(
-            f"{robot_cfg.description}: {len(target_robot_p)} frames in {CALIBRATION_FRAME}, "
+            f"{robot_cfg.description}: {len(target_robot_p)} frames in {plan_frame}, "
             f"target={targets.position_anchor}+palm, base={list(cfg.base_position)}, "
             f"base_rpy_deg={list(cfg.base_rpy_deg)}, "
             f"reference={cfg.reference_policy}, "
             f"tool_point={gripper_cfg.grasp_center_name}, "
-            f"adapter={cfg.adapter.length_m * 1000.0:.1f} mm, floor=z>=0"
+            f"adapter={cfg.adapter.length_m * 1000.0:.1f} mm, "
+            f"table plane=z>={cfg.table_plane_z_m:.4f} m"
         )
     dt = 1.0 / targets.fps
     gripper_opening = gripper_cfg.profile_opening(
@@ -654,9 +704,9 @@ def retarget_episode(
         position_points=assembly.position_points,
         # calibration z = e_z.T (R_calibration_robot p_robot + base_position).
         # Express the same plane in robot coordinates so tilted base poses keep
-        # the physical calibration floor as the hard constraint.
+        # the physical tabletop half-space as the hard constraint.
         floor_normal=base_rotation(cfg.base_rpy_deg).T @ np.array([0.0, 0.0, 1.0]),
-        floor_offset_m=-float(cfg.base_position[2]),
+        floor_offset_m=cfg.table_plane_z_m - float(cfg.base_position[2]),
     )
     result = solve_trajectory(
         kinematics,
@@ -783,6 +833,7 @@ def retarget_episode(
         ),
         "position_rmse_mm": float(np.sqrt(np.mean(result.position_error_m ** 2)) * 1000.0),
         "position_p95_mm": float(np.percentile(result.position_error_m, 95) * 1000.0),
+        "velocity_repair_max_rad": result.velocity_repair_max_rad,
         "orientation_rmse_deg": float(
             np.rad2deg(np.sqrt(np.mean(result.orientation_error_rad ** 2)))
         ),
@@ -801,6 +852,8 @@ def retarget_episode(
             full_margins["floor"] * 1000.0
             if np.isfinite(full_margins["floor"]) else None
         ),
+        "table_plane_z_calibration_m": cfg.table_plane_z_m,
+        "table_plane_coordinate_frame": plan_frame,
         "min_joint_limit_margin_rad": (
             full_margins["joint"]
             if np.isfinite(full_margins["joint"]) else None
@@ -869,7 +922,7 @@ def retarget_episode(
     metrics["sequential_baseline"] = sequential_metrics
     plan = {
         "schema_version": 9,
-        "coordinate_frame": CALIBRATION_FRAME,
+        "coordinate_frame": plan_frame,
         "timestamps": targets.timestamps,
         "fps": targets.fps,
         "dt": dt,
@@ -950,7 +1003,7 @@ def retarget_episode(
         "retarget",
         robot=robot_cfg.description,
         object_grasp=cfg.object_grasp,
-        coordinate_frame=CALIBRATION_FRAME,
+        coordinate_frame=plan_frame,
         target_position_anchor=targets.position_anchor,
         adapter_kind=cfg.adapter.kind,
         adapter_length_mm=cfg.adapter.length_m * 1000.0,

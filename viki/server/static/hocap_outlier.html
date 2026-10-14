@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HO-Cap pose outlier review · ViKi</title>
+  <style>
+    :root { color-scheme: dark; font: 15px system-ui, sans-serif; background: #10151c; color: #e8edf4; }
+    body { margin: 0; }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 14px 20px; background: #17202b; }
+    header h1 { font-size: 18px; margin: 0; }
+    a { color: #8fc9ff; }
+    main { padding: 16px; max-width: 1700px; margin: auto; }
+    #summary { margin-bottom: 12px; color: #bbc9d8; }
+    .view { display: grid; grid-template-columns: minmax(420px, 1.2fr) minmax(350px, 1fr); gap: 12px; }
+    #scene { width: 100%; height: min(60vh, 680px); background: #0d1218; border-radius: 8px; }
+    .photos { display: grid; gap: 10px; }
+    figure { margin: 0; background: #17202b; border-radius: 8px; overflow: hidden; }
+    figure img { display: block; width: 100%; height: calc(min(60vh, 680px) / 2 - 18px); object-fit: contain; }
+    figcaption { padding: 5px 10px; color: #bbc9d8; font-size: 13px; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+    button { background: #29394b; border: 1px solid #4a6076; color: inherit; border-radius: 5px; padding: 6px 10px; cursor: pointer; }
+    #frame { flex: 1; min-width: 240px; }
+    #metrics { font-variant-numeric: tabular-nums; }
+    #chart { width: 100%; height: 100px; background: #17202b; border-radius: 8px; cursor: crosshair; }
+    .legend { margin: 8px 0 12px; color: #bbc9d8; }
+    .predicted { color: #ff6356; } .reference { color: #67d9ef; }
+    @media (max-width: 900px) { .view { grid-template-columns: 1fr; } }
+  </style>
+  <script type="importmap">{"imports":{"three":"/static/js/vendor/three.module.js","three/addons/":"/static/js/vendor/"}}</script>
+</head>
+<body>
+  <header><h1>ViKi · HO-Cap object-pose outlier review</h1><a href="/">Back to ViKi</a></header>
+  <main>
+    <div id="summary">Loading review…</div>
+    <div class="view">
+      <div id="scene"></div>
+      <div class="photos"><figure><img id="camera-0" alt="HO-Cap RGB camera 1"><figcaption id="camera-label-0"></figcaption></figure><figure><img id="camera-1" alt="HO-Cap RGB camera 2"><figcaption id="camera-label-1"></figcaption></figure></div>
+    </div>
+    <div class="toolbar">
+      <button id="play">▶ Play</button><button id="anchor">Anchor</button><button id="before">Before flip</button><button id="peak">Peak error</button>
+      <input id="frame" type="range" min="0" max="0" value="0"><span id="metrics"></span>
+    </div>
+    <div class="legend"><span class="reference">● Published reference</span> · <span class="predicted">● ViKi estimate, aligned once at anchor</span> · red boxes in RGB mark the oracle instance mask. Drag to orbit; scroll to zoom.</div>
+    <canvas id="chart"></canvas>
+    <p>Published masks and semi-automatic HO-Cap poses are used. The graph shows relative rotation drift after one initial alignment, not absolute orientation accuracy. RGB images are sampled; 3-D poses and errors cover every frame.</p>
+  </main>
+  <script type="module" src="/static/js/hocap_outlier.js"></script>
+</body>
+</html>

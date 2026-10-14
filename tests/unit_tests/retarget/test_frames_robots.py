@@ -198,9 +198,13 @@ def test_base_pose_options_are_preserved():
     cfg = config_from_options("ur10", {
         "base_position": [0.7, -0.1, 0.2],
         "base_rpy_deg": [5.0, -10.0, 180.0],
+        "table_plane_z_m": 0.03,
     })
     np.testing.assert_allclose(cfg.base_position, [0.7, -0.1, 0.2])
     np.testing.assert_allclose(cfg.base_rpy_deg, [5.0, -10.0, 180.0])
+    assert cfg.table_plane_z_m == pytest.approx(0.03)
+    with pytest.raises(ValueError, match="table_plane_z_m"):
+        config_from_options("ur10", {"table_plane_z_m": float("nan")})
 
 
 def test_invalid_target_anchor_and_adapter_are_rejected():

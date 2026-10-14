@@ -88,6 +88,23 @@ def _metrics(points: np.ndarray, ground_truth: np.ndarray, eligible: np.ndarray,
         result[f"{name}_mpjpe_mm"] = (
             float(error[:, indices][selected].mean()) if selected.any() else None
         )
+    eligible_steps = eligible[1:] & eligible[:-1]
+    matched_steps = matched[1:] & matched[:-1]
+    displacement_error = np.linalg.norm(
+        (points[1:] - points[:-1]) - (ground_truth[1:] - ground_truth[:-1]),
+        axis=-1,
+    ) * 1000.0
+    step_errors = displacement_error[matched_steps]
+    result["consecutive_matched_joints"] = int(matched_steps.sum())
+    result["consecutive_coverage"] = (
+        float(matched_steps.sum() / eligible_steps.sum()) if eligible_steps.any() else None
+    )
+    result["displacement_error_mm"] = (
+        float(step_errors.mean()) if len(step_errors) else None
+    )
+    result["displacement_p95_mm"] = (
+        float(np.percentile(step_errors, 95)) if len(step_errors) else None
+    )
     return result
 
 

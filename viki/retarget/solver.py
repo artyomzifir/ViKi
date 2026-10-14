@@ -201,6 +201,7 @@ class BatchResult:
     objective_history: tuple[dict[str, float], ...]
     min_collision_margin: float
     min_floor_margin: float
+    velocity_repair_max_rad: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -518,6 +519,57 @@ def _solve_qp(
     return np.asarray(answer, dtype=np.float64)
 
 
+def _repair_velocity_roundoff(
+    trajectory: np.ndarray,
+    q_min: np.ndarray,
+    q_max: np.ndarray,
+    velocity_limit: np.ndarray,
+    dt: float,
+) -> tuple[np.ndarray, float]:
+    """Project a tiny QP velocity residual back into the convex hard limits."""
+    values = np.asarray(trajectory, dtype=np.float64)
+    if len(values) < 2:
+        return values, 0.0
+    limit = np.asarray(velocity_limit, dtype=np.float64)
+    excess = float(np.max(np.abs(np.diff(values, axis=0) / dt) - limit))
+    if excess <= NUMERIC_TOLERANCE:
+        return values, 0.0
+    if excess > 1e-3:
+        raise RuntimeError(
+            f"retarget QP exceeds joint velocity limits by {excess:.12g} rad/s"
+        )
+    lower = np.asarray(q_min, dtype=np.float64)
+    upper = np.asarray(q_max, dtype=np.float64)
+    step = limit * dt
+    clipped = np.clip(values, lower, upper)
+    forward = clipped.copy()
+    backward = clipped.copy()
+    for frame in range(1, len(values)):
+        forward[frame] = np.clip(
+            forward[frame],
+            np.maximum(lower, forward[frame - 1] - step),
+            np.minimum(upper, forward[frame - 1] + step),
+        )
+    for frame in range(len(values) - 2, -1, -1):
+        backward[frame] = np.clip(
+            backward[frame],
+            np.maximum(lower, backward[frame + 1] - step),
+            np.minimum(upper, backward[frame + 1] + step),
+        )
+    repaired = 0.5 * (forward + backward)
+    correction = float(np.max(np.abs(repaired - values)))
+    if correction > 1e-3:
+        raise RuntimeError(
+            f"retarget velocity projection would change a joint by {correction:.12g} rad"
+        )
+    remaining = float(np.max(np.abs(np.diff(repaired, axis=0) / dt) - limit))
+    if remaining > NUMERIC_TOLERANCE:
+        raise RuntimeError(
+            f"retarget velocity projection left {remaining:.12g} rad/s violation"
+        )
+    return repaired, correction
+
+
 def solve_trajectory(
     kinematics: Kinematics,
     target_positions: np.ndarray,
@@ -788,6 +840,16 @@ def solve_trajectory(
             converged = True
             break
 
+    q, velocity_repair_max_rad = _repair_velocity_roundoff(
+        q, kinematics.q_min, kinematics.q_max, kinematics.velocity_limit, dt
+    )
+    if velocity_repair_max_rad:
+        objective_terms = _objective_terms(
+            kinematics, q, positions, rotations, omega, weights, options,
+            d1, d2, q_ref,
+        )
+        objective = objective_terms["total"]
+        objective_history[-1] = objective_terms.copy()
     for t in range(n_frames):
         _set_frame(kinematics, t)
         achieved_p[t], achieved_r[t] = kinematics.pose(q[t])
@@ -825,6 +887,7 @@ def solve_trajectory(
         objective_history=tuple(objective_history),
         min_collision_margin=min_collision,
         min_floor_margin=min_floor,
+        velocity_repair_max_rad=velocity_repair_max_rad,
     )
 
 

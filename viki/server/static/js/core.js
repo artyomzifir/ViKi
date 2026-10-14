@@ -118,6 +118,7 @@ export async function initializeFrontendConfig(config) {
       targetPositionAnchor: config.RETARGET_TARGET_POSITION_ANCHOR ?? 'pinch_center',
       basePosition: config.RETARGET_ROBOT_BASE_POSITION ?? [0, 0, 0],
       baseRpyDeg: config.RETARGET_ROBOT_BASE_RPY_DEG ?? [0, 0, 0],
+      tablePlaneZM: config.RETARGET_TABLE_PLANE_Z_M ?? 0,
       adapterTranslationMm: config.RETARGET_ADAPTER_TRANSLATION_MM ?? [0, 0, 11],
       adapterRpyDeg: config.RETARGET_ADAPTER_RPY_DEG ?? [0, 0, 0],
       adapterRadiusMm: config.RETARGET_ADAPTER_RADIUS_MM ?? 35,

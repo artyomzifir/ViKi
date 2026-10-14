@@ -3,7 +3,9 @@
 The PoC consumes the hand landmarks and palm orientation in `cln.npz` and writes one self-contained
 `plan.h5`. The frame boundary is explicit:
 
-- `cln.npz` has `coordinate_frame == "rig"` (reference-camera rig);
+- Local `cln.npz` has `coordinate_frame == "rig"` (reference-camera rig);
+- HO-Cap episodes explicitly retain `coordinate_frame == "hocap_tag_1"`; the retarget input is already in the published tag_1 world frame, so its input-to-plan transform is identity and the plan keeps `hocap_tag_1`. This path is selected only when episode metadata has `source: hocap` and `hocap_world_frame: tag_1`. It does not relabel HO-Cap as a local rig or reuse a local Kinect anchor;
+- For the offline HO-Cap trajectory benchmark, pass `--approach-sec 0`: the synthetic path from robot home to the first human pose is not part of the recorded demonstration and its safety is not established by the benchmark. The recorded trajectory still undergoes joint, velocity, tabletop and self-collision checks;
 - protected V1 artifacts labelled `robot_base` are recognised as the historical
   metadata bug they are; their arrays still take this same rig-frame path;
 - the episode's `raw/world_anchor.json:T_world_display` maps rig coordinates to
@@ -64,7 +66,8 @@ linear nominal command width). Export schema v4 carries it unchanged.
 This is an **offline geometric experiment**, not a force/contact controller.
 The width is a position command, not measured clamp force; the model may be
 larger than the nominal cube, the phase/contact detection is heuristic, and
-neither object collision nor simulation success is checked. The mode is
+neither object collision nor simulation success is checked. The tabletop
+half-space does not avoid collisions with objects or people. The mode is
 enabled by default for the current cube-transfer setup and supports only
 Robotiq 2F-85 for now. Other tasks must explicitly opt out until their object
 models and grasp policy are supported. See
@@ -167,14 +170,15 @@ Gauss–Newton iteration builds one sparse QP with:
 - fixed Tikhonov damping of each Gauss–Newton QP (the retained configuration
   key is `RETARGET_LM_DAMPING`; this is not adaptive Levenberg–Marquardt);
 - hard joint and velocity limits;
-- a hard calibration-floor half-space (`z >= 0`) for the lowest support point
+- a hard tabletop half-space (`z >= RETARGET_TABLE_PLANE_Z_M`, default `0 m` in the calibration frame) for the lowest support point
   of every movable URDF collision body (arm, adapter and gripper), plus both
   gripper contact centres. Mesh support vertices and primitive dimensions are
   evaluated at the current rotation, with a feasibility-preserving backtracking
   check after every non-linear step. The fixed pedestal is excluded because it
   defines the mounting plane and cannot be changed by IK. The plane is
-  transformed into robot coordinates, so it remains the physical floor even
-  when the base rotates;
+  transformed into robot coordinates, so the configured plane stays fixed even
+  when the base rotates. This is an infinite horizontal plane, not a finite
+  tabletop mesh; set its height from the episode geometry before retargeting;
 - linearised Pink self-collision barriers from URDF collision geometry.
 
 UR continuous joints are optimised as physical joint angles (`nv`), not as

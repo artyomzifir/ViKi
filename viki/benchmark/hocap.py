@@ -1061,7 +1061,7 @@ def colour_encoding_loss(
     }
 
 
-def _run_pipeline_check(ep_dir: Path) -> dict:
+def _run_pipeline_check(ep_dir: Path, hand: str = "right") -> dict:
     """Acceptance criterion 6. Run ``viki extract`` then ``viki prepare`` on the
     imported episode with **no** changes to any existing module, and report the
     ``observations.npz`` row count, per-camera detection counts and the fraction
@@ -1075,7 +1075,7 @@ def _run_pipeline_check(ep_dir: Path) -> dict:
     try:
         from viki.perception.extract import extract_episode
 
-        out["rec_npz"] = extract_episode(ep)
+        out["rec_npz"] = extract_episode(ep, hand=hand)
     except Exception as exc:  # noqa: BLE001
         return {"status": "extract failed", "error": repr(exc)}
     try:
@@ -1206,14 +1206,15 @@ def import_sequence(
     run_backend_check: bool = False,
     run_pipeline_check: bool = False,
     depth_frame: str = "color",
+    write_media: bool = True,
 ) -> ImportResult:
-    """Convert ``<hocap_root>/<subject>/<sequence>`` into a multi-view ViKi episode
-    under ``<out_root>/<subject>_<sequence>_<selected-serials>/`` and run acceptance
-    criteria 1-6. Right-hand single-hand sequences only; left-hand or bimanual
-    sequences are reported as skipped (``ImportResult.skipped``) and no episode
-    is written. Handedness is read from the label slots directly, not trusted
-    from ``meta.yaml``.
+    """Convert one single-hand HO-Cap sequence into a ViKi episode.
+
+    Handedness is read from the label slots rather than trusted from meta.yaml.
+    Bimanual and unannotated sequences are skipped.
     """
+    if not write_media and (run_backend_check or run_pipeline_check):
+        raise ValueError("backend/pipeline checks require materialized episode media")
     hocap_root = Path(hocap_root)
     seq_dir = hocap_root / subject / sequence
     calib_dir = hocap_root / "calibration"
@@ -1242,7 +1243,7 @@ def import_sequence(
 
     present = infer_present_hands(seq_dir, rs_serials, n_frames)
     skipped: list[dict] = []
-    if present != {"right"}:
+    if len(present) != 1:
         why = (
             "no annotated hand found in the labels" if not present
             else f"annotated hand(s) = {sorted(present)}"
@@ -1255,8 +1256,8 @@ def import_sequence(
                 "hands_in_labels": sorted(present),
                 "task_id": task_id,
                 "reason": (
-                    f"not a right-hand single-hand sequence ({why}); left-hand / "
-                    "bimanual / handover sequences are out of scope for the first import"
+                    f"not a single-hand sequence ({why}); bimanual / handover "
+                    "sequences are out of scope"
                 ),
             }
         )
@@ -1272,11 +1273,12 @@ def import_sequence(
             n_gt_frames=0,
             skipped=skipped,
         )
-    hand_slot = _HAND_SLOT["right"]
-    if mano_sides and [s.lower() for s in mano_sides] != ["right"]:
+    hand = next(iter(present))
+    hand_slot = _HAND_SLOT[hand]
+    if mano_sides and [s.lower() for s in mano_sides] != [hand]:
         logger.warning(
-            "hocap-import: meta.yaml mano_sides=%r but labels show only the right "
-            "hand — trusting the labels", mano_sides,
+            "hocap-import: meta.yaml mano_sides=%r but labels show only the %s "
+            "hand — trusting the labels", mano_sides, hand,
         )
 
     extr = load_hocap_extrinsics(calib_dir / "extrinsics" / _extrinsics_filename(meta, calib_dir))
@@ -1303,7 +1305,9 @@ def import_sequence(
     # GT over a reference camera (rs_master) drives the workspace centre + the
     # 28-pair geometry table.
     ref_serial = extr.rs_master if extr.rs_master in rs_serials else rs_serials[0]
-    gt_ref = load_ground_truth(seq_dir, [ref_serial], extr, hand_slot, n_frames)
+    gt_ref = load_ground_truth(
+        seq_dir, [ref_serial], extr, hand_slot, n_frames, handedness=hand
+    )
     n_gt_frames = int(gt_ref.valid.any(axis=1).sum())
 
     pair_rows = pair_geometry_table(
@@ -1340,7 +1344,9 @@ def import_sequence(
         sel_info["selected_pair"] = list(pair)
     sel_info["selected_cameras"] = list(pair)
 
-    gt = load_ground_truth(seq_dir, pair, extr, hand_slot, n_frames)
+    gt = load_ground_truth(
+        seq_dir, rs_serials, extr, hand_slot, n_frames, handedness=hand
+    )
     n_gt_frames = int(gt.valid.any(axis=1).sum())
 
     # ── write the episode directory ──
@@ -1359,8 +1365,11 @@ def import_sequence(
 
     per_cam_meta: dict[str, dict] = {}
     for s in pair:
-        n_col = _transcode_mp4(seq_dir, s, raw_dir / f"{s}.mp4", fps, n_frames)
-        n_dep, dtype_seen = _copy_depth(seq_dir, s, raw_dir / f"{s}_depth", n_frames)
+        if write_media:
+            n_col = _transcode_mp4(seq_dir, s, raw_dir / f"{s}.mp4", fps, n_frames)
+            n_dep, dtype_seen = _copy_depth(seq_dir, s, raw_dir / f"{s}_depth", n_frames)
+        else:
+            n_col, n_dep, dtype_seen = 0, 0, "not materialized"
         cw = int(intrinsics_all[s]["color"]["width"])
         ch = int(intrinsics_all[s]["color"]["height"])
         per_cam_meta[s] = {
@@ -1474,7 +1483,7 @@ def import_sequence(
         }
 
     if run_pipeline_check:
-        acceptance["pipeline_runs"] = _run_pipeline_check(ep_dir)
+        acceptance["pipeline_runs"] = _run_pipeline_check(ep_dir, hand=hand)
     else:
         acceptance["pipeline_runs"] = None
 
@@ -1505,10 +1514,11 @@ def import_sequence(
         "hocap_mano_sides_meta": mano_sides,
         "gt_frame_convention": gt.frame_convention,
         "depth_frame": depth_frame,
+        "media_materialized": bool(write_media),
         "cameras": per_cam_meta,
         "fps": fps,
         "timestamps": "synthetic",
-        "hand": "right",
+        "hand": hand,
         "task": (
             meta.get("task_name")
             or (f"hocap task {task_id}" if task_id is not None else "hocap sequence")

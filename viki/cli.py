@@ -293,6 +293,8 @@ def _cmd_retarget(a) -> None:
             "target_position_anchor": a.target_anchor,
             "base_position": a.base_position,
             "base_rpy_deg": a.base_rpy_deg,
+            "table_plane_z_m": a.table_plane_z_m,
+            "approach_sec": a.approach_sec,
             "adapter_translation_mm": a.adapter_offset_mm,
             "adapter_rpy_deg": a.adapter_rpy_deg,
             "adapter_radius_mm": a.adapter_radius_mm,
@@ -699,6 +701,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     pt.add_argument("--base-position", nargs=3, type=float, default=None)
     pt.add_argument("--base-rpy-deg", nargs=3, type=float, default=None)
+    pt.add_argument("--table-plane-z-m", type=float, default=None)
+    pt.add_argument("--approach-sec", type=float, default=None)
     pt.add_argument("--adapter-offset-mm", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-rpy-deg", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-radius-mm", type=float, default=None)

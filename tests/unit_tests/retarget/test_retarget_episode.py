@@ -62,6 +62,7 @@ def test_retarget_episode_real_ik(tmp_path):
         "sequential_baseline": True,
         "base_position": [0.7, 0.0, 0.0],
         "base_rpy_deg": [0.0, 0.0, 180.0],
+        "table_plane_z_m": 0.02,
     })
 
     assert ep.plan_h5.exists() and stage_done(ep, "retarget")
@@ -106,6 +107,7 @@ def test_retarget_episode_real_ik(tmp_path):
         assert 0.0 <= metrics["target_tool_axis_down_fraction"] <= 1.0
         assert 0.0 <= metrics["achieved_tool_axis_down_fraction"] <= 1.0
         assert metrics["min_floor_margin_mm"] >= -1e-6
+        assert metrics["table_plane_z_calibration_m"] == pytest.approx(0.02)
         assert metrics["min_collision_margin"] >= -1e-7
         assert metrics["min_joint_limit_margin_rad"] >= -1e-7
         assert metrics["min_velocity_limit_margin_rad_s"] >= -1e-7

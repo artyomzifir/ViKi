@@ -1,7 +1,7 @@
 # External hand-pose benchmark connector
 
 The HO-Cap importer was restored from the older `hocap-ingest` branch. It
-converts one **right-hand, single-hand** sequence into ViKi's normal multi-camera
+converts one **left- or right-hand, single-hand** sequence into ViKi's normal multi-camera
 episode layout without importing the GPL-3.0 HO-Cap Toolkit or MANO code.
 The [HO-Cap dataset](https://irvlutd.github.io/HOCap/) itself is CC BY 4.0;
 the authors' hand labels are semi-automatic multi-view MANO estimates, not
@@ -59,7 +59,7 @@ views, each with 2,520/2,520 matched joints. These are historical values
 recovered from the task log: the source archives and generated episodes were
 lost locally. The pair was selected on these same sequences, and the depth
 check still fails on one view. Reacquire source artifacts and rerun before
-claiming a reproducible or held-out benchmark result. The pinned PnP archive
-plan includes 24 right-hand and four left-hand sequences, but the current
-importer still skips left-hand episodes; downloading them does not imply they
-have been evaluated.
+claiming a reproducible or held-out benchmark result. The pinned PnP archive plan includes 24 right-hand and four left-hand
+sequences. The batch protocol and GPU command are in
+[`docs/2026-10-13-hocap-batch-protocol.md`](../../docs/2026-10-13-hocap-batch-protocol.md).
+Downloading alone does not imply that any sequence has been evaluated.
