@@ -6,285 +6,34 @@
 
 The Python implementation separates capture, calibration, perception,
 preparation, retargeting and export. FastAPI serves offline jobs and the
-browser inspection interface; MuJoCo experiments use a separate image. Each
-stage writes a durable episode artifact. The \texttt{rec.npz} hand extraction,
-\texttt{cln.npz} prepared motion, \texttt{object\_models.npz} scene model and
-\texttt{plan.h5} robot plan are not interchangeable evidence. Physical-robot
-replay remains a stub and is not used here.
+browser inspection interface; MuJoCo tools reside in a separate image.
+Each stage writes a durable episode artifact. The \texttt{rec.npz} hand
+extraction, \texttt{cln.npz} prepared motion,
+\texttt{object\_models.npz} scene model and \texttt{plan.h5} robot plan
+represent different stages and are not interchangeable evidence.
+Physical-robot replay is a stub and is not evaluated.
 
-\label{sec:tasks}
-One demonstrator moved a blue $40$~mm cube from a red support cube to a
-green target cube on a $1200\times700$~mm table. The nominal red--green
-separation is $400$~mm. Two hardware-synchronized Azure Kinects, each on an
-independent USB host controller, recorded the demonstrations. The robot is a
-simulated old-generation UR10 with a Robotiq 2F-85 two-finger gripper; no
-physical UR10 was present. The analysis cohort is the 78 nonempty episodes
-listed in \texttt{data/experiments/2026-10-09-full-audit.json}; it is not
-all directories or failed capture attempts. The source episodes share one
-approximately fixed cube arrangement. Local-cohort numbers were computed
-from the then-saved artifacts by \texttt{scripts/build\_thesis\_results.py}.
-Those local source artifacts were subsequently lost; the numerical record
-must be regenerated from a new cohort before a reproducible submission.
+The local apparatus has two Azure Kinect DK cameras on independent USB
+controllers. The intended tabletop task is to transfer a blue cube from
+a red support to a green target, using a simulated old-generation UR10
+with a Robotiq 2F-85 gripper. No physical UR10 is available for this
+study. The earlier local cube recordings and their derived artifacts
+are not available for verification, so no numerical result from that
+campaign is included in this manuscript. In particular, local
+capture-synchronisation, stage-yield, object-model, IK, contact-replay
+and learned-policy results are \emph{not} claimed. A new, preserved
+local cohort would be required to evaluate that end-to-end chain.
 
-\section{Capture and Hand Reconstruction}
-\label{sec:current-results}
+\input{hocap_main_results}
 
-The 78 episodes contain 11,688 paired frame groups with device timestamps
-for both cameras. The absolute device-timestamp gap has a median of
-$155\,\mu\mathrm{s}$, a 95th percentile of $167\,\mu\mathrm{s}$ and a maximum
-of $178\,\mu\mathrm{s}$; none exceeds $1$~ms. This is a pair-timing diagnostic,
-not a bound on RGB--depth exposure differences or 3-D position error. The
-host-arrival \texttt{sync\_bounded} flag measures another clock and must not
-be substituted for the device gap. The large $400\times500$~mm ChArUco
-calibration made cloud overlap visually usable after an earlier small-board
-problem, but no independent measurement certifies millimetre accuracy.
+\section{Downstream Evidence Boundary}
+\label{sec:downstream-boundary}
 
-The multi-view hand stage solved 232,368 of 244,671 joint slots (95.0\%)
-across the 78 episodes. Episode-wise coverage has a median of 97.6\% and
-10th--90th percentiles of 88.9--100.0\%. Seventy-three episodes passed the
-articulated Prepare gate; five retain only partial \texttt{cln.npz}
-checkpoints and are \emph{not} valid prepared demonstrations. In the 73
-completed artifacts, 10,463 of 10,993 frames (95.2\%) carry supported
-geometry. The longest unsupported run per episode has median 3 frames,
-95th percentile 21.2 and maximum 53. These are coverage measurements, not
-absolute hand-pose errors for the local Kinect rig: there is no independent
-motion-capture reference. The separate HO-Cap experiment below measures a
-different capture system against its published annotations.
-
-\begin{table}[htbp]
-\caption{Capture and Hand-Stage Measurements for the 78-Episode Cohort}
-\label{tab:capture-hand}
-\centering\small
-\begin{tabular}{p{69mm}p{53mm}}
-\toprule
-Quantity & Measured value \\
-\midrule
-Paired two-Kinect frame groups & 11,688 in 78 episodes \\
-Device-timestamp pair gap, median / p95 / max & 155 / 167 / 178 $\mu$s \\
-Triangulated hand-joint slots & 232,368 / 244,671 (95.0\%) \\
-Episodes passing articulated Prepare gate & 73 / 78 (93.6\%) \\
-Supported frames among passed episodes & 10,463 / 10,993 (95.2\%) \\
-Longest unsupported run, median / p95 / max & 3 / 21.2 / 53 frames \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{figure}[htbp]
-\centering
-\IfFileExists{figures/capture_and_gates.pdf}{%
-\includegraphics[width=\textwidth]{figures/capture_and_gates.pdf}%
-}{\fbox{\parbox{0.9\textwidth}{Historical figure unavailable after local
-workspace loss. Regenerate from the source episode artifacts before
-submission.}}}
-\caption{Episode inventory and pair-timing distribution. The recovered object
-bar includes independent scratch rebuilds; it is not an additional sequential
-stage after the original object bar. Histogram counts are paired frames, not
-independent recording trials.}
-\label{fig:capture-gates}
-\end{figure}
-
-\section{External HO-Cap Hand-Reference Pilot}
-\label{sec:hocap-results}
-
-Two subject-1 sequences (120 frames each) were imported from HO-Cap, not from
-the local Kinect cube cohort. Screening the 28 camera pairs on these same
-frames selected \texttt{043422252387} and \texttt{105322251225}; all eight
-views were also imported and processed with the same Extract and Prepare
-stages. Table~\ref{tab:hocap-hand} compares absolute 21-joint world-frame
-predictions with the published semi-automatic MANO annotations using
-Section~\ref{sec:hocap-method}. Each row matched all 2,520 annotated joint
-slots. The numbers were recovered from the original run log after the local
-episode artifacts were lost, so this is a historical pilot, not a currently
-reproducible or held-out result.
-
-\begin{table}[htbp]
-\caption{HO-Cap Hand-Joint Pilot: Selected Pair Versus All Eight Views}
-\label{tab:hocap-hand}
-\centering\small
-\begin{tabular}{llrrrr}
-\toprule
-Sequence & Views & Coverage & MPJPE (mm) & P95 (mm) & PCK@20 (\%) \\
-\midrule
-\texttt{170650} & selected pair & 2,520/2,520 & 11.33 & 22.71 & 87.70 \\
-\texttt{170650} & all eight & 2,520/2,520 & 11.34 & 22.17 & 87.50 \\
-\texttt{170105} & selected pair & 2,520/2,520 & 11.67 & 22.80 & 89.80 \\
-\texttt{170105} & all eight & 2,520/2,520 & 10.50 & 20.15 & 94.88 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Adding six cameras reduced MPJPE by 1.17~mm on \texttt{170105} but changed it
-by only 0.004~mm on \texttt{170650}. One view returned no hand observations
-in \texttt{170105}; fusion remained robust to it on this bounded sample.
-The selected pair still fails one colour--depth consistency check. These
-annotations do not ground-truth the local Kinect calibration, object pose,
-retargeting or robot execution.
-
-\section{Object Models, Retargeting and Physics Replay}
-\label{sec:object-replay}
-
-The original object-quality gate accepted 44 of the 73 prepared episodes.
-Independent scratch rebuilds with two-view track recovery raised acceptance
-to 70 of 73, recovering 26 previously rejected episodes without changing
-canonical scene files. Three remained rejected. On these 70 accepted models,
-the median manipulated-object surfel extent along its three object axes was
-$46.2\times47.7\times49.7$~mm; 35 of 70 had at least one axis above 50~mm,
-although the nominal cube edge is 40~mm. A partially visible surfel shell is
-not a measured solid-cube bounding box, but the discrepancy warns against
-treating the model as exact grasp or collision geometry. Cube yaw is also
-symmetry-ambiguous without a marked face.
-
-Forty canonical \texttt{plan.h5} files exist: 38 older-mode and two later v3
-plans. Their estimated-target position RMSE has median 6.2~mm, p90 7.7~mm
-and maximum 122.0~mm. The 122.0~mm plan is an explicit quality failure,
-not evidence of usable IK. The 26 newly recovered object models were
-retargeted in a separate scratch branch: 22 passed its geometric plan gate,
-two failed retargeting and two failed plan quality. Canonical and scratch
-counts have different modes and gates and are not added into one yield rate.
-
-MuJoCo replayed all 24 produced scratch plans with free cube bodies and a
-50~Hz held-command controller. Under the provisional contact model,
-threefold-slowed commands and a simulator-only 0.10~rad grasp-pressure
-command, 18 of 24 passed the released, stable-stack, grasp-integrity and
-contact-physics checks. Among the 22 geometrically accepted plans, 17 also
-passed replay; one geometrically rejected plan happened to stack in this
-simulator but remains rejected for large target error. Robot contact with
-the red support occurred in all 24 replays and green-support contact in two.
-Thus ``physics-successful'' means stable stacking under these \emph{specific}
-assumptions, not collision-free, physically safe or real-robot-valid motion.
-Static old-UR10 wrist forward kinematics agreed between Pinocchio and
-MuJoCo to $4.9\times10^{-16}$~m on 15 saved poses, and the gripper pad-gap
-models agreed within $2.6\times10^{-9}$~m on 15 commands. These are checks
-between software representations of the same robot, not hardware accuracy.
-
-\begin{table}[htbp]
-\caption{Object, Plan and Simulation Outcomes (Distinct Artifact Branches)}
-\label{tab:stage-yield}
-\centering\small
-\begin{tabular}{p{80mm}r}
-\toprule
-Gate or inventory & Count \\
-\midrule
-Prepared episodes / recorded episodes & 73 / 78 \\
-Original object models passing quality / prepared & 44 / 73 \\
-Accepted with independent track-recovery scratch rebuilds & 70 / 73 \\
-Canonical geometric plan files (one 122~mm RMSE outlier) & 40 \\
-Recovered scratch plans passing geometric gate / attempted & 22 / 26 \\
-Produced scratch plans passing MuJoCo stack check / replayed & 18 / 24 \\
-Passing both geometric gate and MuJoCo stack check & 17 / 22 \\
-Robot--red / robot--green support contact among scratch replays & 24 / 24; 2 / 24 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\section{Local Layout Transfer and Learning}
-\label{sec:res-policy}
-
-One successful recovered human-motion plan,
-\texttt{2026-10-06\_11-01-57}, seeded local object-relative variations. Red
-and green cube XY positions were shifted independently; the blue cube began
-on red. Full-path IK and the same MuJoCo replay gate accepted 46 of 48
-sampled layouts at $\pm20$~mm per axis, and 27 of 48 at $\pm50$~mm. These
-are \emph{candidate generation yields} in two different random sweeps, not
-source-diverse human demonstrations or uniform reachability guarantees.
-Every accepted sweep still touched the red support. The 73 successful
-teacher plans from these sweeps were split by layout (51 train, 8 validation,
-14 held-out test), but all derive from the \emph{same} human episode and
-simulator.
-
-A first, plain 53-dimensional state behavioural-cloning policy was trained
-on 17 separate physics-successful source replays, with an episode-level
-12/2/3 train/validation/test split. It achieved \emph{zero} released stacks
-in 17 closed-loop evaluations and did not lift the blue cube. Its low
-offline action-prediction error did not translate into task success.
-The later layout-conditioned model is deliberately narrower: it observes
-normalized time and the \emph{initial}, simulator-provided red/green XY
-offsets, and predicts six UR10 joint-command corrections to the single
-source trajectory. Gripper commands, timing, contact model and source
-reference are fixed. It does not observe images or react to subsequent
-object motion, and it is supervised imitation, not reinforcement learning.
-
-On 14 held-out \emph{teacher-success-selected} layouts, the learned
-correction passed 14/14 replays versus 4/14 for the unchanged source
-commands on the same scenes. With the checkpoint frozen, a second seed
-sampled 30 new $\pm50$~mm layouts \emph{without} teacher-success filtering:
-the learned controller passed 30/30 versus 0/30 for unchanged commands.
-The direct path-IK teacher had accepted only 18 of these 30; its 12
-rejections are solver outcomes, not proofs of physical unreachability.
-Wilson 95\% intervals for the learned success fractions are [0.785, 1.000]
-and [0.886, 1.000], respectively. These intervals condition on the fixed
-policy, simulator and layout sampling scheme; they do not quantify
-between-training-seed, source-motion or dynamics variation. All 14 and all
-30 learned replays still contacted red with the robot.
-
-\begin{table}[htbp]
-\caption{Paired MuJoCo Stack Outcomes for the Layout-Conditioned Policy}
-\label{tab:layout-policy}
-\centering\small
-\begin{tabular}{p{61mm}ccc}
-\toprule
-Layout split & Learned correction & Fixed source & Teacher gate \\
-\midrule
-Training layouts & 51 / 51 & 10 / 51 & Pass selected \\
-Validation layouts & 8 / 8 & 2 / 8 & Pass selected \\
-Held-out layouts & 14 / 14 & 4 / 14 & Pass selected \\
-Independent seed, $\pm50$~mm & 30 / 30 & 0 / 30 & 18 / 30 accepted \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{figure}[htbp]
-\centering
-\IfFileExists{figures/layout_policy_success.pdf}{%
-\includegraphics[width=0.88\textwidth]{figures/layout_policy_success.pdf}%
-}{\fbox{\parbox{0.8\textwidth}{Historical figure unavailable after local
-workspace loss. Regenerate before submission.}}}
-\caption{Matched-layout success for the learned correction and unchanged
-source commands; error bars show Wilson 95\% intervals. The first test is
-conditioned on teacher-success selection; the second seed includes all 30
-sampled layouts. Both use one source motion and one learned checkpoint.}
-\label{fig:layout-policy}
-\end{figure}
-
-\section{Placement Quality and Contact Limitations}
-\label{sec:quality}
-
-A separate \emph{in-sample} search compared four successful variants on
-each of 18 teacher-accepted layouts from the independent seed. Ranking
-combined simulated support-contact impulse, XY centre error and
-orientation errors while keeping released stack success as a hard gate.
-Selecting the lowest-penalty candidate per layout reduced mean blue--green
-centre error from 9.39 to 4.09~mm and cube-symmetry-aware relative
-orientation error from 17.56 to 14.38 degrees. All 18 selected variants
-still stacked, but mean red-contact impulse stayed at 1.222~N\,s and red
-contact occurred in every scene. This is optimization \emph{on those same
-18 layouts}, not a held-out performance estimate; the learned policy was
-not retrained on selected variants.
-
-\begin{figure}[htbp]
-\centering
-\IfFileExists{figures/placement_quality_selection.pdf}{%
-\includegraphics[width=0.62\textwidth]{figures/placement_quality_selection.pdf}%
-}{\fbox{\parbox{0.6\textwidth}{Historical figure unavailable after local
-workspace loss. Regenerate before submission.}}}
-\caption{Blue--green XY centre error before and after per-layout candidate
-selection in 18 already accepted simulator scenes. Points below the dashed
-identity line improved; the selection is in-sample and does not remove red
-support contact.}
-\label{fig:quality}
-\end{figure}
-
-\section{Statistical Interpretation and Remaining Measurements}
-\label{sec:statistics}
-
-Episodes, layout trials, paired frames and joint slots have different units
-and denominators. Frame-level counts are not independent camera-calibration
-replicates. All policy comparisons above use matched layouts and the same
-low-level controller, but there is one selected motion source, one trained
-checkpoint and one provisional physics model. No data-free trained RL policy,
-visual policy, source-disjoint test, real UR10 evaluation or independently
-measured hand/object ground truth is available. Consequently this chapter
-establishes a constrained simulation proof of concept for one task and a
-strong failure diagnostic for support-object clearance; it does \emph{not}
-establish general-purpose learning, collision-free demonstrations or
-Real-to-Sim-to-Real transfer.
+The archived HO-Cap experiment evaluates hand reconstruction and
+first-frame-aligned object tracking on a separate RealSense capture
+system. It does not establish the accuracy of the local Kinect rig or
+produce a validated robot demonstration. Retarget plans, simulator
+contacts, task success and policy learning require their own retained
+inputs, protocols and numerical artifacts before they can be reported
+as results. This chapter therefore ends at the external perception
+evaluation rather than extrapolating an end-to-end success rate.

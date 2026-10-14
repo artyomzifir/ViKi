@@ -38,9 +38,12 @@ have trivially low error, so assess moving segments and occlusions separately.
 `subject_1-20231025_170105` (right hand, 831 frames, eight views) completed.
 The hand benchmark has 100% matched-joint coverage, 11.61 mm MPJPE, and
 21.46 mm p95. Inspecting RGB frames 0, 200, 400, 600, 616, 690, and 830 from
-top and side cameras confirms the four object IDs: `G10_1` orange jar,
-`G10_2` white bottle, `G10_3` red box, `G10_4` blue bottle. The positions
-change in the same temporal order as the images. The orange jar is hand-occluded
+top and side cameras confirms the four object IDs, but the earlier
+appearance-based labels here were imprecise. The official HO-Cap toolkit
+catalog identifies `G10_1` as soup mix, `G10_2` as gel toothpaste,
+`G10_3` as chocolate biscuit sticks, and `G10_4` as body wash
+(https://github.com/IRVLUTD/HO-Cap/blob/main/config/hocap_info.yaml).
+The positions change in the same temporal order as the images. The orange jar is hand-occluded
 at frame 690, where its aligned tracking error peaks at 14.8 mm; the hand's
 index-tip error rises to 33.0 mm. The red box's worst aligned translation error
 is 28.3 mm around frame 616, despite no obvious RGB occlusion there; this is a

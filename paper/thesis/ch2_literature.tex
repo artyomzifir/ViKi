@@ -285,9 +285,9 @@ where an explicit camera-to-robot transform is required, Daniilidis is used.
 \section{Dataset Generation and Downstream Policies}
 \label{sec:lit-dataset}
 
-The LeRobot HDF5 conventions together with ACT and Diffusion Policy constitute
-the default imitation-learning toolchain and define the export target of this
-work. OpenVLA-OFT \cite{openvlaoft} reports that parallel decoding, action
+LeRobot-compatible datasets together with ACT and Diffusion Policy are
+potential downstream consumers. The implemented default export is a NumPy
+trajectory bundle, not a replay-validated LeRobot dataset. OpenVLA-OFT \cite{openvlaoft} reports that parallel decoding, action
 chunking, a continuous action representation and $L1$ regression raise average
 success across four task suites from $76.5$ to $97.1$ per cent while increasing
 action-generation throughput twenty-six-fold, and is therefore a credible
@@ -300,7 +300,8 @@ over training on all demonstrations. Smoothness-based scoring of trajectories
 has been reported to yield comparable gains at a fraction of the data
 \ph{[citation to be confirmed]}. This motivates treating dataset curation as an
 explicit pipeline stage rather than an afterthought, and---in the present
-design---moving it upstream of export in the form of physical replay screening.
+design---eventually screening physical replay before export. This screening
+is not implemented in the current system.
 
 \section{Positioning of the Proposed System}
 \label{sec:positioning}
@@ -363,8 +364,8 @@ The review supports the following methodological choices, which
 Chapter~\ref{ch:method} implements.
 
 \begin{enumerate}[leftmargin=2em]
-  \item \emph{Hand representation.} A wrist pose in $\SE$ with a binary gripper
-        state is adopted, following \cite{opentv, bunny, ace}, and the wrist
+  \item \emph{Hand representation.} A wrist pose in $\SE$ with a continuous
+        gripper opening is adopted, following \cite{opentv, bunny, ace}, and the wrist
         target enters as a weighted soft task following the ablation evidence
         of \cite{keyobj}. Parametric mesh reconstruction is rejected as
         unnecessary for a parallel-jaw target and as an additional error source.
@@ -385,12 +386,11 @@ Chapter~\ref{ch:method} implements.
         camera placement preserves substantial view overlap on the evidence of
         \cite{bulee}; depth is fused with distance, incidence-angle and sensor
         confidence weights following \cite{fusionpatent, zeng}.
-  \item \emph{Synchronisation.} The two Azure Kinects are hardware
-        synchronised; the RealSense, which cannot share their trigger, is
-        aligned through a single host-side monotonic clock following
-        \cite{ridgerun}.
-  \item \emph{Curation.} Dataset curation is treated as an explicit stage and
-        moved upstream of export in the form of physical replay screening,
-        motivated by \cite{demoscore} and by the replay-based validation of
-        \cite{howtransfer}.
+  \item \emph{Synchronisation.} The two Azure Kinects support hardware
+        synchronisation, and the application uses a host-side monotonic
+        clock for cross-device frame pairing \cite{ridgerun}. Local timing
+        accuracy cannot be re-evaluated without the source recordings.
+  \item \emph{Curation.} Physical replay screening is a proposed validation
+        stage, motivated by \cite{demoscore} and \cite{howtransfer}; the
+        current implementation does not perform it.
 \end{enumerate}

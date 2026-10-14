@@ -4,71 +4,55 @@
 \section{Summary}
 \label{sec:summary}
 
-ViKi converts passive two-view RGB-D recordings of a human cube transfer
-into separate hand, object and proposed UR10 trajectory artifacts. A
-geometric plan is not itself a robot demonstration; dynamic replay with
-free objects supplies the stricter simulation test. This thesis reports
-the measured chain on 78 recordings and a local layout-conditioned
-learning experiment rather than promising a later unmeasured result.
+ViKi implements an offline route from multi-view RGB-D capture to
+separate hand, object and candidate robot-plan artifacts. This thesis
+reports the retained, reproducible HO-Cap perception evaluation, not
+an end-to-end robot-learning result. The earlier local cube recordings
+and their downstream artifacts are unavailable, so their numerical
+summaries and derived simulation or policy claims are excluded.
 
 \section{Answers to the Research Questions}
 \label{sec:answers}
 
-\textbf{RQ1: pipeline yield.} Seventy-three of 78 recordings pass the
-articulated hand gate; 44 of those pass the original object-quality gate
-and 70 pass after independent scratch track recovery. Of 26 newly
-recovered scenes, 22 pass geometric retargeting. Seventeen of those 22
-also produce released stable stacks in the provisional MuJoCo replay.
-The branch-specific denominators and the red-support contact in all 24
-replayed scratch plans preclude one unqualified success percentage.
-The external HO-Cap pilot measured 10.50--11.67~mm smoothed hand-joint MPJPE
-against semi-automatic annotations on two short sequences using either the
-selected pair or all eight views; it does not ground-truth the local cube
-recordings or their object and robot trajectories. Its source episodes and
-the local cohort were lost after the pilot and must be reacquired for a
-reproducible final evaluation.
+\textbf{RQ1: pipeline yield.} The external eight-view HO-Cap evaluation
+completed on 28 selected sequences and 29,706 frames. Its prepared hand
+tracks have 10.79~mm matched-joint-weighted MPJPE against the published
+semi-automatic reference, with 623,826/623,826 valid joints matched.
+For 112 named object tracks, macro-mean relative translation and rotation
+drift are 5.44~mm and 7.58 degrees after first-frame alignment and with
+published instance masks. Large orientation failures remain, including
+112.60 degrees mean error on one projector-remote track. These data
+quantify external perception, not the local Kinect-to-robot pipeline
+yield or absolute object pose accuracy.
 
-\textbf{RQ2: local demonstration generation.} One recovered human
-motion generated 46 successful simulator variants in a 48-layout
-$\pm20$~mm sweep and 27 in an independent 48-layout $\pm50$~mm sweep.
-All derive from that one motion and touch the red support. This is
-local, physics-filtered candidate generation, not arbitrary scene or
-robot-configuration transfer.
+\textbf{RQ2: object-aware transfer.} No retained local demonstration
+and matched simulator evaluation supports a claim about physics-validated
+transfer to new cube placements. The question remains open.
 
-\textbf{RQ3: learned correction.} A phase- and initial-layout-conditioned
-model trained on 73 generated variants outperformed unchanged source
-commands on the same 14 held-out teacher-selected layouts (14/14 versus
-4/14) and 30 separately sampled layouts (30/30 versus 0/30). The earlier
-plain state BC failed in all 17 closed-loop trials. The successful model
-retains the source trajectory and observes privileged initial cube
-positions; it is not RL or a vision-based closed-loop policy.
+\textbf{RQ3: learning benefit.} No reproducible comparison against
+a matched no-ViKi learner is available. The benefit of ViKi-derived
+examples or their sample efficiency is not established.
+
+\textbf{RQ4: visual policy.} No evaluated image-conditioned robot policy
+is reported.
 
 \section{Claim Boundary and Next Validation}
 \label{sec:contrib-final}
 
-The evidence supports a camera-to-simulation proof of concept for one
-human source trajectory, local cube-layout changes, one old-UR10/Robotiq
-model and one provisional contact configuration. It does not demonstrate
-collision-free grasping, independent 3-D orientation accuracy,
-source-disjoint generalization, visual-policy performance, benefit over
-a separately trained no-data learner or real-robot transfer. Those
-claims require additional tests rather than a larger number of
-synthetic variants of the same source motion.
-
-A small measurement-only set with known geometry, marked orientation
-and independently held-out human trials is the practical next step
-for the thesis evidence. Support-object clearance and contact-model
-sensitivity need correction before treating a simulated success as a
-robot-ready reference. A physical UR10 evaluation would additionally
-require camera-to-robot registration and hardware safety validation;
-it is not part of the present result.
+The current evidence supports a measurable HO-Cap hand-reconstruction
+result and a conditional, relative object-tracking result. It does
+not validate local camera calibration, complete cube-transfer
+demonstrations, collision-free grasping, physical simulator success,
+policy generalization or real-robot transfer. Re-recording a
+preserved local cohort with explicit calibration controls is necessary
+before testing those claims. Each subsequent retarget, physics and
+learning result must retain its input scenes, protocol and numerical
+outputs so it can be independently checked.
 
 \section{Concluding Remarks}
 \label{sec:remarks}
 
-The result is useful precisely because the stages are not conflated:
-recording completeness, reconstruction coverage, model acceptance,
-geometric IK, dynamic stack success and learning on new layouts are
-reported separately. The local learning result is positive; the
-red-support collisions and failed plain BC are equally important
-boundaries on what ViKi has actually established.
+The distinction between a reconstructed hand, a tracked object, a
+geometric robot plan and a successful manipulation is essential.
+Only the first two have quantitative external evidence in this
+manuscript; the latter stages remain work to evaluate.

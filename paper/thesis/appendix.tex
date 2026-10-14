@@ -28,71 +28,22 @@ $v^{k}_{i,t}$ & detector visibility score \\
 $c^{k}_{i,t}$ & sensor depth confidence \\
 $\rho_\delta$ & Huber loss with transition parameter $\delta$ \\
 $\lambda_v,\lambda_a,\lambda_r$ & velocity, acceleration and posture weights \\
-$g_t$ & binary gripper state, \eqref{eq:gripper} \\
+$g_t$ & continuous gripper opening, \eqref{eq:gripper} \\
 $\tau$ & host-side monotonic timestamp, \eqref{eq:hostclock} \\
 $T$ & number of timesteps in an episode \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\chapter{Exported Dataset Schema}
-\label{app:schema}
+\chapter{Full HO-Cap Perception Results}
+\label{app:hocap}
+Sequence labels use S<subject>/<HHMMSS> from the original HO-Cap identifier.
+The complete unrounded JSON and checksums are preserved in
+\texttt{paper/results/hocap/pre\_retarget/}. Tables in this appendix can
+be regenerated with \texttt{python3 scripts/build\_hocap\_paper\_tables.py};
+the script refuses modified source hashes or an incomplete cohort.
+Object descriptors follow the official HO-Cap toolkit's
+\texttt{config/hocap\_info.yaml} \cite{hocap-catalog}. Hand P95 is per sequence;
+object P95 is per object--sequence track, never pooled across rows.
 
-Each episode is stored as an HDF5 group with the fields listed in
-Table~\ref{tab:schema}. The layout is compatible with LeRobot conventions;
-fields beyond the LeRobot minimum are retained so that curation can be repeated
-downstream without re-recording.
-
-\begin{table}[htbp]
-\caption{Per-Episode Dataset Fields}
-\label{tab:schema}
-\centering
-\small
-\begin{tabular}{lll}
-\toprule
-Field & Shape & Description \\
-\midrule
-\texttt{observation.images.*} & $T\times H\times W\times 3$ & per-camera colour
-  streams \\
-\texttt{observation.state} & $T\times n$ & recorded joint positions from replay \\
-\texttt{action} & $T\times (n{+}1)$ & commanded joint positions and gripper \\
-\texttt{wrist\_pose\_world} & $T\times 4\times 4$ & $\bT^{W}_{H,t}$ \\
-\texttt{wrist\_pose\_object} & $T\times 4\times 4$ & $\bT^{O}_{H,t}$,
-  \eqref{eq:objrel} \\
-\texttt{object\_pose\_world} & $T\times 4\times 4$ & $\bT^{W}_{O,t}$ \\
-\texttt{gripper\_state} & $T$ & binary, \eqref{eq:gripper} \\
-\texttt{confidence} & $T$ & $\omega_t$, \eqref{eq:conf} \\
-\texttt{replay\_residual} & $T$ & controller tracking residual during replay \\
-\texttt{timestamp\_host} & $T$ & host monotonic timestamp, \eqref{eq:hostclock} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\chapter{Solver Configuration}
-\label{app:config}
-
-\begin{table}[htbp]
-\caption{Weights and Solver Parameters Used in the Reported Experiments}
-\label{tab:config}
-\centering
-\small
-\begin{tabular}{lll}
-\toprule
-Parameter & Value & Selection method \\
-\midrule
-$\lambda_v$ (velocity)      & \ph{X.XX} & \ph{[grid search / held-out set]} \\
-$\lambda_a$ (acceleration)  & \ph{X.XX} & \ph{[\dots]} \\
-$\lambda_r$ (posture)       & \ph{X.XX} & \ph{[\dots]} \\
-$\alpha$ (confidence sharpness) & \ph{X.XX} & \ph{[\dots]} \\
-$\delta$ (Huber transition) & \ph{X.XX} & \ph{[\dots]} \\
-$\tau_g$ (gripper threshold, mm) & \ph{XX} & \ph{[\dots]} \\
-LM damping                  & \ph{X.XX} & \ph{[\dots]} \\
-Recording rate (Hz)         & \ph{XX}   & --- \\
-Max replay re-solutions     & \ph{X}    & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\TODO{Weight selection must be described honestly: if weights were tuned on the
-same episodes used for evaluation, say so and report the consequence, or
-re-tune on a held-out split.}
+\input{hocap_evaluation_tables}

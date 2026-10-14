@@ -37,28 +37,27 @@ Manipulation Demonstrations to Robot Manipulators\par}
 \chapter*{Abstract}
 \addcontentsline{toc}{chapter}{Abstract}
 
-ViKi is a research pipeline for converting passively recorded, multi-view
-RGB-D demonstrations of tabletop manipulation into object-centric hand motion
-and candidate trajectories for a robot in simulation. Two Azure Kinect DK
-cameras capture a human moving a 40~mm blue cube from a red support cube to a
-green target cube. Hand and object perception feed an object-aware retargeter
-for an old-generation UR10 with a two-finger gripper. MuJoCo then executes
-and screens the candidate motion under contact dynamics. This separates a
-geometric trajectory proposal from physical success: an inverse-kinematics
-solution alone is not a successful grasp.
+ViKi is an offline research pipeline that transforms multi-view RGB-D
+recordings of tabletop manipulation into hand and object tracks and
+candidate robot trajectories. Its intended local task is a blue-cube
+transfer between two support cubes using two Azure Kinect DK cameras;
+the target embodiment is a simulated old-generation UR10 with a
+two-finger gripper. A geometric robot plan is not itself evidence of
+a physically successful manipulation.
 
-A local 78-episode cohort was audited for capture, hand extraction, object
-reconstruction and retargeting, and a bounded simulator study tested layout
-perturbations and a learned low-dimensional correction. These measurements
-came from one demonstrator and a largely fixed scene; the original local
-recordings and derived artifacts were later lost and must be regenerated
-before reproducible submission. In a separate historical HO-Cap pilot, two
-120-frame sequences gave 10.50--11.67~mm hand-joint MPJPE against published
-semi-automatic MANO annotations for a selected camera pair and all eight
-views, with 2,520/2,520 matched joints per comparison. The pair was selected
-on the same sequences and the annotations do not measure the local Kinect
-rig. No physical-robot experiment, reinforcement-learning result, visual
-policy or Real-to-Sim-to-Real transfer is claimed.
+The reproducible quantitative evaluation in this thesis uses a separate
+eight-view HO-Cap pick-and-place cohort: 28 sequences and 29,706 frames.
+Prepared hand tracks achieve 10.79~mm matched-joint-weighted MPJPE over
+623,826 annotated joint slots. For 112 named object tracks, the macro-mean
+relative translation and rotation drift are 5.44~mm and 7.58 degrees after
+a first-frame reference alignment, conditional on published instance
+masks. Severe orientation outliers remain. The reference annotations
+are semi-automatic, and these scores do not validate the local Kinect
+rig or absolute object localization. Earlier local cube recordings
+and the artifacts derived from them are unavailable; their purported
+capture, retargeting, simulation and learning results are excluded.
+No physical-robot success, policy improvement or Real-to-Sim-to-Real
+transfer is claimed.
 
 \vspace{3mm}
 \noindent\textbf{Keywords:} imitation learning; motion retargeting; inverse
@@ -72,27 +71,28 @@ from human video.
 \addcontentsline{toc}{chapter}{Аннотация}
 \begin{russian}
 
-ViKi --- исследовательский пайплайн преобразования пассивно записанных
-многокамерных RGB-D демонстраций настольной манипуляции в объектно-центричное
-движение кисти и кандидаты траекторий робота для симуляции. Две камеры Azure
-Kinect DK записывают перенос синего кубика с красного опорного кубика на
-зелёный. Оценка позы кисти и объекта передаётся объектно-ориентированному
-ретаргетингу на UR10 с двухпалым захватом; затем MuJoCo проверяет
-кандидатную траекторию с учётом контактов. Геометрически допустимое решение
-обратной кинематики само по себе не доказывает успешного захвата.
+ViKi --- исследовательский офлайн-пайплайн преобразования
+многокамерных RGB-D записей настольной манипуляции в траектории кисти
+и объектов и кандидаты траекторий робота. Планируемая локальная задача
+--- перенос синего кубика между двумя опорными кубиками с записью
+двумя Azure Kinect DK; целевой робот --- моделируемый UR10 с
+двухпалым захватом. Геометрическая траектория сама по себе не
+доказывает успешную манипуляцию в физической симуляции.
 
-Локальный набор из 78 эпизодов был проанализирован по этапам записи,
-восстановления кисти и объекта, ретаргетинга и ограниченных экспериментов в
-симуляции. Данные получены одним демонстратором при почти фиксированной
-расстановке; исходные локальные записи и производные артефакты впоследствии
-были утрачены и требуют повторного сбора для воспроизводимой публикации.
-Отдельный исторический пилот на двух 120-кадровых последовательностях
-HO-Cap дал ошибку суставов кисти 10,50--11,67~мм относительно опубликованной
-полуавтоматической разметки MANO при покрытии 2520/2520 суставов для
-выбранной пары и всех восьми камер. Пара выбрана на тех же данных; результат
-не измеряет точность локального рига Kinect. Работа не заявляет испытаний
-на физическом роботе, обучения с подкреплением, визуальной политики или
-переноса Real-to-Sim-to-Real.
+Воспроизводимая численная оценка в работе выполнена на отдельном
+наборе HO-Cap: 28 последовательностей, 29\,706 кадров и восемь камер.
+Взвешенная ошибка суставов кисти относительно полуавтоматической
+разметки составила 10,79~мм при 623\,826 сопоставленных суставах.
+Для 112 поименованных треков объектов средняя по трекам ошибка
+относительного смещения составила 5,44~мм, поворота --- 7,58 градуса
+после совмещения по первому кадру при использовании опубликованных
+масок. Сильные выбросы ориентации сохранены. Эти оценки не проверяют
+точность локального рига Kinect или абсолютную локализацию объектов.
+Прежние локальные записи с кубиками и производные артефакты
+недоступны для проверки; связанные с ними результаты записи,
+ретаргетинга, симуляции и обучения исключены. Работа не заявляет
+успеха на физическом роботе, улучшения политики или переноса
+Real-to-Sim-to-Real.
 
 \vspace{3mm}
 \noindent\textbf{Ключевые слова:} обучение с имитацией; ретаргетинг движения;

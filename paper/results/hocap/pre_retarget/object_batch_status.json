@@ -1,0 +1,763 @@
+{
+  "revision": "2b24836d5e51ad39e56ed4db3fc0c166e755332e",
+  "profile": "hocap-oracle-v1",
+  "mask_source": "published HO-Cap labels, not an independent segmenter",
+  "sequences": {
+    "subject_1-20231025_165502": {
+      "status": "complete",
+      "episode_name": "subject_1_20231025_165502_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 98.233,
+      "objects": {
+        "G18_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.6839888142170727,
+          "rotation_mean_deg": 1.3216106927978901
+        },
+        "G18_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 7.702046706602284,
+          "rotation_mean_deg": 6.972680273534445
+        },
+        "G18_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.4913337427247835,
+          "rotation_mean_deg": 1.3192723602079954
+        },
+        "G18_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.664619056213758,
+          "rotation_mean_deg": 2.1983283232574387
+        }
+      }
+    },
+    "subject_1-20231025_165807": {
+      "status": "complete",
+      "episode_name": "subject_1_20231025_165807_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 107.634,
+      "objects": {
+        "G15_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.4068341947896883,
+          "rotation_mean_deg": 1.5778224475244642
+        },
+        "G15_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.9981687981085487,
+          "rotation_mean_deg": 3.0198557379799333
+        },
+        "G15_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.1707400187285035,
+          "rotation_mean_deg": 1.2354243856799154
+        },
+        "G15_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 6.018783110170272,
+          "rotation_mean_deg": 10.646593449368899
+        }
+      }
+    },
+    "subject_2-20231022_201942": {
+      "status": "complete",
+      "episode_name": "subject_2_20231022_201942_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 236.889,
+      "objects": {
+        "G06_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 19.387690428574874,
+          "rotation_mean_deg": 1.8956077122781003
+        },
+        "G06_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.5477777204070042,
+          "rotation_mean_deg": 0.6723770495953741
+        },
+        "G06_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 6.423616228754177,
+          "rotation_mean_deg": 7.255288327952031
+        },
+        "G06_4": {
+          "coverage": 0.9967969250480462,
+          "translation_mean_mm": 7.404543485519634,
+          "rotation_mean_deg": 13.027295236140104
+        }
+      }
+    },
+    "subject_7-20231023_162803": {
+      "status": "complete",
+      "episode_name": "subject_7_20231023_162803_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 182.951,
+      "objects": {
+        "G18_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.485557957111321,
+          "rotation_mean_deg": 1.3321477059748668
+        },
+        "G18_2": {
+          "coverage": 0.9862637362637363,
+          "translation_mean_mm": 12.381822939596686,
+          "rotation_mean_deg": 112.59533650880341
+        },
+        "G18_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.9801167008362706,
+          "rotation_mean_deg": 1.0989550695401984
+        },
+        "G18_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.6399379435642234,
+          "rotation_mean_deg": 1.3370654990847919
+        }
+      }
+    },
+    "subject_1-20231025_170105": {
+      "status": "complete",
+      "episode_name": "subject_1_20231025_170105_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 0.0,
+      "objects": {
+        "G10_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.666878591354468,
+          "rotation_mean_deg": 1.547092888113556
+        },
+        "G10_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.567196369648302,
+          "rotation_mean_deg": 11.961947532041904
+        },
+        "G10_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 10.133379491954795,
+          "rotation_mean_deg": 3.5424983570938835
+        },
+        "G10_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.2277080419526438,
+          "rotation_mean_deg": 1.0554738603710951
+        }
+      }
+    },
+    "subject_1-20231025_170650": {
+      "status": "complete",
+      "episode_name": "subject_1_20231025_170650_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 152.495,
+      "objects": {
+        "G04_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.4147737489194032,
+          "rotation_mean_deg": 1.6366681349988061
+        },
+        "G04_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.2110509393593136,
+          "rotation_mean_deg": 1.083331470656354
+        },
+        "G04_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 8.892651059424232,
+          "rotation_mean_deg": 6.017075190035364
+        },
+        "G04_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.7191438187733858,
+          "rotation_mean_deg": 0.3151524917009916
+        }
+      }
+    },
+    "subject_1-20231025_170959": {
+      "status": "complete",
+      "episode_name": "subject_1_20231025_170959_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 89.415,
+      "objects": {
+        "G19_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.408304191109517,
+          "rotation_mean_deg": 4.735367221704301
+        },
+        "G19_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 12.845583519856843,
+          "rotation_mean_deg": 3.406370749428455
+        },
+        "G19_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.951683221693006,
+          "rotation_mean_deg": 5.496809434041414
+        },
+        "G19_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 14.356360776962227,
+          "rotation_mean_deg": 13.018409987868628
+        }
+      }
+    },
+    "subject_2-20231022_201316": {
+      "status": "complete",
+      "episode_name": "subject_2_20231022_201316_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 111.219,
+      "objects": {
+        "G05_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 4.731152126836835,
+          "rotation_mean_deg": 3.2961075049741018
+        },
+        "G05_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.9421822235848009,
+          "rotation_mean_deg": 0.7397591318152608
+        },
+        "G05_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 9.399028361564262,
+          "rotation_mean_deg": 7.81441300774192
+        },
+        "G05_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 6.029856188723979,
+          "rotation_mean_deg": 4.177438341680394
+        }
+      }
+    },
+    "subject_2-20231022_202617": {
+      "status": "complete",
+      "episode_name": "subject_2_20231022_202617_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 161.27,
+      "objects": {
+        "G09_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 11.2699425981232,
+          "rotation_mean_deg": 3.913160141312437
+        },
+        "G09_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 3.9291822772928797,
+          "rotation_mean_deg": 3.1406189087931815
+        },
+        "G09_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.770162499067164,
+          "rotation_mean_deg": 74.03000544016368
+        },
+        "G09_4": {
+          "coverage": 0.998426435877262,
+          "translation_mean_mm": 13.276075108050586,
+          "rotation_mean_deg": 5.17872893107373
+        }
+      }
+    },
+    "subject_2-20231023_163929": {
+      "status": "complete",
+      "episode_name": "subject_2_20231023_163929_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 140.242,
+      "objects": {
+        "G19_1": {
+          "coverage": 0.48804251550044286,
+          "translation_mean_mm": 5.7507057486929,
+          "rotation_mean_deg": 10.553840259376734
+        },
+        "G19_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 9.67067046747777,
+          "rotation_mean_deg": 1.937246365045325
+        },
+        "G19_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.133003985660771,
+          "rotation_mean_deg": 6.375736684012559
+        },
+        "G19_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 10.73617855718241,
+          "rotation_mean_deg": 2.200377776422642
+        }
+      }
+    },
+    "subject_3-20231024_154531": {
+      "status": "complete",
+      "episode_name": "subject_3_20231024_154531_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 242.801,
+      "objects": {
+        "G09_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.933480969010983,
+          "rotation_mean_deg": 2.7694147839699426
+        },
+        "G09_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 6.096564382190102,
+          "rotation_mean_deg": 6.7886375212792816
+        },
+        "G09_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 9.029006040311947,
+          "rotation_mean_deg": 13.817935854434122
+        },
+        "G09_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 7.409036727404587,
+          "rotation_mean_deg": 4.768759937624187
+        }
+      }
+    },
+    "subject_3-20231024_155008": {
+      "status": "complete",
+      "episode_name": "subject_3_20231024_155008_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 163.476,
+      "objects": {
+        "G10_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.5916536611974623,
+          "rotation_mean_deg": 1.931954898038697
+        },
+        "G10_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.548846327325485,
+          "rotation_mean_deg": 3.9356743329601045
+        },
+        "G10_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.666695675285659,
+          "rotation_mean_deg": 1.6989579602315614
+        },
+        "G10_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 4.507055298640284,
+          "rotation_mean_deg": 2.3098784719058414
+        }
+      }
+    },
+    "subject_3-20231024_161209": {
+      "status": "complete",
+      "episode_name": "subject_3_20231024_161209_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 154.452,
+      "objects": {
+        "G16_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.9137776793483476,
+          "rotation_mean_deg": 5.7781042332761325
+        },
+        "G16_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 4.742032448597452,
+          "rotation_mean_deg": 13.932955853058356
+        },
+        "G16_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.8648974162876484,
+          "rotation_mean_deg": 1.9204040417731145
+        },
+        "G16_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 9.374701657087183,
+          "rotation_mean_deg": 9.551304223243905
+        }
+      }
+    },
+    "subject_3-20231024_161937": {
+      "status": "complete",
+      "episode_name": "subject_3_20231024_161937_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 161.214,
+      "objects": {
+        "G19_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 3.1058316044415797,
+          "rotation_mean_deg": 7.245872133773053
+        },
+        "G19_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.977134882020788,
+          "rotation_mean_deg": 1.5216030794519648
+        },
+        "G19_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 3.4962786502526093,
+          "rotation_mean_deg": 7.811771798250811
+        },
+        "G19_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 18.467648375266712,
+          "rotation_mean_deg": 4.653038562285262
+        }
+      }
+    },
+    "subject_3-20231024_162327": {
+      "status": "complete",
+      "episode_name": "subject_3_20231024_162327_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 152.218,
+      "objects": {
+        "G20_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.9886100198277992,
+          "rotation_mean_deg": 0.9344710315357319
+        },
+        "G20_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 4.657544535056775,
+          "rotation_mean_deg": 3.037761110684965
+        },
+        "G20_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.9333246632418075,
+          "rotation_mean_deg": 0.6193988284623491
+        },
+        "G20_4": {
+          "coverage": 0.9521640091116174,
+          "translation_mean_mm": 6.532665023012946,
+          "rotation_mean_deg": 6.575148771153023
+        }
+      }
+    },
+    "subject_3-20231024_162756": {
+      "status": "complete",
+      "episode_name": "subject_3_20231024_162756_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 112.243,
+      "objects": {
+        "G21_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.506265504675595,
+          "rotation_mean_deg": 2.1770469868109905
+        },
+        "G21_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 3.910155808394982,
+          "rotation_mean_deg": 8.222251145844606
+        },
+        "G21_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 10.175114523813289,
+          "rotation_mean_deg": 2.894014646476703
+        },
+        "G21_4": {
+          "coverage": 0.9989429175475687,
+          "translation_mean_mm": 4.701863951466848,
+          "rotation_mean_deg": 4.4627638728648495
+        }
+      }
+    },
+    "subject_4-20231026_163223": {
+      "status": "complete",
+      "episode_name": "subject_4_20231026_163223_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 125.53,
+      "objects": {
+        "G16_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.169944371804412,
+          "rotation_mean_deg": 5.116769206802542
+        },
+        "G16_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 3.7765760068922307,
+          "rotation_mean_deg": 3.9981903035320743
+        },
+        "G16_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 3.584593871326938,
+          "rotation_mean_deg": 10.677287291859962
+        },
+        "G16_4": {
+          "coverage": 0.939297124600639,
+          "translation_mean_mm": 9.751492734549101,
+          "rotation_mean_deg": 9.54681997991835
+        }
+      }
+    },
+    "subject_4-20231026_164812": {
+      "status": "complete",
+      "episode_name": "subject_4_20231026_164812_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 112.953,
+      "objects": {
+        "G21_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.7179697413836803,
+          "rotation_mean_deg": 1.2339637441667293
+        },
+        "G21_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.8573721575816027,
+          "rotation_mean_deg": 6.7384756963100925
+        },
+        "G21_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 15.06187725679152,
+          "rotation_mean_deg": 3.6047367435618813
+        },
+        "G21_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 7.718439901024221,
+          "rotation_mean_deg": 5.294641491746766
+        }
+      }
+    },
+    "subject_5-20231027_112303": {
+      "status": "complete",
+      "episode_name": "subject_5_20231027_112303_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 95.382,
+      "objects": {
+        "G15_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.1203773523853047,
+          "rotation_mean_deg": 1.9111448974621303
+        },
+        "G15_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 17.2430180116403,
+          "rotation_mean_deg": 109.65068631188132
+        },
+        "G15_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.279336880860854,
+          "rotation_mean_deg": 8.275707159526613
+        },
+        "G15_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 4.630751353789905,
+          "rotation_mean_deg": 8.155544555389858
+        }
+      }
+    },
+    "subject_6-20231025_110646": {
+      "status": "complete",
+      "episode_name": "subject_6_20231025_110646_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 165.934,
+      "objects": {
+        "G05_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.755896823420997,
+          "rotation_mean_deg": 1.8325709740163738
+        },
+        "G05_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.7728748597264283,
+          "rotation_mean_deg": 0.6927422373964327
+        },
+        "G05_3": {
+          "coverage": 0.913312693498452,
+          "translation_mean_mm": 5.266826086608061,
+          "rotation_mean_deg": 4.691272686378899
+        },
+        "G05_4": {
+          "coverage": 0.9821981424148607,
+          "translation_mean_mm": 7.223428154652414,
+          "rotation_mean_deg": 9.474223460142753
+        }
+      }
+    },
+    "subject_6-20231025_111118": {
+      "status": "complete",
+      "episode_name": "subject_6_20231025_111118_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 181.473,
+      "objects": {
+        "G06_1": {
+          "coverage": 0.9937106918238994,
+          "translation_mean_mm": 10.018651319543926,
+          "rotation_mean_deg": 2.075422989349771
+        },
+        "G06_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.4869455544606198,
+          "rotation_mean_deg": 5.779530124017939
+        },
+        "G06_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.3282762280977605,
+          "rotation_mean_deg": 2.612661249443383
+        },
+        "G06_4": {
+          "coverage": 0.9630503144654088,
+          "translation_mean_mm": 8.005669989197251,
+          "rotation_mean_deg": 41.23262568366691
+        }
+      }
+    },
+    "subject_6-20231025_112546": {
+      "status": "complete",
+      "episode_name": "subject_6_20231025_112546_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 207.884,
+      "objects": {
+        "G22_1": {
+          "coverage": 0.9931350114416476,
+          "translation_mean_mm": 6.760849216736224,
+          "rotation_mean_deg": 8.748889562964408
+        },
+        "G22_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.773901720632567,
+          "rotation_mean_deg": 1.4945813767997131
+        },
+        "G22_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.6038770676409301,
+          "rotation_mean_deg": 0.9547833654622587
+        },
+        "G22_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 10.983327747427992,
+          "rotation_mean_deg": 2.4204117873809765
+        }
+      }
+    },
+    "subject_7-20231022_193506": {
+      "status": "complete",
+      "episode_name": "subject_7_20231022_193506_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 243.991,
+      "objects": {
+        "G02_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 7.51114350001707,
+          "rotation_mean_deg": 2.3028995502937417
+        },
+        "G02_2": {
+          "coverage": 0.9964788732394366,
+          "translation_mean_mm": 4.84700167117674,
+          "rotation_mean_deg": 4.642683462593853
+        },
+        "G02_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.1046684889620206,
+          "rotation_mean_deg": 1.1204878780393759
+        },
+        "G02_4": {
+          "coverage": 0.9964788732394366,
+          "translation_mean_mm": 2.8223741544423975,
+          "rotation_mean_deg": 56.572202842051716
+        }
+      }
+    },
+    "subject_8-20231024_180651": {
+      "status": "complete",
+      "episode_name": "subject_8_20231024_180651_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 152.667,
+      "objects": {
+        "G06_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 15.358775968055468,
+          "rotation_mean_deg": 2.048925756983371
+        },
+        "G06_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.8684087456237557,
+          "rotation_mean_deg": 0.7723167616201476
+        },
+        "G06_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 3.037043786265143,
+          "rotation_mean_deg": 2.2345083343378285
+        },
+        "G06_4": {
+          "coverage": 0.9989847715736041,
+          "translation_mean_mm": 5.00615314890313,
+          "rotation_mean_deg": 12.313888413493636
+        }
+      }
+    },
+    "subject_9-20231027_123403": {
+      "status": "complete",
+      "episode_name": "subject_9_20231027_123403_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 182.636,
+      "objects": {
+        "G07_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 4.995251469598363,
+          "rotation_mean_deg": 4.489036407020268
+        },
+        "G07_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.43892460664570854,
+          "rotation_mean_deg": 0.322039791197718
+        },
+        "G07_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.0547748486990909,
+          "rotation_mean_deg": 2.4536593315453765
+        },
+        "G07_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 2.800611784181853,
+          "rotation_mean_deg": 1.8976537109311686
+        }
+      }
+    },
+    "subject_9-20231027_123725": {
+      "status": "complete",
+      "episode_name": "subject_9_20231027_123725_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 149.082,
+      "objects": {
+        "G09_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 11.529564620746209,
+          "rotation_mean_deg": 3.776986503957428
+        },
+        "G09_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 6.253664103132695,
+          "rotation_mean_deg": 4.820531730958307
+        },
+        "G09_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.512891200236884,
+          "rotation_mean_deg": 6.889108960233142
+        },
+        "G09_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.9218285893047193,
+          "rotation_mean_deg": 1.3206913643691942
+        }
+      }
+    },
+    "subject_9-20231027_124057": {
+      "status": "complete",
+      "episode_name": "subject_9_20231027_124057_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 185.691,
+      "objects": {
+        "G11_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.945524442937431,
+          "rotation_mean_deg": 2.3108322697383716
+        },
+        "G11_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 1.1127288970283407,
+          "rotation_mean_deg": 0.9105440880889222
+        },
+        "G11_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.8087570367634053,
+          "rotation_mean_deg": 0.40048419074427266
+        },
+        "G11_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 12.667636597629421,
+          "rotation_mean_deg": 4.81025799254113
+        }
+      }
+    },
+    "subject_9-20231027_125315": {
+      "status": "complete",
+      "episode_name": "subject_9_20231027_125315_105322251564-043422252387-037522251142-105322251225-108222250342-117222250549-046122250168-115422250549",
+      "elapsed_seconds": 124.491,
+      "objects": {
+        "G21_1": {
+          "coverage": 1.0,
+          "translation_mean_mm": 0.8281732905032771,
+          "rotation_mean_deg": 0.6374124866275827
+        },
+        "G21_2": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.663199045061847,
+          "rotation_mean_deg": 5.882745308265623
+        },
+        "G21_3": {
+          "coverage": 1.0,
+          "translation_mean_mm": 5.533516491859353,
+          "rotation_mean_deg": 1.7655076539902423
+        },
+        "G21_4": {
+          "coverage": 1.0,
+          "translation_mean_mm": 11.1629395964292,
+          "rotation_mean_deg": 3.8946324823311906
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,10 @@
 # Existing cube recordings: numerical audit (2026-10-12)
 
+> Historical record only. The source episodes, calibrations and derived
+> artifacts are unavailable; all numerical claims below are withdrawn from
+> the thesis and cannot currently be verified. See
+> [the withdrawal note](2026-10-14-local-78-retraction.md).
+
 ## Scope and counting rules
 
 Read-only audit of the 78 episodes listed in

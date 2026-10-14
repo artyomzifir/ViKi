@@ -1,0 +1,317 @@
+{
+  "extrinsics_roundtrip": {
+    "max_residual_m": 1.1102230246251565e-15,
+    "max_centre_err_m": 1.2212453270876722e-15,
+    "per_camera": {
+      "105322251564": {
+        "residual_m": 7.771561172376096e-16,
+        "centre_err_m": 6.849500233248632e-16,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 6.849500233248632e-16,
+        "raw_orthonormality_defect": 6.082572523435914e-07
+      },
+      "043422252387": {
+        "residual_m": 3.3306690738754696e-16,
+        "centre_err_m": 6.369057972232327e-17,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 6.369057972232327e-17,
+        "raw_orthonormality_defect": 9.023699768517801e-07
+      },
+      "037522251142": {
+        "residual_m": 1.1102230246251565e-15,
+        "centre_err_m": 1.2212453270876722e-15,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 1.2212453270876722e-15,
+        "raw_orthonormality_defect": 8.721438180536722e-07
+      },
+      "105322251225": {
+        "residual_m": 5.551115123125783e-16,
+        "centre_err_m": 7.447602459741819e-16,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 7.447602459741819e-16,
+        "raw_orthonormality_defect": 7.895469312790837e-07
+      },
+      "108222250342": {
+        "residual_m": 3.3306690738754696e-16,
+        "centre_err_m": 1.1102230246251565e-16,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 1.1102230246251565e-16,
+        "raw_orthonormality_defect": 7.563806383448224e-07
+      },
+      "117222250549": {
+        "residual_m": 4.440892098500626e-16,
+        "centre_err_m": 3.188872858294072e-16,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 3.188872858294072e-16,
+        "raw_orthonormality_defect": 7.177845621209045e-07
+      },
+      "046122250168": {
+        "residual_m": 3.3306690738754696e-16,
+        "centre_err_m": 4.002966042486721e-16,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 4.002966042486721e-16,
+        "raw_orthonormality_defect": 8.551313523952331e-07
+      },
+      "115422250549": {
+        "residual_m": 7.771561172376096e-16,
+        "centre_err_m": 6.568167990716596e-16,
+        "tol_m": 1e-09,
+        "passed": true,
+        "raw_centre_deviation_m": 6.568167990716596e-16,
+        "raw_orthonormality_defect": 8.270654776598718e-07
+      }
+    },
+    "tolerance_m": 1e-09,
+    "passed": true,
+    "note": "check is against the nearest true rotation to HO-Cap's raw 3x3 block; raw_centre_deviation_m is how far that sits from HO-Cap's un-orthonormalised published centre (bounded by their ~float32 publication precision, not by this importer)."
+  },
+  "gt_frame_convention": {
+    "resolved": "camera",
+    "evidence": {
+      "method": "cross-camera agreement",
+      "n_joint_pairs": 882,
+      "camera_hypothesis_spread_mm": 0.00010487576769329336,
+      "world_hypothesis_spread_mm": 504.714604430449,
+      "tol_mm": 8.0
+    }
+  },
+  "cross_view_gt_disagreement": {
+    "n_joint_observations": 18354,
+    "median_mm": 0.00010494934545895356,
+    "p95_mm": 0.00012301042556335536,
+    "max_mm": 0.0001488144299978461
+  },
+  "depth_consistency": {
+    "105322251564": {
+      "serial": "105322251564",
+      "frames_used": 874,
+      "all_joints": {
+        "n": 18354,
+        "median_mm": 10.881125926971436,
+        "p95_mm": 71.37352228164673
+      },
+      "wrist": {
+        "n": 874,
+        "median_mm": 20.580828189849854,
+        "p95_mm": 55.11266589164716
+      },
+      "fingertips": {
+        "n": 4370,
+        "median_mm": 18.12872290611267,
+        "p95_mm": 77.34225392341614
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": true
+    },
+    "043422252387": {
+      "serial": "043422252387",
+      "frames_used": 874,
+      "all_joints": {
+        "n": 18354,
+        "median_mm": 11.44370436668396,
+        "p95_mm": 64.80521857738493
+      },
+      "wrist": {
+        "n": 874,
+        "median_mm": 12.547075748443604,
+        "p95_mm": 21.691408753395073
+      },
+      "fingertips": {
+        "n": 4370,
+        "median_mm": 30.960500240325928,
+        "p95_mm": 80.7201236486435
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": true
+    },
+    "037522251142": {
+      "serial": "037522251142",
+      "frames_used": 862,
+      "all_joints": {
+        "n": 14828,
+        "median_mm": 24.376362562179565,
+        "p95_mm": 93.00903975963591
+      },
+      "wrist": {
+        "n": 859,
+        "median_mm": 70.2483057975769,
+        "p95_mm": 139.86055254936218
+      },
+      "fingertips": {
+        "n": 2655,
+        "median_mm": 11.05421781539917,
+        "p95_mm": 58.61424803733822
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "105322251225": {
+      "serial": "105322251225",
+      "frames_used": 874,
+      "all_joints": {
+        "n": 18354,
+        "median_mm": 11.747300624847412,
+        "p95_mm": 70.30940949916837
+      },
+      "wrist": {
+        "n": 874,
+        "median_mm": 23.76815676689148,
+        "p95_mm": 33.47490429878234
+      },
+      "fingertips": {
+        "n": 4370,
+        "median_mm": 20.081907510757446,
+        "p95_mm": 81.57063722610474
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": true
+    },
+    "108222250342": {
+      "serial": "108222250342",
+      "frames_used": 874,
+      "all_joints": {
+        "n": 18354,
+        "median_mm": 29.635757207870483,
+        "p95_mm": 90.79173505306241
+      },
+      "wrist": {
+        "n": 874,
+        "median_mm": 30.59375286102295,
+        "p95_mm": 38.853228092193596
+      },
+      "fingertips": {
+        "n": 4370,
+        "median_mm": 32.66191482543945,
+        "p95_mm": 127.50830650329591
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "117222250549": {
+      "serial": "117222250549",
+      "frames_used": 874,
+      "all_joints": {
+        "n": 18319,
+        "median_mm": 41.14300012588501,
+        "p95_mm": 144.24258470535264
+      },
+      "wrist": {
+        "n": 874,
+        "median_mm": 34.73421931266785,
+        "p95_mm": 69.65768635272971
+      },
+      "fingertips": {
+        "n": 4370,
+        "median_mm": 80.71020245552063,
+        "p95_mm": 185.07812321186066
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "046122250168": {
+      "serial": "046122250168",
+      "frames_used": 527,
+      "all_joints": {
+        "n": 4429,
+        "median_mm": 234.42280292510986,
+        "p95_mm": 462.71296739578247
+      },
+      "wrist": {
+        "n": 306,
+        "median_mm": 87.64773607254028,
+        "p95_mm": 368.23445558547974
+      },
+      "fingertips": {
+        "n": 780,
+        "median_mm": 282.15792775154114,
+        "p95_mm": 480.2694767713547
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "115422250549": {
+      "serial": "115422250549",
+      "frames_used": 872,
+      "all_joints": {
+        "n": 14191,
+        "median_mm": 18.52208375930786,
+        "p95_mm": 94.6962833404541
+      },
+      "wrist": {
+        "n": 872,
+        "median_mm": 25.751620531082153,
+        "p95_mm": 33.36854875087738
+      },
+      "fingertips": {
+        "n": 2761,
+        "median_mm": 20.092785358428955,
+        "p95_mm": 179.8180639743805
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    }
+  },
+  "triangulation_identity": {
+    "n_joints": 18354,
+    "median_mm": 7.851883054854625e-05,
+    "max_mm": 0.00012389040193738765,
+    "pass_threshold_median_mm": 1.0,
+    "passed": true
+  },
+  "reprojection_overlays": {
+    "files": [
+      "gt/overlays/105322251564_000000.png",
+      "gt/overlays/105322251564_000218.png",
+      "gt/overlays/105322251564_000436.png",
+      "gt/overlays/105322251564_000655.png",
+      "gt/overlays/105322251564_000873.png",
+      "gt/overlays/043422252387_000000.png",
+      "gt/overlays/043422252387_000218.png",
+      "gt/overlays/043422252387_000436.png",
+      "gt/overlays/043422252387_000655.png",
+      "gt/overlays/043422252387_000873.png",
+      "gt/overlays/037522251142_000000.png",
+      "gt/overlays/037522251142_000218.png",
+      "gt/overlays/037522251142_000436.png",
+      "gt/overlays/037522251142_000655.png",
+      "gt/overlays/037522251142_000873.png",
+      "gt/overlays/105322251225_000000.png",
+      "gt/overlays/105322251225_000218.png",
+      "gt/overlays/105322251225_000436.png",
+      "gt/overlays/105322251225_000655.png",
+      "gt/overlays/105322251225_000873.png",
+      "gt/overlays/108222250342_000000.png",
+      "gt/overlays/108222250342_000218.png",
+      "gt/overlays/108222250342_000436.png",
+      "gt/overlays/108222250342_000655.png",
+      "gt/overlays/108222250342_000873.png",
+      "gt/overlays/117222250549_000000.png",
+      "gt/overlays/117222250549_000218.png",
+      "gt/overlays/117222250549_000436.png",
+      "gt/overlays/117222250549_000655.png",
+      "gt/overlays/117222250549_000873.png",
+      "gt/overlays/046122250168_000000.png",
+      "gt/overlays/046122250168_000218.png",
+      "gt/overlays/046122250168_000436.png",
+      "gt/overlays/046122250168_000655.png",
+      "gt/overlays/046122250168_000873.png",
+      "gt/overlays/115422250549_000000.png",
+      "gt/overlays/115422250549_000218.png",
+      "gt/overlays/115422250549_000436.png",
+      "gt/overlays/115422250549_000655.png",
+      "gt/overlays/115422250549_000873.png"
+    ]
+  },
+  "colour_encoding_loss": {
+    "status": "skipped",
+    "reason": "run with --backend-check (needs mediapipe + source JPEGs)"
+  },
+  "pipeline_runs": null
+}

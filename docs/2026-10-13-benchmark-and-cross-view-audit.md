@@ -4,6 +4,8 @@
 > HO-Cap sample episodes were lost with the workspace. Values in this report
 > were recovered from the original task log; commands below require the
 > source artifacts to be reacquired before they can reproduce the figures.
+> The local-cohort figures below are withdrawn from the thesis; see
+> [the withdrawal note](2026-10-14-local-78-retraction.md).
 
 ## Newly computed on the existing 78 cube episodes
 

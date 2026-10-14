@@ -4,121 +4,80 @@
 \section{What the Results Establish}
 \label{sec:interpretation}
 
-The 78-episode audit demonstrates an operational camera-to-plan route with
-visible attrition. Five recordings fail the articulated hand gate. Of 73
-prepared episodes, the original object gate accepts 44 and an independent
-track-recovery scratch procedure accepts 70. The 22/26 geometric retarget
-result applies only to the previously rejected and then recovered subset;
-the 40 canonical plan files belong to a different branch. Adding these
-counts into one apparently homogeneous end-to-end percentage would
-misrepresent their selection and different planner modes.
-
-Dynamic execution is no longer merely prospective. Seventeen of 22
-geometrically accepted recovered plans produce released stable stacks in
-the tested MuJoCo model. Yet the robot hits the red support in every one of
-the 24 replayed scratch scenes. Consequently the simulation result is
-evidence for a task predicate under provisional contacts, not for a safe
-collision-free trajectory oracle. The 122~mm canonical target-RMSE outlier
-also shows why solver convergence alone is not a plan-quality gate.
-
-The failed plain BC experiment matters: 17 physics-successful source
-rollouts and low offline action loss did not yield a single closed-loop
-stack. The later 14/14 and 30/30 outcomes are for a \emph{different},
-phase- and initial-layout-conditioned policy that retains a successful
-source command trajectory. It cannot be described as the same BC method
-with a larger dataset. The one source plan itself stacked in 22/22
-near-fixed layouts, exposing how little variation those original scenes
-provided. The learned correction has a measurable advantage over unchanged
-commands on shifted layouts, not over a newly designed geometric controller
-or a separately trained no-ViKi model.
+The retained eight-view HO-Cap evaluation covers 28 selected
+pick-and-place sequences from nine subjects. Prepared 21-joint hand
+predictions match all 623,826 valid reference joint slots, with
+10.79~mm matched-joint-weighted MPJPE against the dataset's published
+semi-automatic MANO fits. This is an external-system perception
+measurement, not evidence that the local Azure Kinect rig has the
+same accuracy. The object evaluation covers 112 named tracks, but it
+uses published instance masks and a reference-assisted first-frame
+SE(3) alignment. Its 5.44~mm translation and 7.58-degree rotation
+macro-means describe relative tracking drift conditional on those
+inputs, not absolute object localization or autonomous segmentation.
 
 \section{Error Sources and Reference Frames}
 \label{sec:errbudget}
 
-The stage metrics use different references and cannot be added as an
-absolute geometric error budget. The separate HO-Cap pilot obtained
-10.50--11.67~mm hand-joint MPJPE on two imported sequences, but its camera
-pair was selected on those same frames and its semi-automatic MANO labels do
-not measure local Kinect calibration, object orientation or robot execution:
+The hand and object numbers cannot be added into an end-to-end geometric
+error budget. The hand score is an absolute comparison in the HO-Cap
+world frame; the object score removes a per-object initial gauge
+difference. Both refer to semi-automatic annotations rather than an
+independent metrology system. The object tracker also receives masks
+generated outside ViKi, and static intervals are included alongside
+manipulation. Thus a small average object drift need not imply a
+sufficiently accurate grasp pose during contact.
 
-\begin{enumerate}[leftmargin=2em]
-  \item \emph{Camera geometry.} The large ChArUco board restored visually
-        useful cloud overlap, but neither a green automatic validation
-        report nor cloud nearest-neighbour agreement proves absolute
-        calibration accuracy. Board scale, coverage, depth calibration and
-        near-field finger returns remain potential biases.
-  \item \emph{Temporal pairing.} The 155~$\mu$s median Kinect
-        device-timestamp gap is small for this cohort, but exposure timing,
-        RGB--depth offsets and rolling object motion may still cause
-        moving-hand disagreement. Host-arrival drift is a separate metric.
-  \item \emph{Perception.} Solved-joint and supported-frame fractions
-        measure coverage, not position accuracy. Object identity and track
-        recovery decide which frames enter the downstream sample. The
-        $46.2\times47.7\times49.7$~mm median surfel extents for a nominal
-        40~mm cube are a concrete model-geometry warning, though surfel
-        bounds are not true solid dimensions.
-  \item \emph{Retargeting.} Position RMSE compares a robot plan to estimated
-        targets generated within the same pipeline. It does not validate
-        the human trajectory or the true cube pose. The red support is not
-        enforced as an obstacle in the current IK.
-  \item \emph{Physical replay.} Pad compliance, friction, cube mass,
-        command slowdown and the simulator-only grasp-pressure bias affect
-        pickup and release. The exceptionally small wrist-FK and gripper-gap
-        discrepancies only verify agreement between software models.
-\end{enumerate}
+The outliers make this distinction operational. The projector remote
+\texttt{G18\_2} has 112.60-degree mean rotation error in one sequence
+at 98.63\% coverage, but only 6.97 degrees in another. The dandelion
+tea and toothpaste box have additional large orientation errors.
+The sauce bottle combines 2.82~mm mean translation error with
+56.57-degree mean orientation error. These tracks remain in the
+aggregate rather than being removed as failures. Symmetry-aware
+orientation scoring was not used; the visual review of the remote
+did not uniquely diagnose the failure. Conversely, the electric
+screwdriver is tracked for only 48.80\% of valid reference frames,
+so its conditional error does not describe the missing half.
 
-Errors need not be independent. Correlated hand and cube offsets can partly
-cancel in an object-relative grasp, while an oversized model can bias both
-grasp side and obstacle clearance. An external calibration target at table
-and carry heights, and a marked asymmetric object for orientation, would
-provide independent checks that the current data cannot supply.
+For the local two-Kinect system, camera geometry, RGB--depth alignment,
+exposure timing and table-height registration remain unquantified in
+this manuscript. The former local numerical summaries cannot be
+rechecked because their source recordings and derived artifacts are
+unavailable. Code paths and visually plausible clouds are not
+substitutes for a preserved evaluation protocol.
 
-\section{Attribution and Statistical Validity}
+\section{Statistical Validity and Attribution}
 \label{sec:validity}
 
-The 14-layout held-out comparison is paired, but the layouts were sampled
-only from teacher-successful cases. The 30-layout independent-seed test
-instead includes all samples in its specified $\pm50$~mm range, including
-12 that the direct path-IK generator rejected. This is a useful robustness
-check on the \emph{frozen} learned checkpoint, not evidence that the rejected
-layouts are physically unreachable. Wilson intervals describe uncertainty
-from finite layout trials under the chosen sampling distribution; they do
-not include training-seed, source-demonstration or physics-model variation.
+The HO-Cap selection is a single-hand pick-and-place subset, not the
+official held-out benchmark split. Subjects and hands are unevenly
+represented: 24 right-hand and four left-hand sequences. Joint slots
+within the same frames and object frames within the same sequence
+are correlated, so their large counts do not imply that many
+independent trials. The two-sequence camera-pair pilot was selected
+on the same development frames and cannot be interpreted as held-out
+evidence. The main eight-view aggregate is descriptive for this
+selected cohort; no causal claim about the benefit of camera count,
+training data or robot embodiment follows from it.
 
-Every one of the 73 teacher layouts shares the same human motion and
-simulator. Layout-disjoint splitting prevents literal leakage of a target
-layout into training but cannot test source-motion generalization. The
-time-conditioned model knows the task phase and source reference. It reads
-simulator-truth cube positions once at the start, so it does not solve
-visual recognition or closed-loop recovery after disturbances. A fixed
-template is a meaningful no-learning comparator, but it is not a trained
-no-demonstration baseline. No causal claim about the benefit of ViKi
-relative to RL from scratch is supported.
-
-The 18-layout placement-quality search is explicitly in-sample:
-variants are selected and assessed on the same scenes. The mean centre
-error improvement is real within those saved replays, but it is not a
-generalization estimate. Its unchanged 1.222~N\,s mean red-contact
-impulse and universal red contact show that better placement alone does
-not fix pickup clearance. The success predicate must be presented with
-these diagnostics, not as a collision-free success rate.
+No surviving local cube dataset supports the previous downstream
+figures. In particular, there is no verifiable local stage yield,
+simulated stacking rate, policy comparison or contact-safety result.
+The current manuscript therefore does not claim an end-to-end
+camera-to-simulation proof of concept or Real-to-Sim-to-Real transfer.
 
 \section{Scope and Implications}
 \label{sec:implications}
 
-For the narrow cube task, passive RGB-D capture can lead to simulated
-stable-stack examples and a learned local correction that outperforms
-unchanged source commands on new placements. This is the completed
-proof-of-concept claim. It neither establishes a generally useful
-trajectory oracle nor a policy deployable on a UR10. Simulation contacts
-and executed states have not been validated against hardware; no
-Real-to-Sim-to-Real transfer is claimed.
-
-The most valuable additional recordings would be \emph{measurement-only}
-controls rather than more repetitions to train the current model:
-held-out large-board poses across the task height, static known geometry
-at both camera ranges, a marked cube or asymmetric object for orientation,
-and disjoint human trials to expose source dependence. These controls
-could quantify errors without motion capture, but they cannot turn
-self-consistency into millimetre ground truth by assertion. Pouring is
-outside the study scope.
+The supported contribution is a reproducible external perception
+assessment, with explicit object identities, coverage, outliers and
+metric limitations, alongside an implemented offline software
+pipeline. The intended cube-transfer experiment remains a research
+question rather than a completed result. A new preserved local
+cohort should include measurement-only controls: known geometry at
+table and carry heights, a marked asymmetric object for orientation,
+and disjoint human trials. Retained simulator rollouts and matched
+no-demonstration baselines would then be needed before reporting
+physical task success or learning benefit. No physical UR10
+evaluation is part of the current evidence.

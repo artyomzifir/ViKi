@@ -7,9 +7,9 @@
 \viki\ is an offline pipeline: demonstrations are recorded, processed and
 exported in distinct stages, with no requirement that any stage run at
 interactive rates. This is a deliberate design choice. Relaxing the real-time
-constraint that shapes teleoperation systems permits global optimisation over
-whole trajectories, iterative refinement, and a validation stage that executes
-on physical hardware---none of which is available to an online system.
+constraint that shapes teleoperation systems permits offline reconstruction
+and robot-plan inspection. Physical replay is a planned validation interface,
+not an implemented or evaluated stage.
 
 The pipeline comprises six stages, shown in Fig.~\ref{fig:pipeline}.
 
@@ -25,11 +25,11 @@ The pipeline comprises six stages, shown in Fig.~\ref{fig:pipeline}.
   \item \emph{Retargeting.} A robot joint trajectory is obtained by minimising
         a single weighted cost functional subject to kinematic and collision
         constraints.
-  \item \emph{Replay validation.} The synthesised trajectory is executed on the
-        physical manipulator; proprioception is recorded and infeasible
-        episodes are rejected.
-  \item \emph{Export.} Surviving episodes are written in a LeRobot-compatible
-        format for downstream policy training.
+  \item \emph{Replay validation (stub).} The interface exists, but no physical
+        robot execution or replay-based acceptance is implemented.
+  \item \emph{Export.} A NumPy trajectory bundle and JSON manifest can be
+        written without implying physical validity; LeRobot export is optional
+        and subject to additional requirements.
 \end{enumerate}
 
 \begin{figure}[htbp]
@@ -39,46 +39,35 @@ The pipeline comprises six stages, shown in Fig.~\ref{fig:pipeline}.
   box/.style={draw, rounded corners=1pt, align=center, font=\footnotesize,
               minimum height=8mm, text width=22mm, inner sep=2pt},
   arr/.style={-{Latex[length=2mm]}, thick}]
-\node[box] (cap) {Capture\\\scriptsize 2$\times$Kinect + RealSense};
+\node[box] (cap) {Capture\\\scriptsize 2$\times$Kinect};
 \node[box, right=of cap] (per) {Perception\\\scriptsize landmarks + fusion};
 \node[box, right=of per] (rep) {Representation\\\scriptsize object-relative $\SE$};
 \node[box, below=8mm of rep] (ret) {Retargeting\\\scriptsize single cost functional};
-\node[box, left=of ret] (val) {Replay\\\scriptsize physical validation};
-\node[box, left=of val] (exp) {Export\\\scriptsize LeRobot / HDF5};
+\node[box, left=of ret] (val) {Replay\\\scriptsize stub};
+\node[box, left=of val] (exp) {Export\\\scriptsize NumPy bundle};
 \draw[arr] (cap) -- (per);
 \draw[arr] (per) -- (rep);
 \draw[arr] (rep) -- (ret);
 \draw[arr] (ret) -- (val);
 \draw[arr] (val) -- (exp);
-\draw[arr] (val.north) -- ++(0,4mm) -| node[pos=0.25, above, font=\scriptsize]
-  {reject / re-solve} (ret.east);
+
 \end{tikzpicture}
 \caption{Stages of the \viki\ pipeline. Capture, perception and representation
-are embodiment-agnostic; retargeting, replay validation and export are
-specific to the target manipulator. The feedback edge indicates that episodes
-failing replay are either re-solved with modified weights or discarded.}
+are embodiment-agnostic; retargeting is specific to the target manipulator.
+Replay is a stub, and export does not certify physical execution.}
 \label{fig:pipeline}
 \end{figure}
 
 \section{Hardware and Workspace}
 \label{sec:hardware}
 
-The capture rig comprises two Azure Kinect DK cameras and one Intel RealSense
-D435i observing a tabletop workspace, with a UR10 manipulator mounted at a
-fixed position relative to that workspace. Reach is the binding constraint on
-this choice rather than payload: with the base offset used here, target poses
-lie between $525$ and $911$~mm from the base, so a UR3, whose reach is
-$500$~mm, cannot cover the demonstrated workspace at all---a substitution
-verified to leave between $12$ and $61$~per cent of every recording
-unreachable, with tracking error on those frames two to three times that on
-reachable ones. The Azure Kinect was selected for the
-primary views because its time-of-flight depth sensing provides substantially
-better range estimation than neural regression from RGB, and because its
-specified error characteristics---random error standard deviation at most
-$17$~mm and systematic error below $11$~mm plus $0.1$ per cent of distance
-\cite{mskinect}---are documented and independently verified \cite{tolgyessy}.
-The RealSense provides a supplementary close-range view at higher depth
-accuracy \cite{intel}.
+The local capture setup uses two Azure Kinect DK cameras observing a
+tabletop workspace. UR10 with a parallel-jaw gripper is the intended
+simulation target, not a physical manipulator mounted in this setup.
+Reachability of the unavailable local demonstrations cannot be quantified.
+The Azure Kinect time-of-flight depth characteristics are documented by the
+vendor \cite{mskinect} and studied independently \cite{tolgyessy}; neither
+source validates the current rig's calibration or fused trajectory accuracy.
 
 The two Kinects are placed to preserve substantial overlap in their fields of
 view. This is a direct consequence of the finding of Bu and Lee \cite{bulee}
@@ -139,10 +128,9 @@ monotonic clock rather than wall-clock time is required, since wall-clock time
 may be adjusted discontinuously by time synchronisation daemons, which would
 corrupt interval computations mid-recording.
 
-Residual alignment jitter is measured rather than assumed
-(Section~\ref{sec:current-results}), and hardware synchronisation of the Kinect pair
-is verified by confirming bounded drift in the inter-camera timestamp
-difference \cite{ridgerun}.
+A future local evaluation must preserve paired device and host timestamps to
+measure alignment jitter and drift. No local synchronisation statistic is
+reported here; the HO-Cap benchmark cannot validate the Kinect rig.
 
 \section{Perception and Multi-View Reconstruction}
 \label{sec:fusion}
@@ -285,19 +273,38 @@ frame, following the convention established for parallel-jaw targets in
 \section{External Hand-Joint Reference Protocol}
 \label{sec:hocap-method}
 
-Two right-hand HO-Cap subject-1 sequences are imported with 120 frames from
-each of eight RealSense cameras. They are separate from the local cube cohort
-and do not measure its Azure Kinect calibration. Published camera poses and
-MANO hand-joint annotations are expressed in one world frame; Extract and
-Prepare run without access to the reference labels. Predicted 21-joint 3-D
-positions are matched by exact imported frame index and synthetic capture
-timestamp, with no root alignment, Procrustes fit, time search or
-reference-guided frame filtering. MPJPE is the mean Euclidean distance over
-finite matched joints; coverage is matched joints divided by all valid
-annotated joints. P95 and PCK@20~mm are reported alongside coverage.
-Partially written \texttt{cln.npz} files are excluded unless Prepare marks
-the stage complete. The two-view pair was selected after screening all 28
-pairs on these same sequences, so its scores are in-sample pilot results.
+The main external cohort contains all 28 selected single-hand HO-Cap
+pick-and-place sequences (24 right-hand and four left-hand, 29,706 frames)
+from the pinned HO-Cap mirror revision recorded in the archived batch
+status. All eight RealSense RGB-D views are processed with MediaPipe observations,
+calibrated triangulation and the frozen \texttt{hocap-mediapipe-triangulated-v1}
+profile. The HoloLens stream is excluded. These sequences are separate from
+the local Kinect cube cohort and cannot validate its calibration. Published
+semi-automatic MANO 21-joint positions are transformed into the
+\texttt{hocap\_tag\_1} frame. Extract and Prepare do not use the reference
+hand labels. Predictions are paired by exact frame index and synthetic
+capture timestamp, without root alignment, Procrustes fit, temporal search
+or reference-guided filtering. MPJPE is the mean Euclidean error over finite
+matched joints; coverage is matched joints divided by valid reference joints.
+We report PCK@20/50~mm and the per-sequence 95th percentile alongside MPJPE.
+The aggregate MPJPE and PCK are weighted by matched joint counts; an
+aggregate P95 cannot be recovered from per-sequence quantiles. Incomplete
+Prepare stages are excluded.
+
+For each of the four named objects in a sequence, a separate tracker receives
+\emph{published instance masks} and depth from the eight views. It does not
+predict segmentation. Model confidence must reach 0.35. A single
+right-multiplied object-local SE(3) transform is fit at the first confident
+frame using the published object pose. Later matched frames are scored by
+translation distance and geodesic SO(3) angle in the same world frame;
+coverage is tracked frames divided by valid reference frames. Thus these are
+\emph{relative tracking-drift} scores conditional on oracle masks and a
+reference-assisted first-frame gauge choice, not absolute 6-DoF localization.
+No symmetry-equivalent orientation metric or moving-only subset is applied.
+The 28-scene selection is a task-and-handedness subset, not an official
+held-out HO-Cap benchmark split. Earlier two-sequence, 120-frame two-versus-
+eight-view results remain a development pilot: its camera pair was selected
+on the same frames and cannot be treated as held-out evidence.
 
 \section{Object-Centric Representation}
 \label{sec:objcentric}
@@ -409,28 +416,20 @@ Equation \eqref{eq:conf} as written admits a frame whose palm was only
 partially observed: a mean over four terms is non-zero whenever one of them is,
 so a palm with a single triangulated landmark still contributes at roughly a
 quarter weight, and the orientation it contributes was fitted partly through
-interpolated points. Measured across five recordings, between 45 and 61 per
-cent of the frames carrying non-zero weight had an incompletely observed palm.
-A stricter variant zeroes the frame unless every landmark in $\mathcal{I}$ was
-triangulated,
+interpolated points. A stricter diagnostic variant zeroes the frame unless every landmark in
+$\mathcal{I}$ was triangulated,
 \begin{equation}
   \omega^{\text{strict}}_t \;=\;
   \omega_t \cdot
   \mathbb{1}\!\left[\,\forall i \in \mathcal{I}:\; \text{$i$ triangulated}\,\right].
   \label{eq:confstrict}
 \end{equation}
-Both are reported, because the stricter form is not uniformly better: it
-removes a fabrication, but it also removes between 45 and 61 per cent of the
-weighted frames, and the measurements in Chapter~\ref{ch:disc} show the
-solver drifting further from the target for want of the support the fabricated
-frames were supplying. Recovering that support---rather than reinstating the
-fabrication---is identified as future work in
-Section~\ref{sec:implications}. The construction
-is the offline analogue of the distance-dependent switching weights used in
-online teleoperation retargeting \cite{opentv}: frames in which the hand is
-partially occluded or poorly observed exert proportionally less influence on
-the solution, and the smoothness terms carry the trajectory through them
-instead of the data term dragging it toward a spurious observation.
+This variant is a proposed diagnostic, not a measured improvement in the
+available evidence. It trades observation support for stricter provenance;
+a retained local cohort is needed to quantify the effect on tracking and
+coverage. The construction is analogous to distance-dependent switching
+weights in online teleoperation retargeting \cite{opentv}: poorly observed
+frames should exert less influence than well-observed frames.
 
 \subsection{Robustification}
 
@@ -491,42 +490,21 @@ $\lambda_v$ and $\lambda_a$.
 \section{Replay Validation}
 \label{sec:replay}
 
-Synthesised trajectories are executed on the physical manipulator before the
-dataset is finalised. The stage serves three purposes.
-
-First, it filters infeasibility. A trajectory may satisfy
-\eqref{eq:cjoint}--\eqref{eq:ccoll} in the kinematic model and still fail on
-hardware through controller tracking limits, unmodelled collisions or workspace
-boundary conditions. Such episodes are rejected rather than exported.
-
-Second, it closes the embodiment gap at the source. The proprioceptive states
-recorded during replay are those the robot actually attained, not those the
-optimiser predicted. Exporting the recorded rather than the synthesised states
-means the dataset contains honest observation--action pairs from the target
-embodiment, which is precisely the property that teleoperated datasets possess
-by construction and that naive video-derived datasets lack.
-
-Third, it provides a curation signal. Episodes are ranked by tracking residual
-during replay, and the ranking is available to downstream consumers as a
-quality score, in the spirit of rollout-based demonstration curation
-\cite{demoscore} but applied before rather than after policy training.
-
-Failure of an episode triggers either rejection or re-solution of
-\eqref{eq:cost} with modified weights---typically an increased $\lambda_v$ or a
-relaxed data weight in the region of failure---as indicated by the feedback
-edge in Fig.~\ref{fig:pipeline}. The number of re-solution attempts is bounded
-to prevent overfitting the trajectory to the replay controller.
+Physical replay remains an interface stub: no robot execution, measured
+proprioception, contact outcome, or controller tracking residual is available.
+Kinematic plans must not be presented as replay-validated demonstrations.
+Simulator or physical validation would require recorded execution, contact
+checks, explicit success criteria, and rejection of failed episodes; these
+results are not part of the present evidence.
 
 \section{Dataset Export}
 \label{sec:export}
 
-Surviving episodes are written in a LeRobot-compatible HDF5 layout. Each
-episode contains the synchronised camera streams, the recorded joint states and
-gripper states from replay, the object-relative and workspace-anchored wrist
-trajectories, per-frame confidence weights, and the replay tracking residual.
-Retaining the confidence weights and residuals in the exported artefact allows
-downstream curation to be repeated with different thresholds without
-re-recording.
+The implemented default export writes a self-contained NumPy trajectory bundle
+and a JSON manifest. It does not imply physical replay or outcome screening.
+An optional LeRobot-format export has additional eligibility requirements and
+dependencies; neither format makes an unvalidated plan a physical
+demonstration.
 
 \section{Assumptions and Simplifications}
 \label{sec:assumptions}
@@ -544,13 +522,8 @@ Section~\ref{sec:implications}.
         body of its own between the flange and that point, and the whole
         assembly must stay above the workspace plane. For tasks performed
         against the table surface the demonstrated pose can therefore be
-        kinematically unreachable even when the arm's reach is ample: in one
-        recording the target sits a median of $36$~mm above the plane while the
-        achieved tool point is held $87$--$145$~mm above it, and the resulting
-        vertical gap accounts for roughly $70$~per cent of the squared tracking
-        error. Improving perception makes this discrepancy more visible, not
-        less, because interpolation had been smoothing the lowest excursions
-        upward.
+        kinematically unreachable even when the arm's reach is ample. The
+        size of this gap requires evaluation on retained source episodes.
   \item \emph{Rigid objects.} The object-relative representation
         \eqref{eq:objrel} presupposes a rigid body with a well-defined pose.
         Deformable objects would require a flow-based representation
