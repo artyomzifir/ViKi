@@ -77,7 +77,7 @@ export function mount(view) {
         </select></div>
         <div class="cfg-row"><label>Position anchor</label><select data-role="target-anchor">
           <option value="pinch_center">thumb–index midpoint</option>
-          <option value="wrist">wrist (legacy)</option>
+          <option value="wrist">fitted wrist</option>
         </select></div>
         <div class="cfg-row"><label>Gripper</label><select data-role="gripper"></select></div>
         <div class="hint" data-role="gripper-meta">physical URDF · continuous opening</div>
@@ -162,7 +162,7 @@ export function mount(view) {
   });
   root.querySelector('[data-role="pose-source"]').value = S.poseSource || 'landmarks';
   root.querySelector('[data-role="reference-policy"]').value = S.referencePolicy || 'robot_home';
-  root.querySelector('[data-role="target-anchor"]').value = S.targetPositionAnchor || 'pinch_center';
+  root.querySelector('[data-role="target-anchor"]').value = S.targetPositionAnchor || 'wrist';
   ctl.onLayerChange(l => sessionSet('retargetLayers', l));
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);

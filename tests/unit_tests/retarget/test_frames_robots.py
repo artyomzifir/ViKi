@@ -146,7 +146,7 @@ def test_default_target_is_thumb_index_midpoint_with_palm_orientation(tmp_path):
         landmark_confidence=landmark_confidence,
         coordinate_frame="rig",
     )
-    targets = load_targets(path, config_from_options("ur10"))
+    targets = load_targets(path, config_from_options("ur10", {"target_position_anchor": "pinch_center"}))
     np.testing.assert_allclose(
         targets.position_rig,
         [[0.25, 0.10, 0.40], [0.27, 0.10, 0.40], [0.29, 0.10, 0.40]],
@@ -170,7 +170,7 @@ def test_default_retarget_config_tracks_orientation_with_explicit_offset():
     assert cfg.weights.orientation == pytest.approx(0.01)
     assert cfg.velocity_limit_scale == pytest.approx(1.0)
     assert cfg.reference_policy == "robot_home"
-    assert cfg.target_position_anchor == "pinch_center"
+    assert cfg.target_position_anchor == "wrist"
     np.testing.assert_allclose(cfg.base_rpy_deg, [0.0, 0.0, 0.0])
     assert cfg.adapter.kind == "user_cylinder"
     assert cfg.adapter.length_m == pytest.approx(0.011)

@@ -96,7 +96,7 @@ def test_retarget_episode_real_ik(tmp_path):
         assert int(plan["schema_version"]) == 9
         np.testing.assert_allclose(plan["base_position_calibration"], [0.7, 0.0, 0.0])
         np.testing.assert_allclose(plan["base_rpy_deg_calibration"], [0.0, 0.0, 180.0])
-        assert str(plan["target_position_anchor"]) == "pinch_center"
+        assert str(plan["target_position_anchor"]) == "wrist"
         assert str(plan["adapter_kind"]) == "user_cylinder"
         metrics = json.loads(str(plan["metrics_json"]))
         config = json.loads(str(plan["config_json"]))
