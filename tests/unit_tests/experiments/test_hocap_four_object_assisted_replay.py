@@ -54,3 +54,20 @@ def test_four_object_trajectory_rejects_non_object_plan(tmp_path):
         plan["metrics_json"][...] = json.dumps({"object_grasp": None})
     with pytest.raises(ValueError, match="lacks an aligned object-aware plan"):
         assemble_object_trajectory(timestamps, paths)
+
+
+def test_single_object_replay_preserves_full_final_plan(tmp_path):
+    timestamps = np.arange(831, dtype=np.int64) * 66667
+    path = _plans(tmp_path, timestamps)[2]
+    expected_joints = np.arange(190 * 6, dtype=float).reshape(190, 6) / 1000
+    expected_drive = np.linspace(0.05, 0.75, 190)
+    with h5py.File(path, "r+") as plan:
+        plan["q"][...] = expected_joints
+        plan["gripper_joint_position"][...] = expected_drive
+    joints, drive, active, segments = assemble_object_trajectory(
+        timestamps[:190], {2: path}, windows=((2, 0, 190),),
+    )
+    np.testing.assert_array_equal(joints, expected_joints)
+    np.testing.assert_array_equal(drive, expected_drive)
+    assert segments[0]["active_window"] == [0, 190]
+    assert set(active) == {0, 2}

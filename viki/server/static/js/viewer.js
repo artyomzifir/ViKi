@@ -109,6 +109,8 @@ async function openVariant(id, variant) {
   const build = root.querySelector('[data-role="build"]');
   status.textContent = 'loading variant…';
   const r = await ctl.loadEpisode(id, episodes, variant);
+  const plan = await api('GET', `/api/pipeline/episode/${encodeURIComponent(id)}/retarget`).catch(() => null);
+  if (plan?.ready) ctl.setRetargetData(plan);
   setPlayIcon(false);
   build.hidden = r.hasCloud;
   const g = r.geo || {};

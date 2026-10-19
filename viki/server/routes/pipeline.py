@@ -1127,7 +1127,18 @@ def _object_model_paths(
     root = ep.intermediates_dir / "segmentation" / profile
     artifact = root / "object_models.npz"
     semantic_cloud = root / "semantic_cloud"
-    if not artifact.is_file() or not semantic_cloud.is_dir():
+    if not artifact.is_file() and profile == "sam2.1_hiera_small":
+        metadata_path = ep.root / "meta.json"
+        try:
+            source = json.loads(metadata_path.read_text()).get("source")
+        except (OSError, ValueError):
+            source = None
+        if source == "hocap":
+            alternative = ep.intermediates_dir / "segmentation" / "hocap-oracle-v1"
+            if (alternative / "object_models.npz").is_file():
+                artifact = alternative / "object_models.npz"
+                semantic_cloud = alternative / "semantic_cloud"
+    if not artifact.is_file():
         raise HTTPException(404, f"no object model for profile {profile!r}")
     return artifact, semantic_cloud
 
@@ -1147,6 +1158,7 @@ async def object_model_meta(
 ):
     """Canonical core/shell surfaces and their complete lightweight tracks."""
     ep = _episode(ep_id)
+    artifact, semantic_cloud = _object_model_paths(ep, profile)
     d = _object_model_archive(ep, profile)
     try:
         object_ids = np.asarray(d["object_ids"], np.int32)
@@ -1190,13 +1202,33 @@ async def object_model_meta(
             "retained_fraction": _finite_nested(retained[:, column]),
             "rotation_information": _finite_nested(rotation_information[:, column]),
             "contact": contact[:, column].tolist(),
+            "mesh_url": (
+                f"/api/pipeline/episode/{ep.id}/object-mesh/{int(object_id)}"
+                f"?profile={artifact.parent.name}"
+                if (artifact.parent / "meshes" / f"object_{int(object_id)}.obj").is_file()
+                else None
+            ),
         })
     return {
         "schema": "viki_object_model_viewer_v1",
-        "profile": profile,
+        "profile": artifact.parent.name,
+        "has_decisions": semantic_cloud.is_dir() and any(semantic_cloud.glob("*.npz")),
         "n_frames": frame_count,
         "objects": objects,
     }
+
+
+@_ep.get("/episode/{ep_id}/object-mesh/{object_id}")
+async def object_model_mesh(ep_id: str, object_id: int, profile: str = "sam2.1_hiera_small"):
+    """Serve an episode-local OBJ aligned to the canonical object-track frame."""
+    if object_id < 0:
+        raise HTTPException(422, "invalid object id")
+    ep = _episode(ep_id)
+    artifact, _ = _object_model_paths(ep, profile)
+    mesh = artifact.parent / "meshes" / f"object_{object_id}.obj"
+    if not mesh.is_file():
+        raise HTTPException(404, f"no mesh for object {object_id}")
+    return FileResponse(mesh, media_type="model/obj")
 
 
 @_ep.get("/episode/{ep_id}/object-model/{frame}")
@@ -1211,6 +1243,8 @@ async def object_model_frame(
     """
     ep = _episode(ep_id)
     _, semantic_cloud = _object_model_paths(ep, profile)
+    if not semantic_cloud.is_dir():
+        raise HTTPException(404, "no semantic-cloud decisions for this object model")
     d = _object_model_archive(ep, profile)
     try:
         offsets = np.asarray(d["candidate_frame_offsets"], np.int64)

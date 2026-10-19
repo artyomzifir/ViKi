@@ -59,8 +59,13 @@ def assemble_object_trajectory(
                 or not np.isfinite(local_joints).all()
                 or not np.isfinite(local_drive).all()):
             raise ValueError(f"object {identifier} lacks an aligned object-aware plan")
-        start = first + int(grasp["prealign_start"])
-        stop = first + min(last - first, int(grasp["phase_bounds"][3]) + 16)
+        if len(windows) == 1 and first == 0 and last == frame_count:
+            # A single full episode plan must pass through unchanged: the
+            # stitched multi-object replay trims only its overlapping phases.
+            start, stop = first, last
+        else:
+            start = first + int(grasp["prealign_start"])
+            stop = first + min(last - first, int(grasp["phase_bounds"][3]) + 16)
         if start >= stop or np.isfinite(joints[start:stop]).any():
             raise ValueError("object-aware phase windows overlap or are empty")
         joints[start:stop] = local_joints[start - first:stop - first]
@@ -97,9 +102,10 @@ def replay(
     plan_paths: dict[int, Path] | None = None,
     attach_on_any_pad: bool = False,
     windows: tuple[tuple[int, int, int], ...] = WINDOWS,
+    video_camera_distance: float = 1.25,
 ) -> dict:
-    if time_scale <= 0:
-        raise ValueError("time scale must be positive")
+    if time_scale <= 0 or video_camera_distance <= 0:
+        raise ValueError("time scale and video camera distance must be positive")
     require_hand_fit_clean(episode)
     plan_paths = dict(DEFAULT_PLANS if plan_paths is None else plan_paths)
     track_path = episode / "intermediates/segmentation/hocap-oracle-v1/object_models.npz"
@@ -110,8 +116,9 @@ def replay(
         final_positions = np.asarray(track["translation_world"][-1], dtype=float)
         final_rotations = np.asarray(track["rotation_world_object"][-1], dtype=float)
         if (len(track["translation_world"]) != len(timestamps)
-                or set(identifiers) != set(plan_paths)):
-            raise ValueError("expected aligned plans for every tracked object")
+                or not set(plan_paths).issubset(set(identifiers))
+                or set(plan_paths) != {identifier for identifier, _, _ in windows}):
+            raise ValueError("expected an aligned object-aware plan for every replay window")
     with np.load(gt_path, allow_pickle=False) as ground_truth:
         names = [str(name) for name in ground_truth["object_ids"]]
     object_names = {identifier: next(
@@ -150,7 +157,7 @@ def replay(
                 mesh_hashes[name] = hashlib.sha256(content).hexdigest()
                 mesh_paths[identifier] = Path(directory) / name
                 mesh_paths[identifier].write_bytes(content)
-        selected_id = identifiers[0]
+        selected_id = windows[0][0]
         model, geometry = _scene(
             plan_paths[selected_id], track_path, Path("models"), selected_id, 0.2,
             rubber_pads=True, all_objects=True, mesh_path=mesh_paths[selected_id],
@@ -223,7 +230,7 @@ def replay(
                 camera = mujoco.MjvCamera()
                 camera.type = mujoco.mjtCamera.mjCAMERA_FREE
                 camera.lookat[:] = center
-                camera.distance = 1.25
+                camera.distance = video_camera_distance
                 camera.azimuth = azimuth
                 camera.elevation = -35.0
                 cameras.append(camera)
@@ -350,6 +357,7 @@ def replay(
         "robot": robot_key,
         "episode": str(episode), "frame_count": len(joints), "frames_reached": frame_cursor,
         "time_scale": time_scale, "physics_time_s": float(data.time),
+        "video_camera_distance": video_camera_distance,
         "trajectory": str(trajectory_path), "segments": segments,
         "mesh_archive": str(archive_path), "mesh_sha256": mesh_hashes,
         "collision_geometry": "official mesh convex hulls",

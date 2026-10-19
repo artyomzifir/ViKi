@@ -124,3 +124,28 @@ def test_object_model_route_rejects_retired_schema(tmp_path, monkeypatch):
     with pytest.raises(HTTPException, match="unsupported object-model schema") as exc:
         asyncio.run(object_model_meta(ep.id))
     assert exc.value.status_code == 422
+
+
+def test_hocap_track_without_semantic_decisions_serves_aligned_mesh(tmp_path, monkeypatch):
+    ep = _episode_with_object_model(tmp_path, monkeypatch)
+    standard = ep.intermediates_dir / "segmentation" / "sam2.1_hiera_small"
+    hocap = standard.with_name("hocap-oracle-v1")
+    standard.rename(hocap)
+    for frame in (hocap / "semantic_cloud").glob("*.npz"):
+        frame.unlink()
+    (hocap / "semantic_cloud").rmdir()
+    (hocap / "meshes").mkdir()
+    (hocap / "meshes" / "object_2.obj").write_text("v 0 0 0\n")
+    metadata = json.loads((ep.root / "meta.json").read_text())
+    metadata["source"] = "hocap"
+    (ep.root / "meta.json").write_text(json.dumps(metadata))
+
+    from viki.server.routes.pipeline import object_model_mesh, object_model_meta
+    payload = asyncio.run(object_model_meta(ep.id))
+    assert payload["profile"] == "hocap-oracle-v1"
+    assert payload["has_decisions"] is False
+    assert payload["objects"][0]["mesh_url"].endswith(
+        f"/object-mesh/2?profile=hocap-oracle-v1"
+    )
+    response = asyncio.run(object_model_mesh(ep.id, 2, "hocap-oracle-v1"))
+    assert response.path.name == "object_2.obj"
