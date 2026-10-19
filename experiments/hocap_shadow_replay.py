@@ -39,6 +39,11 @@ robot=ET.Element('body',name='robot_base',pos=' '.join(map(str,plan['base_positi
     euler=' '.join(map(str,np.deg2rad(plan['base_rpy_deg']))))
 for child in list(world): world.remove(child);robot.append(child)
 for body in robot.iter('body'): body.set('gravcomp','1')
+# MuJoCo combines equal-priority geom friction with an element-wise maximum.
+# Set only collidable robot geoms; visual meshes do not participate in contact.
+for geom in robot.iter('geom'):
+    if geom.get('contype') != '0' or geom.get('conaffinity') != '0':
+        geom.set('friction','1.2 .005 .0001')
 world.append(robot)
 assets=root.find('asset')
 if assets is None: assets=ET.SubElement(root,'asset')
@@ -55,7 +60,7 @@ for i,oid in enumerate(track['object_ids']):
     colors=['.078 .722 .651 1','.655 .545 .98 1','.639 .902 .208 1','.984 .573 .235 1']
     ET.SubElement(b,'geom',name=f'object_geom_{oid}',type='mesh',mesh=f'object_mesh_{oid}',mass='.08',
         friction='1.2 .005 .0001',rgba=colors[i])
-ET.SubElement(world,'geom',name='table',type='box',pos=f'0 0 {table_z-.025}',size='.7 .7 .025',rgba='.25 .28 .32 1',friction='1.2 .005 .0001')
+ET.SubElement(world,'geom',name='table',type='box',pos=f'0 0 {table_z-.025}',size='.7 .7 .025',rgba='.25 .28 .32 1',friction='1.0 .005 .0001',priority='1')
 ET.SubElement(world,'light',pos='0 -1 2',dir='0 .3 -1',diffuse='.8 .8 .8')
 contact=root.find('contact')
 if contact is None: contact=ET.SubElement(root,'contact')
@@ -146,7 +151,7 @@ report=dict(schema='shadow_unassisted_dynamic_replay_v1',frames=len(commands),pl
     robot_table_contact_steps=int(sum(tablecontacts)),arm_tracking_median_rad=float(np.median(np.abs(qactual[:,:6]-commands[:,:6]))),
     hand_tracking_median_rad=float(np.median(np.abs(qactual[:,6:]-commands[:,6:]))),
     carry_opposing_contact_fraction=carry_contact_fraction,carry_object_error_p95_mm=carry_p95,
-    object_mass_kg=.08,friction=1.2,gravity_compensation=True,
+    object_mass_kg=.08,friction=1.2,object_friction=1.2,table_friction=1.0,robot_friction=1.2,table_contact_priority=1,gravity_compensation=True,
     servo_gains={'arm_kp':1800,'arm_kv':120,'hand_kp':16,'hand_kv':.15},actuator_force_limits='URDF effort',object_contact_geometry='convex hull of official aligned mesh',table_z=table_z,
     command_interpolation='linear between saved timestamps; state sampled at target timestamp',
     gui_enabled=args.gui,assistance='none',success=bool((positions[:,2]-start[2]).max()>.02 and contacts.all(axis=1).sum()>10 and error[-1]<20 and carry_contact_fraction>=.8 and carry_p95<30 and sum(tablecontacts)==0))
