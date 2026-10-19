@@ -70,6 +70,51 @@ def test_tracked_grasp_rejects_wrong_object_or_width(tmp_path):
                            0.05, lambda width: width / 0.05)
 
 
+def test_tracked_grasp_accepts_short_placement_but_rejects_negligible_travel(tmp_path):
+    model_path, hand_points = _example(tmp_path)
+    rotations = np.broadcast_to(np.eye(3), (len(hand_points), 3, 3))
+    with np.load(model_path, allow_pickle=False) as saved:
+        arrays = {key: saved[key] for key in saved.files}
+    centers = arrays["translation_world"].copy()
+    centers[:, 0, 0] *= 0.2
+    arrays["translation_world"] = centers
+    np.savez_compressed(model_path, **arrays)
+    hand_points[25:80, 0] = centers[25:80, 0, 0]
+    result = plan_tracked_grasp(
+        model_path, 4, hand_points, rotations, hand_points, 0.085,
+        lambda width: width / 0.085,
+    )
+    assert 20 < result.diagnostics["travel_mm"] < 40
+
+    arrays["translation_world"][:, 0, 0] *= 0.1
+    np.savez_compressed(model_path, **arrays)
+    hand_points[25:80, 0] = arrays["translation_world"][25:80, 0, 0]
+    with pytest.raises(ValueError, match="substantial grasp-and-place"):
+        plan_tracked_grasp(
+            model_path, 4, hand_points, rotations, hand_points, 0.085,
+            lambda width: width / 0.085,
+        )
+
+
+def test_tracked_grasp_uses_narrower_supported_upper_cross_section(tmp_path):
+    model_path, hand_points = _example(tmp_path)
+    with np.load(model_path, allow_pickle=False) as saved:
+        arrays = {key: saved[key] for key in saved.files}
+    surface = arrays["model_xyz_object"].copy()
+    upper = surface[:, 2] > 0.035
+    surface[:, 0] *= np.where(upper, 0.8, 1.4)
+    surface[:, 1] *= np.where(upper, 1.0, 1.7)
+    arrays["model_xyz_object"] = surface
+    np.savez_compressed(model_path, **arrays)
+    rotations = np.broadcast_to(np.eye(3), (len(hand_points), 3, 3))
+    result = plan_tracked_grasp(
+        model_path, 4, hand_points, rotations, hand_points, 0.085,
+        lambda width: width / 0.085,
+    )
+    assert result.diagnostics["grasp_height_shift_mm"] >= 15
+    assert result.diagnostics["object_width_mm"] < 80
+
+
 def test_tracked_grasp_contact_overlap_is_explicit_and_bounded(tmp_path):
     model_path, hand_points = _example(tmp_path)
     rotations = np.broadcast_to(np.eye(3), (len(hand_points), 3, 3))
@@ -92,6 +137,45 @@ def test_tracked_grasp_contact_overlap_is_explicit_and_bounded(tmp_path):
         with pytest.raises(ValueError, match="contact_overlap_mm"):
             plan_tracked_grasp(model_path, 4, hand_points, rotations, hand_points,
                                0.085, lambda width: width / 0.085, overlap)
+
+
+def test_insertion_depth_moves_grasp_into_object_without_changing_jaw_gap(tmp_path):
+    model_path, hand_points = _example(tmp_path)
+    rotations = np.broadcast_to(np.eye(3), (len(hand_points), 3, 3))
+    baseline = plan_tracked_grasp(
+        model_path, 4, hand_points, rotations, hand_points, 0.085,
+        lambda width: width / 0.085,
+    )
+    deeper = plan_tracked_grasp(
+        model_path, 4, hand_points, rotations, hand_points, 0.085,
+        lambda width: width / 0.085, insertion_depth_mm=10.0,
+    )
+    close_start, carry_start, _, _ = baseline.diagnostics["phase_bounds"]
+    np.testing.assert_allclose(deeper.positions[close_start], baseline.positions[close_start])
+    tool = baseline.rotations[carry_start, :, 2]
+    np.testing.assert_allclose(
+        deeper.positions[carry_start] - baseline.positions[carry_start],
+        0.01 * tool, atol=1e-6,
+    )
+    np.testing.assert_allclose(deeper.opening, baseline.opening)
+    np.testing.assert_allclose(deeper.rotations, baseline.rotations)
+    assert deeper.diagnostics["insertion_depth_mm"] == 10.0
+    for depth in (float("nan"), -1.0, 16.0):
+        with pytest.raises(ValueError, match="insertion_depth_mm"):
+            plan_tracked_grasp(model_path, 4, hand_points, rotations, hand_points,
+                               0.085, lambda width: width / 0.085,
+                               insertion_depth_mm=depth)
+
+
+def test_insertion_depth_option_is_track_only():
+    assert config_from_options("ur10").object_insertion_depth_mm == 0.0
+    track = {"object_grasp": True, "object_track_path": "/tmp/selected.npz", "object_id": 4}
+    assert config_from_options("ur10", {**track, "object_insertion_depth_mm": 10.0}).object_insertion_depth_mm == 10.0
+    for invalid in (float("nan"), -1.0, 16.0):
+        with pytest.raises(ValueError, match="object_insertion_depth_mm"):
+            config_from_options("ur10", {**track, "object_insertion_depth_mm": invalid})
+    with pytest.raises(ValueError, match="requires an explicit object track"):
+        config_from_options("ur10", {"object_insertion_depth_mm": 10.0})
 
 
 def test_overlap_option_is_track_only_and_keeps_cube_default():

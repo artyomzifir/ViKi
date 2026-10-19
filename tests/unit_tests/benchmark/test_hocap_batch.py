@@ -10,7 +10,8 @@ import numpy as np
 
 from viki.contracts import Episode
 from viki.perception.observations import calib_id
-from viki.perception.profiles import CLEAN_LANDMARKS_V1, HOCAP_MEDIAPIPE_TRI_V1, get_profile
+from viki.perception.profiles import (CLEAN_LANDMARKS_V1, DEFAULT_PERCEPTION_PROFILE,
+                                      HOCAP_MEDIAPIPE_TRI_V1, HOCAP_STABLE_FUSED_HAND_V4, get_profile)
 
 from scripts.run_hocap_batch import reuse_camera_tracks, stage_sequence
 
@@ -103,3 +104,13 @@ def test_hocap_profile_keeps_baseline_geometry_and_correct_world_frame():
     assert profile.triangulation == baseline.triangulation
     assert profile.coordinate_frame == "hocap_tag_1"
     assert baseline.coordinate_frame == "robot_base"
+
+
+def test_current_hocap_profile_matches_product_v4_except_world_frame():
+    product = get_profile(DEFAULT_PERCEPTION_PROFILE)
+    hocap = get_profile(HOCAP_STABLE_FUSED_HAND_V4)
+    assert hocap.coordinate_frame == "hocap_tag_1"
+    assert hocap.articulated_hand_fit == "articulated-landmarks-v1"
+    assert {k: v for k, v in hocap.manifest().items() if k not in ("name", "description", "coordinate_frame")} == {
+        k: v for k, v in product.manifest().items() if k not in ("name", "description", "coordinate_frame")
+    }

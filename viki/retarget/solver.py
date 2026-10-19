@@ -1083,6 +1083,7 @@ class PinocchioKinematics:
             raise RuntimeError("retarget requires robotics Pinocchio and pin-pink") from exc
         self.pin = pin
         self.Configuration = Configuration
+        self._gripper_prefix = gripper_prefix
         self.robot = robot
         self.model = robot.model
         self.data = self.model.createData()

@@ -17,6 +17,10 @@ adjacent `.docx` file. Build the thesis with `make -C paper/thesis` (XeLaTeX).
   `python3 scripts/build_hocap_paper_tables.py --check`. Object names follow
   the authors' [HO-Cap toolkit catalog](https://github.com/IRVLUTD/HO-Cap/blob/main/config/hocap_info.yaml).
 
+- The separate HO-Cap retarget numerical status and complete diary are in
+  `paper/results/hocap/retarget/`. These are 28 hand-only geometric plans,
+  not physically executed demonstrations or object-aware grasps.
+
 - Earlier local cube-transfer claims, including downstream retargeting,
   MuJoCo execution, and policy-learning figures, are withdrawn from this
   manuscript. The source recordings, calibration, and derived artifacts are

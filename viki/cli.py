@@ -291,6 +291,7 @@ def _cmd_retarget(a) -> None:
         for key, value in {
             "gripper": a.gripper,
             "target_position_anchor": a.target_anchor,
+            "pose_source": a.pose_source,
             "base_position": a.base_position,
             "base_rpy_deg": a.base_rpy_deg,
             "reference_policy": a.reference_policy,
@@ -307,6 +308,7 @@ def _cmd_retarget(a) -> None:
             "object_track_path": a.object_track_path,
             "object_id": a.object_id,
             "object_contact_overlap_mm": a.object_contact_overlap_mm,
+            "object_insertion_depth_mm": a.object_insertion_depth_mm,
         }.items()
         if value is not None
     }
@@ -395,7 +397,12 @@ def _cmd_hocap_evaluate(a) -> None:
 
     from viki import benchmark
 
-    result = benchmark.evaluate_episode(a.episode)
+    from viki.perception.profiles import HOCAP_STABLE_FUSED_HAND_V4
+
+    result = benchmark.evaluate_episode(
+        a.episode,
+        expected_profile=None if a.allow_legacy_landmarks else HOCAP_STABLE_FUSED_HAND_V4,
+    )
     payload = json.dumps(result, indent=2)
     if a.out:
         output = Path(a.out)
@@ -700,6 +707,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pt.add_argument("episode")
     pt.add_argument("--robot", default=None)
     pt.add_argument("--gripper", default=None)
+    pt.add_argument("--pose-source", choices=["landmarks", "hand_fit"], default=None)
     pt.add_argument(
         "--target-anchor",
         choices=["pinch_center", "wrist"],
@@ -723,6 +731,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--object-track-path", default=None)
     pt.add_argument("--object-id", type=int, default=None)
     pt.add_argument("--object-contact-overlap-mm", type=float, default=None)
+    pt.add_argument("--object-insertion-depth-mm", type=float, default=None)
     pt.add_argument(
         "--sequential-baseline",
         action="store_true",
@@ -789,6 +798,8 @@ def _build_parser() -> argparse.ArgumentParser:
     phe = sub.add_parser("hocap-evaluate", help="score an imported HO-Cap episode")
     phe.add_argument("episode")
     phe.add_argument("--out", default=None)
+    phe.add_argument("--allow-legacy-landmarks", action="store_true",
+                     help="explicitly score an archived landmark-only HO-Cap episode")
     phe.set_defaults(func=_cmd_hocap_evaluate)
 
     prn = sub.add_parser(

@@ -12,6 +12,7 @@ import numpy as np
 from pathlib import Path
 
 from viki.retarget.archive import load_archive
+from viki.benchmark.hocap_provenance import require_hand_fit_clean, require_hand_fit_plan
 
 
 HAND_TO_EE_RPY_DEG = {
@@ -38,6 +39,7 @@ def _write_json(path: Path, payload: dict) -> None:
 
 def _plan_metrics(path: Path) -> dict:
     expected_rpy = _hand_to_ee_rpy_deg(path.parent)
+    require_hand_fit_plan(path)
     with load_archive(path) as plan:
         if plan["coordinate_frame"] != "hocap_tag_1":
             raise ValueError(f"unexpected plan frame in {path}")
@@ -45,6 +47,8 @@ def _plan_metrics(path: Path) -> dict:
         if (
             config["robot"] != "ur10"
             or config["gripper"] != "robotiq_2f85"
+            or config.get("pose_source") != "hand_fit"
+            or config.get("target_position_anchor") != "wrist"
             or config["base_position"] != [0.0, -1.0, 0.0]
             or config["table_plane_z_m"] != 0.0
             or config["approach_sec"] != 0.0
@@ -71,6 +75,10 @@ def _plan_metrics(path: Path) -> dict:
 def _process_episode(dataset: Path, episode: Path) -> dict:
     if not (episode / "cln.npz").is_file():
         return {"status": "missing_cln"}
+    try:
+        require_hand_fit_clean(episode)
+    except (OSError, KeyError, ValueError) as exc:
+        return {"status": "invalid_clean", "error": str(exc)}
     plan_path = episode / "plan.h5"
     if plan_path.is_file():
         try:
@@ -79,7 +87,8 @@ def _process_episode(dataset: Path, episode: Path) -> dict:
             return {"status": "invalid_existing_plan", "error": str(exc)}
     command = [
         "viki", "retarget", str(episode), "--robot", "ur10",
-        "--gripper", "robotiq_2f85", "--base-position", "0", "-1", "0",
+        "--gripper", "robotiq_2f85", "--pose-source", "hand_fit",
+        "--target-anchor", "wrist", "--base-position", "0", "-1", "0",
         "--table-plane-z-m", "0", "--approach-sec", "0", "--no-object-grasp",
         "--reference-policy", "zero",
         "--hand-to-ee-rpy-deg", *(str(value) for value in _hand_to_ee_rpy_deg(episode)),
@@ -147,6 +156,7 @@ def main() -> None:
         _hand_to_ee_rpy_deg(episode)
         if not (episode / "cln.npz").is_file():
             raise ValueError(f"missing cln.npz in {episode}")
+        require_hand_fit_clean(episode)
         if (episode / "plan.h5").is_file():
             _plan_metrics(episode / "plan.h5")
     if args.require_smoke:
@@ -157,7 +167,7 @@ def main() -> None:
         return
     status_path = args.dataset / "retarget_batch_status.json"
     status = {
-        "protocol": "HO-Cap hand-only UR10/Robotiq, base [0,-1,0] in hocap_tag_1, table z=0, zero IK reference, no home approach",
+        "protocol": "HO-Cap hand-only UR10/Robotiq, V4 articulated hand_fit wrist IK, base [0,-1,0] in hocap_tag_1, table z=0, zero IK reference, no home approach",
         "workers": args.workers,
         "episodes": {episode.name: {"status": "queued"} for episode in episodes},
     }

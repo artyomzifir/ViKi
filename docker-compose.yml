@@ -61,6 +61,7 @@ x-common: &common
     - ./tests:/app/tests
     - ./data:/app/data
     - ./scripts:/app/scripts
+    - ./tools:/app/tools:ro
     - ./experiments:/app/experiments
     - ./models:/app/models
   environment:

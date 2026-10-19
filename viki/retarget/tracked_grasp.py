@@ -44,13 +44,16 @@ def plan_tracked_grasp(
     max_width_m: float,
     contact_opening: Callable[[float], float],
     contact_overlap_mm: float = 6.0,
+    insertion_depth_mm: float = 0.0,
 ) -> CubeGraspPlan:
-    """Construct a guarded pilot target; no force or object collision is modelled."""
+    """Construct a guarded pilot target; scene collision is added by the IK stage."""
     hand_positions = np.asarray(hand_positions, dtype=np.float64)
     hand_rotations = np.asarray(hand_rotations, dtype=np.float64)
     hand_points = np.asarray(hand_points, dtype=np.float64)
     if not np.isfinite(contact_overlap_mm) or not 0.0 <= contact_overlap_mm <= 12.0:
         raise ValueError("contact_overlap_mm must be finite and in [0, 12]")
+    if not np.isfinite(insertion_depth_mm) or not 0.0 <= insertion_depth_mm <= 15.0:
+        raise ValueError("insertion_depth_mm must be finite and in [0, 15]")
     frame_count = len(hand_positions)
     if (frame_count < 40 or hand_positions.shape != (frame_count, 3)
             or hand_rotations.shape != (frame_count, 3, 3)
@@ -104,7 +107,7 @@ def plan_tracked_grasp(
         raise ValueError("hand withdrawal was not detected")
     open_end = release_start + 4 + far_offset
     if (open_end >= frame_count or open_end - release_start < 5
-            or np.linalg.norm(object_positions[release_start] - object_positions[close_start]) < 0.08):
+            or np.linalg.norm(object_positions[release_start] - object_positions[close_start]) < 0.02):
         raise ValueError("one substantial grasp-and-place interval is required")
 
     local_offsets = np.einsum(
@@ -115,16 +118,22 @@ def plan_tracked_grasp(
     local_center = np.clip(local_center, np.quantile(surface, 0.2, axis=0),
                            np.quantile(surface, 0.8, axis=0))
     local_center[2] = max(local_center[2], float(np.median(surface[:, 2])))
-    widths = []
-    face_bounds = []
-    for axis in (0, 1):
-        other = 1 - axis
-        subset = surface[(np.abs(surface[:, 2] - local_center[2]) < 0.025)
-                         & (np.abs(surface[:, other] - local_center[other]) < 0.03)]
-        bounds = (np.quantile(subset[:, axis], [0.05, 0.95])
-                  if len(subset) >= 30 else np.array([-np.inf, np.inf]))
-        face_bounds.append(bounds)
-        widths.append(float(bounds[1] - bounds[0]))
+    observed_height = float(local_center[2])
+    candidate_heights = np.arange(observed_height, observed_height + 0.061, 0.005)
+    for height in candidate_heights:
+        widths = []
+        face_bounds = []
+        for axis in (0, 1):
+            other = 1 - axis
+            subset = surface[(np.abs(surface[:, 2] - height) < 0.025)
+                             & (np.abs(surface[:, other] - local_center[other]) < 0.03)]
+            bounds = (np.quantile(subset[:, axis], [0.05, 0.95])
+                      if len(subset) >= 30 else np.array([-np.inf, np.inf]))
+            face_bounds.append(bounds)
+            widths.append(float(bounds[1] - bounds[0]))
+        if 0.015 < min(widths) < max_width_m - 0.005:
+            local_center[2] = height
+            break
     jaw_axis = int(np.argmin(widths))
     object_width = widths[jaw_axis]
     if not 0.015 < object_width < max_width_m - 0.005:
@@ -169,6 +178,10 @@ def plan_tracked_grasp(
     tool_extent = float(np.quantile(np.abs(surface[:, 1 - jaw_axis] - local_center[1 - jaw_axis]), 0.95))
     approach_distance = max(0.08, tool_extent + 0.04)
     pregrasp_center = object_center - approach_distance * rotations[:, :, 2]
+    if insertion_depth_mm:
+        insertion_local = object_rotations[carry_start].T @ rotations[carry_start, :, 2]
+        local_center = local_center + insertion_depth_mm / 1000.0 * insertion_local
+        object_center = object_positions + np.einsum("tij,j->ti", object_rotations, local_center)
     for frame in range(prealign_start, close_start + 1):
         fraction = (frame - prealign_start) / max(1, close_start - prealign_start)
         result_positions[frame] = (1 - fraction) * hand_positions[frame] + fraction * pregrasp_center[frame]
@@ -223,7 +236,9 @@ def plan_tracked_grasp(
         "object_width_mm": object_width * 1000.0,
         "carry_width_mm": carry_width * 1000.0,
         "nominal_compression_mm": contact_overlap_mm,
+        "insertion_depth_mm": insertion_depth_mm,
         "grasp_offset_local_m": local_center.tolist(),
+        "grasp_height_shift_mm": float((local_center[2] - observed_height) * 1000),
         "travel_mm": float(np.linalg.norm(object_positions[release_start] - object_positions[close_start]) * 1000),
         "model_path": str(model_path),
     })

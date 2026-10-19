@@ -1,4 +1,4 @@
-"""Run the pinned HO-Cap PnP hand-pose benchmark from flat mirror archives.
+"""Run the HO-Cap PnP hand-pose benchmark from flat mirror archives.
 
 Stage one sequence at a time. Detect eight views once, then reuse the selected
 per-camera observations for the two-view comparison without a second inference.
@@ -25,7 +25,7 @@ from viki.contracts import Episode
 from viki.episode import mark_stage
 from viki.perception.extract import extract_episode
 from viki.perception.observations import calib_id
-from viki.perception.profiles import HOCAP_MEDIAPIPE_TRI_V1
+from viki.perception.profiles import HOCAP_MEDIAPIPE_TRI_V1, HOCAP_STABLE_FUSED_HAND_V4
 from viki.prepare.run import prepare_episode
 
 LOGGER = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ def _discard_media(episode_dir: Path) -> None:
 
 
 def reuse_camera_tracks(source: Episode, target: Episode,
-                        cameras: tuple[str, ...]) -> None:
+                        cameras: tuple[str, ...], profile: str = HOCAP_STABLE_FUSED_HAND_V4) -> None:
     """Preserve exact detector/depth outputs, filtering only row camera IDs."""
     selected = set(cameras)
     with np.load(source.rec_npz, allow_pickle=False) as data:
@@ -151,27 +151,28 @@ def reuse_camera_tracks(source: Episode, target: Episode,
         meta["cameras"][camera]["calib_id"] = fingerprint
     _write_json(target_raw / "observations_meta.json", meta)
     mark_stage(target, "extract", frames=rec_count, model=MODEL,
-               track_lm="all", profile=HOCAP_MEDIAPIPE_TRI_V1,
+               track_lm="all", profile=profile,
                reused_from=str(source.root))
 
 
 def run_batch(archives: Path, plan_path: Path, out_root: Path, *,
               max_frames: int | None = None, limit: int | None = None,
               views: tuple[str, ...] = ("eight", "pair"),
-              retain_media: bool = False) -> None:
+              retain_media: bool = False,
+              profile: str = HOCAP_STABLE_FUSED_HAND_V4) -> None:
     if "pair" in views and "eight" not in views:
         raise ValueError("two-view reuse requires the eight-view run")
-    LOGGER.info("benchmark model=%s device=cpu profile=%s", MODEL, HOCAP_MEDIAPIPE_TRI_V1)
+    LOGGER.info("benchmark model=%s device=cpu profile=%s", MODEL, profile)
     plan = json.loads(plan_path.read_text())
     sequences = plan["sequences"][:limit]
     status_path = out_root / "batch_status.json"
     status = json.loads(status_path.read_text()) if status_path.is_file() else {
         "dataset": plan["dataset"], "revision": plan["revision"],
-        "model": MODEL, "inference_device": "cpu", "profile": HOCAP_MEDIAPIPE_TRI_V1,
+        "model": MODEL, "inference_device": "cpu", "profile": profile,
         "pair_by_hand": {hand: list(pair) for hand, pair in PAIR_BY_HAND.items()},
         "sequences": {},
     }
-    if status["model"] != MODEL or status["profile"] != HOCAP_MEDIAPIPE_TRI_V1:
+    if status["model"] != MODEL or status["profile"] != profile:
         raise ValueError("batch_status.json belongs to a different model/profile")
     out_root.mkdir(parents=True, exist_ok=True)
     staging_root = out_root.parent / "_hocap_staging"
@@ -231,35 +232,42 @@ def run_batch(archives: Path, plan_path: Path, out_root: Path, *,
                                 last[camera] = frame // 100
 
                         extract_episode(episode, model=MODEL, hand=actual_hand,
-                                        profile=HOCAP_MEDIAPIPE_TRI_V1, report=progress)
+                                        profile=profile, report=progress)
                     else:
                         eight_record = record.get("eight", {})
                         if eight_record.get("status") != "complete":
                             raise RuntimeError("eight-view inference did not complete")
                         reuse_camera_tracks(
                             Episode(root=out_root / eight_record["episode_name"]),
-                            episode, tuple(cameras),
+                            episode, tuple(cameras), profile,
                         )
-                    prepare_episode(episode, profile=HOCAP_MEDIAPIPE_TRI_V1)
-                    score = evaluate_episode(episode_dir)
+                    prepare_episode(episode, profile=profile)
+                    score = evaluate_episode(episode_dir, expected_profile=(
+                        profile if profile == HOCAP_STABLE_FUSED_HAND_V4 else None
+                    ))
                     _write_json(episode_dir / "gt/evaluation.json", score)
-                    observed = score.get("prepare", {}).get("smoothed_observed", {})
-                    coverage = observed.get("coverage")
-                    mpjpe = observed.get("mpjpe_mm")
+                    score_key = ("hand_fit_joints" if profile == HOCAP_STABLE_FUSED_HAND_V4
+                                 else "smoothed_observed")
+                    measured = score.get("prepare", {}).get(score_key, {})
+                    coverage = measured.get("coverage")
+                    mpjpe = measured.get("mpjpe_mm")
+                    if profile == HOCAP_STABLE_FUSED_HAND_V4 and (coverage is None or mpjpe is None):
+                        raise ValueError("final hand-fit joint score is missing")
                     quality = "review" if coverage is None or coverage < 0.8 or mpjpe is None or mpjpe > 30 else "pass"
                     _write_json(episode_dir / "batch_run.json", {
                         "sequence_id": sequence_id, "view": view,
                         "source_archive": f"{sequence_id}.tar",
                         "source_revision": plan["revision"],
                         "model": MODEL, "inference_device": "cpu",
-                        "profile": HOCAP_MEDIAPIPE_TRI_V1,
+                        "profile": profile,
+                        "score_key": score_key,
                         "reused_eight_view_detections": view == "pair",
                         "elapsed_seconds": round(time.monotonic() - started, 3),
                         "quality": quality,
                         "depth_consistency": result.acceptance["depth_consistency"],
                     })
                     record[view] = {
-                        "status": "complete", "quality": quality,
+                        "status": "complete", "quality": quality, "score_key": score_key,
                         "episode_name": episode_dir.name,
                         "elapsed_seconds": round(time.monotonic() - started, 3),
                         "mpjpe_mm": mpjpe, "coverage": coverage,
@@ -283,7 +291,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archives", type=Path, required=True)
     parser.add_argument("--plan", type=Path, default=Path("/app/tools/hocap_pnp_plan.json"))
-    parser.add_argument("--out", type=Path, default=Path("/app/data/datasets/hocap_mediapipe_tri"))
+    parser.add_argument("--out", type=Path, default=Path("/app/data/datasets/hocap_stable_fused_v4"))
+    parser.add_argument("--profile", choices=(HOCAP_STABLE_FUSED_HAND_V4, HOCAP_MEDIAPIPE_TRI_V1),
+                        default=HOCAP_STABLE_FUSED_HAND_V4)
     parser.add_argument("--max-frames", type=int)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--views", nargs="+", choices=("pair", "eight"), default=("eight", "pair"))
@@ -291,7 +301,8 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     run_batch(args.archives, args.plan, args.out, max_frames=args.max_frames,
-              limit=args.limit, views=tuple(args.views), retain_media=args.retain_media)
+              limit=args.limit, views=tuple(args.views), retain_media=args.retain_media,
+              profile=args.profile)
 
 
 if __name__ == "__main__":

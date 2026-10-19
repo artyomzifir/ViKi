@@ -31,6 +31,8 @@ def _plan(episode: Path, hand_rpy: list[float], scale: float = 1.0) -> None:
     write_hdf5_archive(episode / "plan.h5", {
         "coordinate_frame": "hocap_tag_1",
         "config_json": json.dumps({
+            "pose_source": "hand_fit",
+            "target_position_anchor": "wrist",
             "robot": "ur10",
             "gripper": "robotiq_2f85",
             "base_position": [0.0, -1.0, 0.0],
@@ -46,8 +48,27 @@ def _plan(episode: Path, hand_rpy: list[float], scale: float = 1.0) -> None:
         "q": np.zeros((2, 6)),
         "timestamps": np.arange(2),
         "metrics_json": "{}",
+        "source_pose": "hand_fit",
         "solver_status": "converged",
     })
+
+
+def _clean(episode: Path) -> None:
+    from viki.perception.profiles import HOCAP_STABLE_FUSED_HAND_V4
+    np.savez(episode / "cln.npz", timestamps=np.arange(2),
+             perception_profile=np.asarray(HOCAP_STABLE_FUSED_HAND_V4),
+             coordinate_frame=np.asarray("hocap_tag_1"),
+             hand_fit_positions=np.zeros((2, 3)),
+             hand_fit_rotations=np.tile(np.eye(3), (2, 1, 1)),
+             hand_fit_joint_angles=np.zeros((2, 27)),
+             hand_fit_metrics_json=np.asarray("{}"),
+             geometry_hand_params_json=np.asarray("{}"),
+             hand_fit_overlay_variant=np.asarray("articulated-landmarks-v1:optimized"),
+             hand_fit_overlay_source_profile=np.asarray(HOCAP_STABLE_FUSED_HAND_V4))
+    (episode / "status.json").write_text(json.dumps({"stages": {"prepare": {
+        "done": True, "hand_fit": True,
+        "articulated": {"quality_gate": {"accepted": True}},
+    }}}))
 
 
 def test_hocap_batch_requires_single_known_hand_side(tmp_path):
@@ -77,7 +98,7 @@ def test_hocap_batch_rejects_old_side_mapping_and_scaled_speed(tmp_path):
 @pytest.mark.parametrize("side,expected_roll", [("left", "-175.675"), ("right", "4.325")])
 def test_hocap_batch_passes_explicit_mapping_to_cli(tmp_path, monkeypatch, side, expected_roll):
     episode = _episode(tmp_path / side, side)
-    (episode / "cln.npz").write_bytes(b"placeholder")
+    _clean(episode)
     commands = []
 
     def run(command, **_kwargs):
@@ -92,6 +113,7 @@ def test_hocap_batch_passes_explicit_mapping_to_cli(tmp_path, monkeypatch, side,
     assert command[start + 1:start + 4] == [expected_roll, "15.45", "-47.922"]
     assert "--velocity-limit-scale" not in command
     assert command[command.index("--reference-policy") + 1] == "zero"
+    assert command[command.index("--target-anchor") + 1] == "wrist"
 
 
 def test_hocap_smoke_gate_requires_convergence_and_finite_safe_margins():
@@ -124,7 +146,7 @@ def test_hocap_preflight_never_starts_work_or_writes_status(tmp_path, monkeypatc
 
     for index in range(28):
         episode = _episode(tmp_path / f"episode_{index:02d}", "right")
-        (episode / "cln.npz").write_bytes(b"placeholder")
+        _clean(episode)
     monkeypatch.setattr(sys, "argv", ["batch", str(tmp_path), "--preflight-only"])
     monkeypatch.setattr(
         "scripts.run_hocap_retarget_batch._process_episode",
@@ -132,3 +154,13 @@ def test_hocap_preflight_never_starts_work_or_writes_status(tmp_path, monkeypatc
     )
     main()
     assert not (tmp_path / "retarget_batch_status.json").exists()
+
+
+def test_hocap_plan_rejects_silent_landmark_substitution(tmp_path):
+    episode = _episode(tmp_path / "left")
+    _plan(episode, [-175.675, 15.45, -47.922])
+    import h5py
+    with h5py.File(episode / "plan.h5", "r+") as archive:
+        archive["source_pose"][...] = "landmarks"
+    with pytest.raises(ValueError, match="effective hand_fit"):
+        _plan_metrics(episode / "plan.h5")

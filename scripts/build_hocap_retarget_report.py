@@ -19,7 +19,7 @@ def build_report(status_path: Path) -> str:
         "",
         f"Эпизодов: {len(rows)}, завершено: {complete}, "
         f"не завершено: {len(rows) - complete}. "
-        "Источник: `data/datasets/hocap_eightview/retarget_batch_status.json`.",
+        f"Источник: `{status_path.as_posix()}`.",
         "",
         "UR10 + Robotiq 2F-85; hand-only IK, без cube-object grasp. "
         "База `[0, -1.0, 0]` и бесконечная плоскость стола `z=0` "

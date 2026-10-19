@@ -46,9 +46,22 @@ slightly but all tested gaps still lost the object. See the dated pilot report.
 The mode is a one-scene geometric pilot, not a generic object-grasp policy.
 The HO-Cap object models currently use supplied oracle instance masks and a
 first-frame reference-pose alignment; they do not provide independent absolute
-object pose. The planner does not model grasp force, object collision, human
-collision, support geometry, or simulator contact. Physical grasp must be
-tested separately; a converged IK plan alone does not demonstrate one. See
+object pose. For explicit tracked-object mode, IK treats every tracked object
+as an oriented box enclosing its canonical point cloud. The robot collision
+bodies avoid all boxes except that Robotiq geometry may contact the selected
+object during close/carry/release. From the start of closing through the start
+of release, a box rigidly attached to the TCP also avoids all *other* tracked
+boxes. These are hard, per-frame signed-distance QP barriers with a 5 mm
+model clearance. Missing or low-confidence tracks fail
+closed, and an infeasible path produces no plan. The boxes are cloud-derived
+proxies, not official meshes: incomplete clouds, registration error, between-frame
+motion, unmodelled humans and real contact remain outside the guarantee. The
+solver does not invent a new path around an obstacle; if the recorded object
+path itself collides, it must deviate from the target or reject it. Independent
+IK clips stitched later are **not** jointly collision-checked at the seams.
+The local cube mode still uses its older object-grasp heuristic, not these
+tracked-scene barriers. Grasp force and simulator contact are not modelled;
+a converged IK plan alone does not demonstrate a physical grasp. See
 `docs/2026-10-14-hocap-object-grasp-pilot.md` for the controlled A/B protocol.
 
 `viki retarget <episode>` (cube-aware by default) requires prepared

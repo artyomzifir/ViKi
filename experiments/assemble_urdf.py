@@ -18,8 +18,12 @@ def cached_description(model_root: Path, name: str) -> Path:
     return Path(paths[0])
 
 
-def assembled_xml(model_root: Path) -> str:
-    arm = ET.parse(cached_description(model_root, "ur10_official_description"))
+def assembled_xml(model_root: Path, robot: str = "ur10") -> str:
+    if robot not in {"ur10", "iiwa14"}:
+        raise ValueError(f"unsupported simulation robot: {robot}")
+    description = "ur10_official_description" if robot == "ur10" else "iiwa14_description"
+    mount = "tool0" if robot == "ur10" else "iiwa_link_ee"
+    arm = ET.parse(cached_description(model_root, description))
     gripper = ET.parse(cached_description(model_root, "robotiq_2f85_v4_description"))
     arm_root = arm.getroot()
     gripper_root = gripper.getroot()
@@ -37,7 +41,7 @@ def assembled_xml(model_root: Path) -> str:
         arm_root.append(joint)
     adapter = ET.SubElement(arm_root, "joint",
                             name="viki_flange_to_gripper_adapter", type="fixed")
-    ET.SubElement(adapter, "parent", link="tool0")
+    ET.SubElement(adapter, "parent", link=mount)
     ET.SubElement(adapter, "child", link="robotiq_mount_base_link")
     ET.SubElement(adapter, "origin", xyz="0 0 0.011", rpy="0 0 0")
     return ET.tostring(arm_root, encoding="unicode").replace("file://", "")

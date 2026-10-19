@@ -98,3 +98,37 @@ def test_requires_imported_hocap_episode(scored_episode):
     meta_path.write_text(json.dumps(meta))
     with pytest.raises(ValueError, match="HO-Cap import"):
         evaluate_episode(scored_episode)
+
+
+def test_scores_final_fitted_joint_fk_not_smoothed_landmarks(scored_episode):
+    import pinocchio as pin
+    from viki.perception.hand_model import HandParams, build, fk_landmark_positions
+
+    fingers = ("thumb", "index", "middle", "ring", "pinky")
+    params = HandParams(
+        root_xyz={name: np.array([0.06, 0.02 * (index - 2), 0.0])
+                  for index, name in enumerate(fingers)},
+        root_rpy={name: np.zeros(3) for name in fingers},
+        bone_len={name: np.array([0.03, 0.025, 0.02]) for name in fingers},
+        radius={name: np.full(3, 0.008) for name in fingers},
+    )
+    hand = build(params)
+    q = np.asarray([pin.neutral(hand.model) for _ in range(3)])
+    q[:, 0] = [0.0, 0.01, 0.02]
+    truth = np.asarray([fk_landmark_positions(hand, row, list(range(21))) for row in q])
+    np.savez(scored_episode / "gt/joints3d_world.npz", joints_world=truth,
+             valid=np.ones((3, 21), bool), frame_index=np.arange(3),
+             joint_order=np.asarray([landmark.name for landmark in LM]),
+             world_frame=np.asarray("hocap_tag_1"))
+    with np.load(scored_episode / "cln.npz", allow_pickle=False) as data:
+        clean = {key: data[key] for key in data.files}
+    clean.update(smoothed_points=truth + 0.02,
+                 hand_fit_positions=np.zeros((3, 3)),
+                 hand_fit_rotations=np.tile(np.eye(3), (3, 1, 1)),
+                 hand_fit_joint_angles=q,
+                 geometry_hand_params_json=np.asarray(json.dumps(params.as_dict())))
+    np.savez(scored_episode / "cln.npz", **clean)
+    report = evaluate_episode(scored_episode)["prepare"]
+    assert report["hand_fit_joints"]["matched_joints"] == 63
+    assert report["hand_fit_joints"]["mpjpe_mm"] == pytest.approx(0.0, abs=1e-5)
+    assert report["smoothed_all"]["mpjpe_mm"] == pytest.approx(34.641, abs=0.01)

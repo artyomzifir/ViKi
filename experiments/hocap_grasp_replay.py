@@ -1,7 +1,7 @@
-"""One-scene HO-Cap grasp A/B in MuJoCo using a fitted box proxy.
+"""One-scene HO-Cap grasp replay with optional official object meshes.
 
-The proxy and tabletop are inferred from a partial tracked point cloud; this
-experiment is not an HO-Cap mesh or a calibrated force/contact benchmark.
+The tabletop is inferred from tracked geometry, and MuJoCo collides against
+convex mesh hulls; this is not a calibrated force/contact benchmark.
 """
 
 from __future__ import annotations
@@ -20,17 +20,27 @@ from scipy.spatial.transform import Rotation
 
 from experiments.assemble_urdf import assembled_xml
 from experiments.gripper_control import pressure_commands
+from experiments.grasp_gate import insert_grasp_dwell
+from experiments.hocap_mesh import aligned_mesh
 from experiments.scene import ARM_JOINTS
 from experiments.verify_gripper import MIMIC_MULTIPLIERS, PAD_OFFSET_M
+from viki.retarget.robots import normalize_robot
 
 
 def _scene(plan_path: Path, track_path: Path, model_root: Path,
-           object_id: int, mass_kg: float):
+           object_id: int, mass_kg: float, rubber_pads: bool = False,
+           all_objects: bool = False, mesh_path: Path | None = None,
+           gt_pose_path: Path | None = None, gt_frame: int | None = None,
+           object_name: str | None = None,
+           other_mesh_paths: dict[int, Path] | None = None,
+           weld_all_objects: bool = False):
     if not 0.01 <= mass_kg <= 1.0:
         raise ValueError("proxy mass must be in [0.01, 1.0] kg")
     with h5py.File(plan_path) as plan:
         base_position = np.asarray(plan["base_position_calibration"], dtype=float)
         base_rpy = np.deg2rad(np.asarray(plan["base_rpy_deg_calibration"], dtype=float))
+        robot_key = plan["robot_key"][()].decode()
+    robot_config = normalize_robot(robot_key)
     with np.load(track_path, allow_pickle=False) as track:
         indices = np.flatnonzero(track["object_ids"] == object_id)
         if len(indices) != 1:
@@ -42,17 +52,72 @@ def _scene(plan_path: Path, track_path: Path, model_root: Path,
         orientation = np.asarray(track["rotation_world_object"][0, object_index], dtype=float)
         reference_final = np.asarray(track["translation_world"][-1, object_index], dtype=float)
         reference_final_rotation = np.asarray(track["rotation_world_object"][-1, object_index], dtype=float)
+        additional_objects = []
+        other_surfaces = {}
+        if all_objects:
+            for index, tracked_id in enumerate(track["object_ids"]):
+                if index == object_index:
+                    continue
+                other_surface = np.asarray(
+                    track["model_xyz_object"][offsets[index]:offsets[index + 1]], dtype=float,
+                )
+                other_surfaces[int(tracked_id)] = other_surface
+                other_low, other_high = np.quantile(other_surface, [0.05, 0.95], axis=0)
+                other_half_size = (other_high - other_low) / 2
+                if np.any(other_half_size < 0.005) or np.any(other_half_size > 0.15):
+                    raise ValueError(f"object {tracked_id} has implausible proxy dimensions")
+                additional_objects.append((
+                    int(tracked_id), np.asarray(track["translation_world"][0, index], dtype=float),
+                    np.asarray(track["rotation_world_object"][0, index], dtype=float),
+                    (other_low + other_high) / 2, other_half_size,
+                ))
     low, high = np.quantile(surface, [0.05, 0.95], axis=0)
     half_size = (high - low) / 2
     local_center = (low + high) / 2
     if np.any(half_size < 0.005) or np.any(half_size > 0.15):
         raise ValueError("fitted object proxy has implausible dimensions")
-    box_corners = np.array(np.meshgrid(*[[-value, value] for value in half_size])).reshape(3, -1).T
-    world_corners = (box_corners + local_center) @ orientation.T + origin
-    table_z = float(np.min(world_corners[:, 2]))
+    mesh_options = (mesh_path, gt_pose_path, gt_frame, object_name)
+    if any(value is not None for value in mesh_options) and not all(
+        value is not None for value in mesh_options
+    ):
+        raise ValueError("official mesh requires path, pose, frame and object name")
+    if other_mesh_paths and (not all_objects or gt_pose_path is None or gt_frame is None):
+        raise ValueError("other official meshes require all objects and GT poses")
+    if other_mesh_paths and set(other_mesh_paths) != {entry[0] for entry in additional_objects}:
+        raise ValueError("one official mesh is required for each other object")
+    mesh_text = None
+    mesh_details = {}
+    if mesh_path is not None:
+        mesh_text, aligned_vertices, mesh_details = aligned_mesh(
+            mesh_path, gt_pose_path, object_name, gt_frame,
+            orientation, origin, surface,
+        )
+        world_points = aligned_vertices @ orientation.T + origin
+    else:
+        box_corners = np.array(np.meshgrid(*[[-value, value] for value in half_size])).reshape(3, -1).T
+        world_points = (box_corners + local_center) @ orientation.T + origin
+    table_z = float(np.min(world_points[:, 2]))
+    other_mesh_texts = {}
+    other_mesh_details = {}
+    for tracked_id, other_origin, other_orientation, other_center, other_half_size in additional_objects:
+        if other_mesh_paths:
+            other_text, other_vertices, details = aligned_mesh(
+                other_mesh_paths[tracked_id], gt_pose_path,
+                f"{object_name.rsplit('_', 1)[0]}_{tracked_id}", gt_frame,
+                other_orientation, other_origin, other_surfaces[tracked_id],
+            )
+            other_mesh_texts[tracked_id] = other_text
+            other_mesh_details[tracked_id] = details
+            world_other = other_vertices @ other_orientation.T + other_origin
+        else:
+            other_corners = np.array(np.meshgrid(
+                *[[-value, value] for value in other_half_size],
+            )).reshape(3, -1).T
+            world_other = (other_corners + other_center) @ other_orientation.T + other_origin
+        table_z = min(table_z, float(np.min(world_other[:, 2])))
     with tempfile.TemporaryDirectory() as directory:
-        urdf_path = Path(directory) / "ur10_robotiq.urdf"
-        urdf_path.write_text(assembled_xml(model_root))
+        urdf_path = Path(directory) / f"{robot_key}_robotiq.urdf"
+        urdf_path.write_text(assembled_xml(model_root, robot_key))
         root = ET.fromstring(mujoco.MjSpec.from_file(str(urdf_path)).to_xml())
     option = root.find("option")
     if option is None:
@@ -68,6 +133,16 @@ def _scene(plan_path: Path, track_path: Path, model_root: Path,
         robot.append(child)
     for body in robot.iter("body"):
         body.set("gravcomp", "1")
+        if rubber_pads and body.get("name") in ("left_distal_phalanx", "right_distal_phalanx"):
+            for geom in body.findall("geom"):
+                geom.set("contype", "0")
+                geom.set("conaffinity", "0")
+            ET.SubElement(
+                body, "geom", name=f"{body.get('name').split('_')[0]}_rubber_pad",
+                type="box", pos=" ".join(map(str, PAD_OFFSET_M)),
+                size="0.011 0.003175 0.01875", mass="0",
+                friction="1.0 0.005 0.0001", rgba="0.8 0.8 0.8 1",
+            )
     world.append(robot)
     ET.SubElement(world, "geom", name="table", type="box",
                   pos=f"{origin[0]} {origin[1]} {table_z - 0.025}",
@@ -76,25 +151,92 @@ def _scene(plan_path: Path, track_path: Path, model_root: Path,
                          pos=" ".join(map(str, origin)),
                          quat=" ".join(map(str, Rotation.from_matrix(orientation).as_quat(scalar_first=True))))
     ET.SubElement(item, "freejoint", name="tracked_object_free")
-    ET.SubElement(item, "geom", name="tracked_object_geom", type="box",
-                  pos=" ".join(map(str, local_center)),
-                  size=" ".join(map(str, half_size)),
-                  mass=str(mass_kg), friction="1.2 0.005 0.0001", rgba="0.3 0.65 0.8 1")
+    object_geom_attributes = {
+        "name": "tracked_object_geom", "mass": str(mass_kg),
+        "friction": "1.2 0.005 0.0001", "rgba": "0.3 0.65 0.8 1",
+    }
+    if mesh_text is None:
+        object_geom_attributes.update(
+            type="box", pos=" ".join(map(str, local_center)),
+            size=" ".join(map(str, half_size)),
+        )
+    else:
+        object_geom_attributes.update(type="mesh", mesh="tracked_object_mesh")
+    ET.SubElement(item, "geom", **object_geom_attributes)
+    colors = ("0.9 0.5 0.1 1", "0.1 0.8 0.35 1", "0.8 0.15 0.2 1")
+    for index, (tracked_id, other_origin, other_orientation, other_center,
+                other_half_size) in enumerate(additional_objects):
+        other = ET.SubElement(
+            world, "body", name=f"tracked_object_{tracked_id}",
+            pos=" ".join(map(str, other_origin)),
+            quat=" ".join(map(str, Rotation.from_matrix(other_orientation).as_quat(scalar_first=True))),
+        )
+        ET.SubElement(other, "freejoint", name=f"tracked_object_{tracked_id}_free")
+        other_attributes = {
+            "name": f"tracked_object_{tracked_id}_geom",
+            "mass": str(mass_kg), "friction": "1.2 0.005 0.0001",
+            "rgba": colors[index % len(colors)],
+        }
+        if tracked_id in other_mesh_texts:
+            other_attributes.update(type="mesh", mesh=f"tracked_object_{tracked_id}_mesh")
+        else:
+            other_attributes.update(type="box", pos=" ".join(map(str, other_center)),
+                                    size=" ".join(map(str, other_half_size)))
+        ET.SubElement(other, "geom", **other_attributes)
     contacts = ET.SubElement(root, "contact")
     gripper_bodies = [body.get("name") for body in robot.iter("body")
                       if "phalanx" in body.get("name", "") or "knuckle" in body.get("name", "")]
-    for first, second in combinations(["wrist_3_link", *gripper_bodies], 2):
+    for first, second in combinations([robot_config.ee_frame, *gripper_bodies], 2):
         ET.SubElement(contacts, "exclude", body1=first, body2=second)
-    ET.SubElement(contacts, "exclude", body1="forearm_link", body2="wrist_2_link")
+    if robot_key == "ur10":
+        ET.SubElement(contacts, "exclude", body1="forearm_link", body2="wrist_2_link")
+    equality = ET.SubElement(root, "equality")
+    ET.SubElement(
+        equality, "weld", name="tracked_object_grasp", body1=robot_config.ee_frame,
+        body2="tracked_object", active="false",
+    )
+    if weld_all_objects:
+        for tracked_id, *_ in additional_objects:
+            ET.SubElement(
+                equality, "weld", name=f"tracked_object_{tracked_id}_grasp",
+                body1=robot_config.ee_frame, body2=f"tracked_object_{tracked_id}",
+                active="false",
+            )
     actuators = ET.SubElement(root, "actuator")
-    for name in ARM_JOINTS:
+    for name in robot_config.joint_names:
         ET.SubElement(actuators, "position", name=f"cmd_{name}", joint=name,
                       kp="1000", kv="100")
     ET.SubElement(actuators, "position", name="cmd_finger", joint="finger_joint",
                   kp="50", kv="5")
-    return mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode")), {
+    with tempfile.TemporaryDirectory() as directory:
+        if mesh_text is not None:
+            aligned_path = Path(directory) / "tracked_object_aligned.obj"
+            aligned_path.write_text(mesh_text)
+            assets = root.find("asset")
+            if assets is None:
+                assets = ET.SubElement(root, "asset")
+            ET.SubElement(
+                assets, "mesh", name="tracked_object_mesh", file=str(aligned_path),
+            )
+        for tracked_id, other_text in other_mesh_texts.items():
+            aligned_path = Path(directory) / f"tracked_object_{tracked_id}_aligned.obj"
+            aligned_path.write_text(other_text)
+            assets = root.find("asset")
+            if assets is None:
+                assets = ET.SubElement(root, "asset")
+            ET.SubElement(assets, "mesh", name=f"tracked_object_{tracked_id}_mesh",
+                          file=str(aligned_path))
+        model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
+    return model, {
         "proxy_half_size_m": half_size.tolist(), "table_z_m": table_z,
         "proxy_mass_kg": mass_kg,
+        "collision_geometry": "official_mesh_convex_hull" if mesh_text is not None else "partial_cloud_box",
+        **mesh_details,
+        "rubber_pad_collision_proxy": rubber_pads,
+        "all_object_proxies": all_objects,
+        "other_object_geometry": "official_mesh_convex_hull" if other_mesh_paths else "partial_cloud_box",
+        "other_mesh_details": other_mesh_details,
+        "other_object_ids": [object_id for object_id, *_ in additional_objects],
         "excluded_nominal_robot_pair": ["forearm_link", "wrist_2_link"],
         "initial_object_position_m": origin.tolist(),
         "reference_final_position_m": reference_final.tolist(),
@@ -107,16 +249,28 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
            pressure_rad: float = 0.0, mass_kg: float = 0.2,
            time_scale: float = 2.0, pad_friction: float = 1.0,
            phase_plan_path: Path | None = None,
-           grasp_dwell_s: float = 0.0) -> dict:
+           grasp_dwell_s: float = 0.0, rubber_pads: bool = False,
+           mesh_path: Path | None = None, gt_pose_path: Path | None = None,
+           gt_frame: int | None = None, object_name: str | None = None,
+           fully_close: bool = False) -> dict:
     if time_scale <= 0:
         raise ValueError("command time scale must be positive")
     if not 0 <= grasp_dwell_s <= 2.0:
         raise ValueError("grasp dwell must be in [0, 2] seconds")
     if not 0.5 <= pad_friction <= 3.0:
         raise ValueError("pad friction sensitivity must be in [0.5, 3.0]")
-    model, geometry = _scene(plan_path, track_path, model_root, object_id, mass_kg)
-    for name in ("left_distal_phalanx", "right_distal_phalanx"):
-        geom_id = int(model.body_geomadr[model.body(name).id])
+    model, geometry = _scene(
+        plan_path, track_path, model_root, object_id, mass_kg, rubber_pads,
+        mesh_path=mesh_path, gt_pose_path=gt_pose_path, gt_frame=gt_frame,
+        object_name=object_name,
+    )
+    contact_names = (("left_rubber_pad", "right_rubber_pad") if rubber_pads
+                     else ("left_distal_phalanx", "right_distal_phalanx"))
+    pad_geoms_by_side = {}
+    for name in contact_names:
+        geom_id = (model.geom(name).id if rubber_pads
+                   else int(model.body_geomadr[model.body(name).id]))
+        pad_geoms_by_side[name] = geom_id
         model.geom_friction[geom_id, 0] = pad_friction
     with h5py.File(plan_path) as plan:
         joints = np.asarray(plan["q"][frame_start:frame_end], dtype=float)
@@ -124,6 +278,7 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
         all_timestamps = np.asarray(plan["timestamps"], dtype=float)
         drive = pressure_commands(
             np.asarray(plan["gripper_joint_position"], dtype=float), grasp, pressure_rad,
+            fully_close=fully_close,
         )[frame_start:frame_end]
         timestamps = all_timestamps[frame_start:frame_end]
     scoring_grasp = grasp
@@ -145,20 +300,9 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
     if grasp_dwell_s:
         if grasp is None:
             raise ValueError("grasp dwell requires an object-aware plan")
-        close_frame = int(grasp["close_complete"])
-        if not frame_start <= close_frame < frame_start + len(joints) - 1:
-            raise ValueError("grasp close frame is outside the replay window")
-        command_index = 1 + close_frame - frame_start
-        command_times = np.insert(
-            command_times, command_index + 1,
-            command_times[command_index] + grasp_dwell_s,
-        )
-        command_times[command_index + 2:] += grasp_dwell_s
-        command_joints = np.insert(
-            command_joints, command_index + 1, command_joints[command_index], axis=0,
-        )
-        command_drive = np.insert(
-            command_drive, command_index + 1, command_drive[command_index],
+        command_times, command_joints, command_drive, _, _ = insert_grasp_dwell(
+            command_times, command_joints, command_drive,
+            int(grasp["close_complete"]), frame_start, grasp_dwell_s,
         )
     carry_time = release_time = None
     if scoring_grasp is not None:
@@ -182,10 +326,6 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
     object_geom = model.geom("tracked_object_geom").id
     table_geom = model.geom("table").id
     wrist_body = model.body("wrist_3_link").id
-    pad_geoms_by_side = {
-        name: int(model.body_geomadr[model.body(name).id])
-        for name in ("left_distal_phalanx", "right_distal_phalanx")
-    }
     pad_geoms = set(pad_geoms_by_side.values())
     initial_z = float(data.xpos[object_body, 2])
     peak_z = initial_z
@@ -195,6 +335,7 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
     pad_contact_steps = {name: 0 for name in pad_geoms_by_side}
     bilateral_contact_steps = 0
     object_contact_bodies = {}
+    object_contact_geoms = {}
     peak_penetration = 0.0
     robot_table_contact_steps = 0
     peak_robot_table_penetration = 0.0
@@ -244,6 +385,8 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
                 robot_object_contacts += 1
                 body_name = model.body(model.geom_bodyid[other]).name
                 object_contact_bodies[body_name] = object_contact_bodies.get(body_name, 0) + 1
+                geom_name = model.geom(other).name or body_name
+                object_contact_geoms[geom_name] = object_contact_geoms.get(geom_name, 0) + 1
                 peak_penetration = max(peak_penetration, max(0.0, -float(contact.dist)))
         for name, geom_id in pad_geoms_by_side.items():
             pad_contact_steps[name] += geom_id in touching_pads
@@ -322,6 +465,7 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
         "pad_contact_steps": pad_contact_steps,
         "bilateral_pad_contact_steps": bilateral_contact_steps,
         "object_contact_bodies": object_contact_bodies,
+        "object_contact_geoms": object_contact_geoms,
         "peak_robot_object_penetration_m": peak_penetration,
         "robot_table_contact_steps": robot_table_contact_steps,
         "peak_robot_table_penetration_m": peak_robot_table_penetration,
@@ -332,6 +476,7 @@ def replay(plan_path: Path, track_path: Path, model_root: Path, object_id: int,
         "sampled_trace": sampled_trace,
         "command_time_scale": time_scale,
         "grasp_pressure_offset_rad": pressure_rad,
+        "fully_close": fully_close,
         "grasp_dwell_s": grasp_dwell_s,
         "physics_timestep_s": model.opt.timestep,
         "pad_friction_coefficient": pad_friction,
@@ -365,14 +510,23 @@ if __name__ == "__main__":
     parser.add_argument("--frame-start", type=int, default=0)
     parser.add_argument("--frame-end", type=int, default=None)
     parser.add_argument("--pressure-rad", type=float, default=0.0)
+    parser.add_argument("--fully-close", action="store_true")
     parser.add_argument("--mass-kg", type=float, default=0.2)
     parser.add_argument("--time-scale", type=float, default=2.0)
     parser.add_argument("--pad-friction", type=float, default=1.0)
     parser.add_argument("--phase-plan", type=Path, default=None)
     parser.add_argument("--grasp-dwell-s", type=float, default=0.0)
+    parser.add_argument("--rubber-pads", action="store_true")
+    parser.add_argument("--official-mesh", type=Path)
+    parser.add_argument("--gt-object-poses", type=Path)
+    parser.add_argument("--gt-anchor-frame", type=int)
+    parser.add_argument("--object-name")
     args = parser.parse_args()
     print(json.dumps(replay(args.plan, args.track, args.models,
                             args.object_id, args.frame_start, args.frame_end,
                             args.pressure_rad, args.mass_kg, args.time_scale,
                             args.pad_friction, args.phase_plan,
-                            args.grasp_dwell_s), indent=2))
+                            args.grasp_dwell_s, args.rubber_pads,
+                            args.official_mesh, args.gt_object_poses,
+                            args.gt_anchor_frame, args.object_name,
+                            args.fully_close), indent=2))

@@ -37,6 +37,7 @@ from viki.retarget.grippers import (
     normalize_gripper,
 )
 from viki.retarget.object_grasp import plan_cube_grasp
+from viki.retarget.obstacles import SceneCollisionKinematics, load_object_boxes
 from viki.retarget.tracked_grasp import plan_tracked_grasp
 from viki.retarget.robots import RobotConfig, normalize_robot
 from viki.retarget.solver import (
@@ -72,6 +73,7 @@ class RetargetConfig:
     object_track_path: str | None
     object_id: int | None
     object_contact_overlap_mm: float
+    object_insertion_depth_mm: float
     approach_sec: float
     velocity_limit_scale: float
     collision_pairs: int
@@ -229,6 +231,7 @@ def config_from_options(
         object_track_path=str(values["object_track_path"]) if values.get("object_track_path") else None,
         object_id=int(values["object_id"]) if values.get("object_id") is not None else None,
         object_contact_overlap_mm=float(values.get("object_contact_overlap_mm", 6.0)),
+        object_insertion_depth_mm=float(values.get("object_insertion_depth_mm", 0.0)),
         approach_sec=float(
             _setting(values, "approach_sec", "RETARGET_APPROACH_SEC", 2.0)
         ),
@@ -270,11 +273,18 @@ def config_from_options(
         raise ValueError("object_track_path and object_id must be supplied together")
     if out.object_track_path and not out.object_grasp:
         raise ValueError("tracked grasp requires object_grasp enabled")
+    if out.object_track_path and not out.solver.collision_enabled:
+        raise ValueError("tracked grasp requires collision constraints")
     if (not np.isfinite(out.object_contact_overlap_mm)
             or not 0.0 <= out.object_contact_overlap_mm <= 12.0):
         raise ValueError("object_contact_overlap_mm must be finite and in [0, 12]")
     if out.object_track_path is None and out.object_contact_overlap_mm != 6.0:
         raise ValueError("object_contact_overlap_mm requires an explicit object track")
+    if (not np.isfinite(out.object_insertion_depth_mm)
+            or not 0.0 <= out.object_insertion_depth_mm <= 15.0):
+        raise ValueError("object_insertion_depth_mm must be finite and in [0, 15]")
+    if out.object_track_path is None and out.object_insertion_depth_mm != 0.0:
+        raise ValueError("object_insertion_depth_mm requires an explicit object track")
     if out.collision_pairs < 0 or out.collision_min_distance_m < 0.0:
         raise ValueError("collision settings must be non-negative")
     normalize_robot(out.robot)
@@ -388,6 +398,11 @@ def load_targets(
         if str(cfg.pose_source).strip().lower() == "hand_fit" and not p_key.startswith(
             "hand_fit"
         ):
+            if source_frame == "hocap_tag_1":
+                raise ValueError(
+                    f"{path}: HO-Cap retarget requested hand_fit but the fitted "
+                    "pose is absent; rerun prepare with the current HO-Cap V4 profile"
+                )
             logger.warning(
                 "%s requests pose_source=hand_fit but carries no hand_fit_* arrays; "
                 "retargeting LANDMARK poses instead. Anything compared against a "
@@ -400,6 +415,11 @@ def load_targets(
         valid = np.asarray(data["valid"], dtype=bool)
         anchor_confidence = np.ones(len(timestamps), dtype=np.float64)
         if cfg.target_position_anchor == "pinch_center":
+            if source_frame == "hocap_tag_1" and p_key.startswith("hand_fit"):
+                raise ValueError(
+                    "HO-Cap hand_fit with pinch_center would mix fitted orientation "
+                    "with landmark-derived position; select target_position_anchor=wrist"
+                )
             positions, anchor_valid, anchor_confidence = _pinch_centers(
                 data, len(timestamps)
             )
@@ -705,7 +725,7 @@ def retarget_episode(
                 Path(cfg.object_track_path), cfg.object_id, target_calib_p,
                 target_calib_r, hand_points, gripper_cfg.max_width_m,
                 lambda width: gripper_cfg.opening_for_contact_width(assembly, width),
-                cfg.object_contact_overlap_mm,
+                cfg.object_contact_overlap_mm, cfg.object_insertion_depth_mm,
             )
         else:
             object_grasp = plan_cube_grasp(
@@ -768,6 +788,22 @@ def retarget_episode(
         floor_normal=base_rotation(cfg.base_rpy_deg).T @ np.array([0.0, 0.0, 1.0]),
         floor_offset_m=cfg.table_plane_z_m - float(cfg.base_position[2]),
     )
+    obstacles = ()
+    if cfg.object_track_path is not None:
+        selected, obstacles = load_object_boxes(
+            Path(cfg.object_track_path), cfg.object_id, len(target_robot_p),
+            cfg.base_position, cfg.base_rpy_deg,
+        )
+        attachment_possible = np.zeros(len(target_robot_p), dtype=bool)
+        attachment_possible[
+            object_grasp.diagnostics["grasp_start"]:
+            object_grasp.diagnostics["phase_bounds"][2]
+        ] = True
+        kinematics = SceneCollisionKinematics(
+            kinematics, selected, obstacles, attachment_possible,
+            np.isin(object_grasp.phases, (1, 2, 3)),
+            target_robot_p, target_robot_r,
+        )
     urdf_velocity_limit = kinematics.velocity_limit.copy()
     kinematics.velocity_limit *= cfg.velocity_limit_scale
     result = solve_trajectory(
@@ -887,8 +923,41 @@ def retarget_episode(
     )
     target_axis_z = target_calib_r[:, 2, 2]
     achieved_axis_z = achieved_calib_r[:, 2, 2]
+    object_min_margin = None
+    robot_object_min_margin = None
+    carried_object_min_margin = None
+    if cfg.object_track_path is not None:
+        object_min_margin = np.inf
+        robot_object_min_margin = np.inf
+        carried_object_min_margin = np.inf
+        for frame, configuration in enumerate(result.q):
+            kinematics.set_frame(frame)
+            margins = kinematics.object_margins(configuration)
+            carried_count = len(obstacles) if attachment_possible[frame] else 0
+            robot_margins = margins[:-carried_count] if carried_count else margins
+            robot_object_min_margin = min(
+                robot_object_min_margin, float(np.min(robot_margins))
+            )
+            if carried_count:
+                carried_object_min_margin = min(
+                    carried_object_min_margin, float(np.min(margins[-carried_count:]))
+                )
+        if not np.isfinite(carried_object_min_margin):
+            carried_object_min_margin = None
+        object_min_margin = min(
+            robot_object_min_margin,
+            carried_object_min_margin if carried_object_min_margin is not None else np.inf,
+        )
     metrics = {
         "object_grasp": object_grasp.diagnostics if object_grasp is not None else None,
+        "object_collision": (
+            {"model": "canonical_cloud_enclosing_boxes",
+             "obstacle_ids": [box.identifier for box in obstacles],
+             "clearance_m": 0.005, "min_margin_m": object_min_margin,
+             "min_robot_object_margin_m": robot_object_min_margin,
+             "min_carried_object_margin_m": carried_object_min_margin}
+            if cfg.object_track_path is not None else None
+        ),
         "object_grasp_carry_width_m": (
             float(np.median(gripper_contact_width[object_grasp.phases == 2]))
             if object_grasp is not None else None

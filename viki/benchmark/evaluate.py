@@ -108,7 +108,7 @@ def _metrics(points: np.ndarray, ground_truth: np.ndarray, eligible: np.ndarray,
     return result
 
 
-def evaluate_episode(episode_dir: str | Path) -> dict:
+def evaluate_episode(episode_dir: str | Path, *, expected_profile: str | None = None) -> dict:
     """Score raw per-camera and prepared hand points against HO-Cap MANO labels.
 
     Uses the importer's camera/world transform and exact capture ticks; no
@@ -117,6 +117,9 @@ def evaluate_episode(episode_dir: str | Path) -> dict:
     alongside MPJPE. No pipeline stage is run or modified.
     """
     episode_dir = Path(episode_dir)
+    if expected_profile is not None:
+        from viki.benchmark.hocap_provenance import require_hand_fit_clean
+        require_hand_fit_clean(episode_dir, profile=expected_profile)
     meta = json.loads((episode_dir / "meta.json").read_text())
     if meta.get("source") != "hocap" or meta.get("timestamps") != "synthetic":
         raise ValueError("expected a frame-aligned HO-Cap import")
@@ -191,6 +194,25 @@ def evaluate_episode(episode_dir: str | Path) -> dict:
             timestamps = np.asarray(data["timestamps"], dtype=np.int64)
             landmark_ids = np.asarray(data["landmark_ids"], dtype=np.int64)
             smoothed = _ordered_points(data["smoothed_points"], landmark_ids)
+            profile = str(np.asarray(data["perception_profile"]).item()) if "perception_profile" in data.files else "config"
+            fitted_pose = "hand_fit_positions" in data.files and "hand_fit_rotations" in data.files
+            overlay = (str(np.asarray(data["hand_fit_overlay_variant"]).item())
+                       if "hand_fit_overlay_variant" in data.files else None)
+            fitted_joints = None
+            if fitted_pose and "geometry_hand_params_json" in data.files:
+                from viki.perception.hand_model import (
+                    HandParams, build, fk_landmark_positions,
+                )
+                hand = build(HandParams.from_dict(json.loads(
+                    str(np.asarray(data["geometry_hand_params_json"]).item())
+                )))
+                angles = np.asarray(data["hand_fit_joint_angles"], dtype=float)
+                if angles.shape[0] != len(timestamps):
+                    raise ValueError("fitted hand angles and timestamps differ")
+                fitted_joints = np.asarray([
+                    fk_landmark_positions(hand, row, list(range(HAND_LM_COUNT)))
+                    for row in angles
+                ], dtype=np.float64)
             observed = (
                 _ordered_mask(data["observed_mask"], landmark_ids)
                 if "observed_mask" in data.files else None
@@ -206,7 +228,21 @@ def evaluate_episode(episode_dir: str | Path) -> dict:
         aligned = _place_rows(
             smoothed, timestamps, sync_to_frame, frame_count, fill=np.nan
         )
+        report["prepare"]["profile"] = profile
+        report["prepare"]["articulated_pose"] = {
+            "present": fitted_pose, "overlay": overlay,
+            "joint_mpjpe_scored": fitted_joints is not None,
+            "joint_source": ("forward kinematics of active cln.npz hand_fit_joint_angles "
+                             "and geometry_hand_params_json" if fitted_joints is not None else None),
+        }
         report["prepare"]["smoothed_all"] = _metrics(aligned, ground_truth, eligible)
+        if fitted_joints is not None:
+            fitted_aligned = _place_rows(
+                fitted_joints, timestamps, sync_to_frame, frame_count, fill=np.nan
+            )
+            report["prepare"]["hand_fit_joints"] = _metrics(
+                fitted_aligned, ground_truth, eligible
+            )
         if observed is not None:
             observed_full = _place_rows(
                 observed, timestamps, sync_to_frame, frame_count, fill=False

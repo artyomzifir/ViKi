@@ -12,6 +12,7 @@ services:
       - ./data:/app/data:ro
       - ./models:/app/models:ro
       - ./data/experiments/bc-v1:/app/output
+      - ./data/experiments/hocap-rl:/app/rl-output
     environment:
       - PYTHONPATH=/app
       - HOME=/tmp

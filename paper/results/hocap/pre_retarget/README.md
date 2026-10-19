@@ -25,5 +25,5 @@ The `G18_2` outlier is retained. See
 `docs/2026-10-13-hocap-full-batch-results.md` for the full protocol and
 unrounded values embedded in the daily log.
 
-Do not replace these files when the later retarget batch runs. Put its numerical
-results in a separate snapshot.
+Do not replace these files when retargeting runs. Its completed numerical
+snapshot is in `paper/results/hocap/retarget/`.
