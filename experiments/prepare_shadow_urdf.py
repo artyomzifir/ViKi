@@ -59,6 +59,16 @@ for mesh in arm.findall('.//mesh'):
         geometry=trimesh.load(src,force='mesh')
         geometry.export(dst)
     mesh.set('filename',f'/app/models/shadow_hand/converted/{dst.name}')
+# A visible, collidable flange adapter fills the declared 55-mm mount gap.
+mount=ET.SubElement(arm,'link',name='shadow_adapter')
+for kind in ['visual','collision']:
+    part=ET.SubElement(mount,kind)
+    ET.SubElement(part,'origin',xyz='0 0 0.0275',rpy='0 0 0')
+    geom=ET.SubElement(part,'geometry')
+    ET.SubElement(geom,'cylinder',radius='0.025',length='0.055')
+fixed=ET.SubElement(arm,'joint',name='shadow_adapter_mount',type='fixed')
+ET.SubElement(fixed,'parent',link='tool0')
+ET.SubElement(fixed,'child',link='shadow_adapter')
 compiler=ET.SubElement(arm,'mujoco')
 ET.SubElement(compiler,'compiler',discardvisual='false')
 out=Path('data/_hocap_demo_source/ur10_shadow.urdf')
