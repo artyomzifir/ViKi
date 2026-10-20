@@ -38,7 +38,7 @@ def export(episode):
     errors=np.linalg.norm(values['target_position']-values['achieved_position'],axis=1)
     status=json.loads(str(values['report_json']))['solver_status']
     plan_hash=hashlib.sha256(source.read_bytes()).hexdigest()
-    replay_path=Path('data/experiments/hocap-rl/tesollo_grasp_offset_gui/report.json')
+    replay_path=Path('data/experiments/hocap-rl/tesollo_parallel_gui/report.json')
     physical_report=json.loads(replay_path.read_text()) if replay_path.is_file() else None
     if physical_report and physical_report.get('plan_sha256') != plan_hash:
         physical_report=None

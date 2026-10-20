@@ -10,6 +10,8 @@ hard constraints.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from multiprocessing import get_context, get_all_start_methods
 from typing import Callable, Protocol
 
 import numpy as np
@@ -357,14 +359,64 @@ def max_reach_m(kinematics, *, samples: int = 4096, seed: int = 0) -> float:
     return best
 
 
+_constraint_worker_kinematics: Kinematics | None = None
+
+
+def _init_constraint_worker(kinematics: Kinematics) -> None:
+    # Fork gives each process its own mutable Pinocchio model/data and frame.
+    # The read-only geometry pages remain copy-on-write shared.
+    global _constraint_worker_kinematics
+    _constraint_worker_kinematics = kinematics
+
+
+def _constraint_chunk_worker(
+    chunk: tuple[np.ndarray, np.ndarray],
+) -> tuple[float, float]:
+    if _constraint_worker_kinematics is None:
+        raise RuntimeError("constraint worker was not initialized")
+    indices, configurations = chunk
+    floor_min = np.inf
+    collision_min = np.inf
+    for frame, configuration in zip(indices, configurations):
+        _set_frame(_constraint_worker_kinematics, int(frame))
+        floor_min = min(floor_min, _minimum_floor_margin(_constraint_worker_kinematics, configuration))
+        collision_min = min(collision_min, _minimum_collision_margin(_constraint_worker_kinematics, configuration))
+    return floor_min, collision_min
+
+
+def _parallel_constraint_margins(
+    kinematics: Kinematics,
+    trajectory: np.ndarray,
+    frame_indices: np.ndarray,
+    workers: int,
+) -> tuple[float, float]:
+    if "fork" not in get_all_start_methods():
+        raise RuntimeError("parallel exact mesh checking requires a Unix fork context")
+    process_count = min(workers, len(trajectory), os.cpu_count() or 1)
+    indices = np.arange(len(trajectory))
+    chunks = [
+        (frame_indices[part], trajectory[part])
+        for part in np.array_split(indices, min(len(indices), process_count * 4))
+        if len(part)
+    ]
+    with get_context("fork").Pool(
+        processes=process_count,
+        initializer=_init_constraint_worker,
+        initargs=(kinematics,),
+    ) as pool:
+        results = pool.map(_constraint_chunk_worker, chunks)
+    return min(value[0] for value in results), min(value[1] for value in results)
+
+
 def trajectory_constraint_margins(
     kinematics: Kinematics,
     trajectory: np.ndarray,
     dt: float,
     *,
     frame_indices: np.ndarray | None = None,
+    workers: int = 1,
 ) -> dict[str, float]:
-    """Evaluate exact joint, velocity, floor and collision margins."""
+    """Evaluate exact margins; ``workers>1`` checks frames in forked CPU processes."""
     q = np.asarray(trajectory, dtype=np.float64)
     if q.ndim != 2 or q.shape[1] != int(kinematics.nq) or len(q) == 0:
         raise ValueError("trajectory must be a non-empty (T, nq) array")
@@ -372,6 +424,8 @@ def trajectory_constraint_margins(
         raise ValueError("dt must be positive")
     if frame_indices is not None and np.asarray(frame_indices).shape != (len(q),):
         raise ValueError("frame_indices must have one entry per trajectory frame")
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError("workers must be a positive integer")
     q_min = np.asarray(kinematics.q_min, dtype=np.float64)
     q_max = np.asarray(kinematics.q_max, dtype=np.float64)
     joint_margin = float(np.min(np.minimum(q - q_min, q_max - q)))
@@ -382,13 +436,19 @@ def trajectory_constraint_margins(
         ))
     else:
         velocity_margin = np.inf
+    if workers == 1 or len(q) == 1:
+        floor_margin = _trajectory_min_floor_margin(kinematics, q, frame_indices)
+        collision_margin = _trajectory_min_collision_margin(kinematics, q, frame_indices)
+    else:
+        frames = np.arange(len(q)) if frame_indices is None else np.asarray(frame_indices)
+        floor_margin, collision_margin = _parallel_constraint_margins(
+            kinematics, q, frames, workers
+        )
     return {
         "joint": joint_margin,
         "velocity": velocity_margin,
-        "floor": _trajectory_min_floor_margin(kinematics, q, frame_indices),
-        "collision": _trajectory_min_collision_margin(
-            kinematics, q, frame_indices
-        ),
+        "floor": floor_margin,
+        "collision": collision_margin,
     }
 
 

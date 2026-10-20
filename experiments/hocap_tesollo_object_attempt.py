@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import argparse
 import time
+import os
 import resource
 import hashlib
 import json
@@ -23,22 +24,29 @@ from viki.retarget.frames import calibration_to_robot, calibration_rotation_to_r
 from viki.retarget.robots import normalize_robot
 from viki.retarget.solver import PinocchioKinematics, BatchWeights, BatchOptions, solve_trajectory, trajectory_constraint_margins
 
+def total_cpu_time():
+    children=resource.getrusage(resource.RUSAGE_CHILDREN)
+    return time.process_time()+children.ru_utime+children.ru_stime
+
 _profile=[]
-_last_wall=time.perf_counter(); _last_cpu=time.process_time()
+_last_wall=time.perf_counter(); _last_cpu=total_cpu_time()
 def stage(label):
     global _last_wall,_last_cpu
-    wall=time.perf_counter(); cpu=time.process_time()
+    wall=time.perf_counter(); cpu=total_cpu_time()
     _profile.append(dict(stage=label,wall_sec=wall-_last_wall,cpu_sec=cpu-_last_cpu))
     print("PROFILE",label,round(wall-_last_wall,3),round(cpu-_last_cpu,3),flush=True)
     _last_wall=wall;_last_cpu=cpu
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--solver',choices=['framewise','batch'],default='framewise')
+parser.add_argument('--constraint-workers',type=int,default=min(8, os.cpu_count() or 1),help='forked CPU processes for exact whole-trajectory constraint checks')
 parser.add_argument('--grasp',choices=['hold','anatomical'],default='hold')
 parser.add_argument('--closure-m',type=float,default=.005)
 parser.add_argument('--diagnostic-plan',action='store_true',help='save a visibly labeled infeasible plan for GUI diagnosis')
 args=parser.parse_args()
 if not 0 <= args.closure_m <= .012: parser.error('closure must be between 0 and 12 mm')
+if args.constraint_workers < 1: parser.error('constraint workers must be positive')
+if args.constraint_workers > (os.cpu_count() or 1): parser.error('constraint workers exceed logical CPU count')
 episode=Path('data/datasets/hocap_demo_object_v4/g10_object2_190')
 provenance= require_hand_fit_clean(episode)
 source=episode/'cln.npz'
@@ -178,7 +186,8 @@ for t in range(len(seed_q)):
 stage('arm_pose_initialization')
 np.savez_compressed(episode/'tesollo_seed_diagnostic.npz',arm_q=seed_q,**{f'hand_{n}':joint_map[n] for n in tesollo_names})
 print('arm pose initialization complete',flush=True)
-seed_margins=trajectory_constraint_margins(kin,seed_q,float(np.median(np.diff(timestamps)))/1e6)
+seed_margins=trajectory_constraint_margins(kin,seed_q,float(np.median(np.diff(timestamps)))/1e6,
+    workers=args.constraint_workers)
 stage('whole_trajectory_constraints')
 print('seed margins',seed_margins,flush=True)
 attempt_path=episode/'tesollo_object_attempt.json'
@@ -210,7 +219,8 @@ except RuntimeError as exc:
     raise
 stage('solver')
 error=np.linalg.norm(result.achieved_position-target_robot_p,axis=1)*1000
-margin=seed_margins if args.solver=='framewise' else trajectory_constraint_margins(kin,result.q,float(np.median(np.diff(timestamps)))/1e6)
+margin=seed_margins if args.solver=='framewise' else trajectory_constraint_margins(kin,result.q,float(np.median(np.diff(timestamps)))/1e6,
+    workers=args.constraint_workers)
 report={'schema':'viki_tesollo_object_retarget_v1','episode':episode.name,
     'hand_source':'final_optimized_hand_fit','object_id':2,
     'object_mode':'tracked_object_relative_wrist_with_contact_and_lift_phases',
@@ -220,6 +230,7 @@ report={'schema':'viki_tesollo_object_retarget_v1','episode':episode.name,
     'contact_window':[first,last+1],'object_relative_window':[carry_start,carry_end+1],
     'anchor_frame':anchor,'source_hashes':{str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in (source,track_path,seed_path,model_path)},
     'seed_role':'UR10 initial joint guess only; target generated from final hand fit and tracked object',
+    'constraint_workers':args.constraint_workers,'constraint_device':'cpu',
     'joint_map':'20 Tesollo joints fitted to FK of final optimized human hand; robot phalanx lengths and URDF bounds; sampled finger clearance objective',
     'finger_fit':'segment_direction_fit_with_sampled_clearance_objective','solver_status':result.status,'position_median_mm':float(np.median(error)),
     'position_mean_mm':float(np.mean(error)),
@@ -246,7 +257,7 @@ np.savez_compressed(out,timestamps=timestamps,source_timestamps=source_timestamp
     base_position=base_p,base_rpy_deg=base_rpy,report_json=json.dumps(report))
 stage('retiming_and_save')
 profile_path=episode/'tesollo_object_profile.json'
-profile_path.write_text(json.dumps({'schema':'viki_stage_profile_v1','stages':_profile,'total_wall_sec':sum(x['wall_sec'] for x in _profile),'total_cpu_sec':sum(x['cpu_sec'] for x in _profile),'process_max_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},indent=2)+'\n')
+profile_path.write_text(json.dumps({'schema':'viki_stage_profile_v1','stages':_profile,'total_wall_sec':sum(x['wall_sec'] for x in _profile),'total_cpu_sec':sum(x['cpu_sec'] for x in _profile),'process_max_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'constraint_workers':args.constraint_workers,'constraint_device':'cpu'},indent=2)+'\n')
 attempt['status']='solved' if result.status == 'framewise_ik_whole_trajectory_validated' else 'diagnostic_unvalidated_collision'
 attempt['plan']=str(out)
 attempt_path.write_text(json.dumps(attempt,indent=2)+'\n')

@@ -21,6 +21,10 @@ The PoC consumes the hand landmarks and palm orientation in `cln.npz` and writes
   or by clearing the Retarget-tab checkbox. After retarget,
   `viki object-relative <episode>` writes a diagnostic relative trajectory.
 
+## Parallel offline constraint checking
+
+`trajectory_constraint_margins(..., workers=N)` keeps the exact joint, velocity, floor and mesh-collision checks. For `N>1` it partitions independent frames across forked CPU processes, each with private mutable Pinocchio data; `workers=1` retains the original serial path. This is for offline Unix/Linux callers, not a threaded web worker. The Tesollo 190-frame experiment defaults to up to 8 processes and accepts `--constraint-workers N`; use `1` for a serial reference. CUDA is not used for these exact hpp-fcl mesh distances.
+
 ## Experimental object-aware cube grasp
 
 ### HO-Cap single-object side-grasp pilot
