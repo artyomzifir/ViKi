@@ -708,6 +708,17 @@ async def shadow_mesh(mesh_path: str):
     return FileResponse(target)
 
 
+@_ep.get("/retarget/tesollo-mesh/{mesh_path:path}")
+async def tesollo_mesh(mesh_path: str):
+    root = (Path(config.MODELS_DIR) / "tesollo_dg5f_mujoco").resolve()
+    target = (root / mesh_path).resolve()
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(404, "mesh not found")
+    if target.suffix.lower() not in {".obj", ".stl", ".dae"}:
+        raise HTTPException(415, "unsupported mesh type")
+    return FileResponse(target)
+
+
 @_ep.get("/episode/{ep_id}/retarget")
 async def retarget_scene(ep_id: str, artifact: str = "default"):
     """Return browser-ready robot and comparison trajectories from plan.h5."""
@@ -715,15 +726,19 @@ async def retarget_scene(ep_id: str, artifact: str = "default"):
     from viki.retarget.frames import base_transform
 
     ep = _episode(ep_id)
-    if artifact == "shadow_object":
+    if artifact in {"shadow_object", "tesollo_object"}:
         import hashlib
-        scene_path = ep.root / "shadow_object_viewer.json"
-        plan_path = ep.root / "shadow_object_plan.npz"
+        scene_path = ep.root / f"{artifact}_viewer.json"
+        plan_path = ep.root / f"{artifact}_plan.npz"
         if not scene_path.is_file() or not plan_path.is_file():
             return {"ready": False, "id": ep.id}
         scene = json.loads(scene_path.read_text())
         if scene.get("plan_sha256") != hashlib.sha256(plan_path.read_bytes()).hexdigest():
-            raise HTTPException(409, "Shadow viewer artifact is stale; regenerate it")
+            raise HTTPException(409, f"{artifact} viewer artifact is stale; regenerate it")
+        if artifact == "tesollo_object":
+            model_path = Path("data/_hocap_demo_source/ur10_tesollo.urdf")
+            if not model_path.is_file() or scene.get("model_sha256") != hashlib.sha256(model_path.read_bytes()).hexdigest():
+                raise HTTPException(409, "Tesollo viewer model changed; regenerate it")
         return scene
     if artifact != "default":
         raise HTTPException(400, "unknown retarget artifact")

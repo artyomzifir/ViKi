@@ -20,7 +20,7 @@ export function mount(view) {
         <select data-role="variant"><option value="active">active</option></select>
       </label>
       <label class="viewer-field">Robot plan
-        <select data-role="plan"><option value="default">Default plan</option><option value="shadow_object">Shadow Hand · object plan</option></select>
+        <select data-role="plan"><option value="default">Default plan</option><option value="tesollo_object">Tesollo DG5F · diagnostic object plan</option><option value="shadow_object">Shadow Hand · object plan</option></select>
       </label>
       <div class="viewer-status" data-role="status">pick an episode</div>
       <div class="viewer-object-status" data-role="object-status" hidden></div>
