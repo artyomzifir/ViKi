@@ -18,6 +18,7 @@ from scipy.spatial.transform import Rotation, Slerp
 from scipy.optimize import least_squares
 from viki.benchmark.hocap_provenance import require_hand_fit_clean
 from experiments.tesollo_hand_fit import fit_tesollo, HUMAN_FROM_TESOLLO
+from experiments.prepare_tesollo_urdf import PALM_ROLL_RAD
 from viki.retarget.frames import calibration_to_robot, calibration_rotation_to_robot, robot_to_calibration
 from viki.retarget.robots import normalize_robot
 from viki.retarget.solver import PinocchioKinematics, BatchWeights, BatchOptions, solve_trajectory, trajectory_constraint_margins
@@ -84,6 +85,27 @@ weights[first:carry_start+1]=np.linspace(0,1,carry_start-first+1)
 weights[carry_start:carry_end+1]=1
 weights[carry_end:last+1]=np.linspace(1,0,last-carry_end+1)
 target_p=(1-weights[:,None])*human_p+weights[:,None]*object_p
+# Collision-distance scan against the real DG5F and object meshes: the
+# unshifted side approach hits with finger 5 before the thumb reaches it.
+# Move the approach above and across the object, then carry the offset in
+# the object's frame. This remains a derived path from final hand-fit data.
+pregrasp_offset=np.array([.030,.030,.020])
+grip_offset=np.array([.020,.040,.020])
+local_grip_offset=obj_r[anchor].T@grip_offset
+pose_offset=np.zeros_like(target_p)
+for i in range(len(timestamps)):
+    if i < 10: continue
+    if i < 23:
+        u=(i-10)/(23-10);u=u*u*(3-2*u)
+        pose_offset[i]=u*pregrasp_offset
+    elif i < anchor:
+        u=(i-23)/(anchor-23)
+        pose_offset[i]=(1-u)*pregrasp_offset+u*grip_offset
+    elif i <= last:
+        pose_offset[i]=obj_r[i]@local_grip_offset
+    elif i <= last+12:
+        pose_offset[i]=(1-(i-last)/12)*(obj_r[last]@local_grip_offset)
+target_p+=pose_offset
 target_r=[]
 for i,w in enumerate(weights):
     pair=Rotation.from_matrix(np.stack([human_r[i],object_r[i]]))
@@ -92,7 +114,10 @@ target_r=np.stack(target_r)
 # Human palm axes: +x fingers, +y little finger, +z palmar.
 # Tesollo palm axes: +z fingers, -y little finger, +x palmar.
 human_from_tesollo=HUMAN_FROM_TESOLLO
+# Match the selected DG5F twist around the visible UR10 flange axis.
+# Gallery orientation A was selected after contact-geometry comparison.
 target_r=np.einsum('tij,jk->tik',target_r,human_from_tesollo)
+target_r=np.einsum('tij,jk->tik',target_r,Rotation.from_euler('z',PALM_ROLL_RAD).as_matrix())
 
 model=pin.buildModelFromUrdf(str(model_path))
 collision=pin.buildGeomFromUrdf(model,str(model_path),pin.GeometryType.COLLISION)
@@ -190,6 +215,8 @@ report={'schema':'viki_tesollo_object_retarget_v1','episode':episode.name,
     'hand_source':'final_optimized_hand_fit','object_id':2,
     'object_mode':'tracked_object_relative_wrist_with_contact_and_lift_phases',
     'finger_grasp_mode':args.grasp,'fingertip_closure_m':args.closure_m if args.grasp=='hold' else 0.,
+    'approach_offset_world_m':pregrasp_offset.tolist(),'anchor_offset_world_m':grip_offset.tolist(),
+    'offset_derivation':'collision-distance scan of DG5F geoms against tracked object-2 mesh',
     'contact_window':[first,last+1],'object_relative_window':[carry_start,carry_end+1],
     'anchor_frame':anchor,'source_hashes':{str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in (source,track_path,seed_path,model_path)},
     'seed_role':'UR10 initial joint guess only; target generated from final hand fit and tracked object',

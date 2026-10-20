@@ -1,7 +1,9 @@
 """Build a local UR10 + right Tesollo DG5F diagnostic model.
 
-The vendor DG5F geometry and joint limits stay intact.  The DG5F mount follows the vendor UR10e pose at 110 mm from wrist_3;
-only the final 10 mm spacer is a provisional cylinder for UR10.  It is not manufacturing CAD.
+The vendor DG5F geometry and joint limits stay intact. The DG5F circular
+mount sits on the visible UR10 wrist_3 end face along its +Z axis. The
+twist around the axis is 0 degrees (orientation A, selected by the user). The
+10 mm spacer is a provisional cylinder, not manufacturing CAD.
 """
 from pathlib import Path
 import hashlib
@@ -16,6 +18,7 @@ SOURCE = VENDOR / 'robot/urdf/dg5f_right.urdf'
 ASSETS = VENDOR / 'robot/assets/dg5f_right'
 CONVERTED = VENDOR / 'converted'
 OUT = ROOT / 'data/_hocap_demo_source/ur10_tesollo.urdf'
+PALM_ROLL_RAD = 0.0  # orientation A: straight axial mount, chosen after A-D comparison
 
 
 def build():
@@ -51,30 +54,29 @@ def build():
         arm.append(link)
     for joint in hand.findall('joint'):
         arm.append(joint)
-    # Vendor wrist_3_link's attachment site is at +Y=0.100 m and DG5F
-    # mount at +Y=0.110 m.  Only the 10 mm gap between them is a spacer.
-    # The mount rotation is the source quaternion [-1, 1, -1, -1].
-    # Official UR10 flange/tool0 rotations cancel, so tool0 equals wrist_3.
-    mount_offset = 0.110
+    # Vendor UR10e uses wrist_3 +Y.  Our official UR10 visual/collision mesh
+    # has its circular end face on wrist_3 +Z, at z=0 after its URDF origin.
+    # Mount the DG5F circular base on that visible end face; the only
+    # provisional geometry is the 10 mm straight cylinder between faces.
+    mount_offset = 0.010
     adapter_length = 0.010
-    adapter_center = mount_offset - adapter_length / 2
-    # Local DG +Z is the mount/palm/finger axis; vendor rotation sends it
-    # exactly to the UR10 wrist_3 +Y output axis.
+    adapter_center = adapter_length / 2
     import numpy as np
     from scipy.spatial.transform import Rotation
-    mount_rotation = Rotation.from_euler('xyz', [-np.pi/2, np.pi/2, 0]).as_matrix()
-    assert np.allclose(mount_rotation @ [0, 0, 1], [0, 1, 0], atol=1e-12)
-    assert abs((adapter_center - adapter_length/2) - 0.100) < 1e-12
+    mount_rotation = Rotation.from_euler('z', PALM_ROLL_RAD)
+    mount_rpy = mount_rotation.as_euler('xyz')
+    assert np.allclose(mount_rotation.apply([0, 0, 1]), [0, 0, 1], atol=1e-12)
+    assert abs((adapter_center - adapter_length/2)) < 1e-12
     assert abs((adapter_center + adapter_length/2) - mount_offset) < 1e-12
     bridge = ET.SubElement(arm, 'link', name='tesollo_adapter')
     inertial = ET.SubElement(bridge, 'inertial')
-    ET.SubElement(inertial, 'origin', xyz=f'0 {adapter_center:.6f} 0', rpy='0 0 0')
+    ET.SubElement(inertial, 'origin', xyz=f'0 0 {adapter_center:.6f}', rpy='0 0 0')
     ET.SubElement(inertial, 'mass', value='0.10')
-    ET.SubElement(inertial, 'inertia', ixx='0.00012', ixy='0', ixz='0',
-                  iyy='0.000045', iyz='0', izz='0.00012')
+    ET.SubElement(inertial, 'inertia', ixx='0.0000204', ixy='0', ixz='0',
+                  iyy='0.0000204', iyz='0', izz='0.0000392')
     for kind in ('visual', 'collision'):
         node = ET.SubElement(bridge, kind)
-        ET.SubElement(node, 'origin', xyz=f'0 {adapter_center:.6f} 0', rpy='-1.5707963267948966 0 0')
+        ET.SubElement(node, 'origin', xyz=f'0 0 {adapter_center:.6f}', rpy='0 0 0')
         ET.SubElement(ET.SubElement(node, 'geometry'), 'cylinder', radius='0.028', length=f'{adapter_length:.6f}')
     joint = ET.SubElement(arm, 'joint', name='tool0_tesollo_adapter', type='fixed')
     ET.SubElement(joint, 'parent', link='tool0')
@@ -83,7 +85,8 @@ def build():
     joint = ET.SubElement(arm, 'joint', name='tesollo_adapter_mount', type='fixed')
     ET.SubElement(joint, 'parent', link='tesollo_adapter')
     ET.SubElement(joint, 'child', link='rl_dg_mount')
-    ET.SubElement(joint, 'origin', xyz=f'0 {mount_offset:.6f} 0', rpy='-1.5707963267948966 1.5707963267948966 0')
+    ET.SubElement(joint, 'origin', xyz=f'0 0 {mount_offset:.6f}',
+                  rpy=' '.join(f'{v:.16g}' for v in mount_rpy))
     # As in the Shadow diagnostic, convert UR10's DAE visuals to OBJ for
     # Pinocchio and MuJoCo; collision bodies remain from the original URDF.
     for mesh in arm.findall('.//mesh'):
@@ -102,7 +105,8 @@ def build():
     print(json.dumps(dict(model=str(OUT.relative_to(ROOT)),
                           sha256=hashlib.sha256(OUT.read_bytes()).hexdigest(),
                           converted_visuals=len(converted),
-                          adapter='cylinder radius 28 mm length 10 mm at wrist3 Y=100..110 mm; provisional',
+                          adapter='straight cylinder radius 28 mm length 10 mm at wrist3 Z=0..10 mm; provisional',
+                          palm_roll_about_visible_flange_deg=float(np.rad2deg(PALM_ROLL_RAD)),
                           mount_axis_alignment=1.0), indent=2))
 
 

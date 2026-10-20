@@ -37,8 +37,14 @@ def export(episode):
             item['mesh_url']='/api/pipeline/retarget/tesollo-mesh/'+absolute[len(prefix):]
     errors=np.linalg.norm(values['target_position']-values['achieved_position'],axis=1)
     status=json.loads(str(values['report_json']))['solver_status']
-    label='UR10 + Tesollo DG5F' + (' (diagnostic, collision)' if status != 'framewise_ik_whole_trajectory_validated' else '')
-    scene=dict(ready=True,id=episode.name,robot=label,robot_key='ur10',
+    plan_hash=hashlib.sha256(source.read_bytes()).hexdigest()
+    replay_path=Path('data/experiments/hocap-rl/tesollo_grasp_offset_gui/report.json')
+    physical_report=json.loads(replay_path.read_text()) if replay_path.is_file() else None
+    if physical_report and physical_report.get('plan_sha256') != plan_hash:
+        physical_report=None
+    physical_status=('passed' if physical_report['success'] else 'failed') if physical_report else 'unverified'
+    label='UR10 + Tesollo DG5F' + (' (diagnostic geometry)' if status != 'framewise_ik_whole_trajectory_validated' else f' (physical grasp {physical_status})')
+    scene=dict(ready=True,id=episode.name,robot=label,robot_key='ur10',physical_status=physical_status,physical_validation=physical_report,
         gripper_model='tesollo_hand_right',ee_frame='rl_dg_palm',solver_status=json.loads(str(values['report_json']))['solver_status'],
         n_frames=len(points),fps=1e6/np.median(np.diff(values['timestamps'])),base_position=values['base_position'].tolist(),
         base_rpy_deg=values['base_rpy_deg'].tolist(),base_transform=base.tolist(),reach_m=1.5,
@@ -47,7 +53,7 @@ def export(episode):
         target_trajectory=values['target_position'].tolist(),achieved_trajectory=values['achieved_position'].tolist(),
         target_rotation=values['target_rotation'].tolist(),achieved_rotation=np.array(rotations).tolist(),
         position_error_m=errors.tolist(),gripper_closed=[False]*len(points),metrics=json.loads(str(values['report_json'])),
-        plan_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        plan_sha256=plan_hash,
         model_sha256=hashlib.sha256(modelpath.read_bytes()).hexdigest())
     (episode/'tesollo_object_viewer.json').write_text(json.dumps(scene,separators=(',',':')))
 

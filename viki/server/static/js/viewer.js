@@ -20,7 +20,7 @@ export function mount(view) {
         <select data-role="variant"><option value="active">active</option></select>
       </label>
       <label class="viewer-field">Robot plan
-        <select data-role="plan"><option value="default">Default plan</option><option value="tesollo_object">Tesollo DG5F · diagnostic object plan</option><option value="shadow_object">Shadow Hand · object plan</option></select>
+        <select data-role="plan"><option value="default">Default plan</option><option value="tesollo_object">Tesollo DG5F · object plan</option><option value="shadow_object">Shadow Hand · object plan</option></select>
       </label>
       <div class="viewer-status" data-role="status">pick an episode</div>
       <div class="viewer-object-status" data-role="object-status" hidden></div>
@@ -133,6 +133,12 @@ async function loadPlan(id) {
   ctl.setRetargetData(null);
   const plan = await api('GET', `/api/pipeline/episode/${encodeURIComponent(id)}/retarget?artifact=${artifact}`);
   if (request !== planRequest || !ctl) return;
+  if (artifact === 'tesollo_object') {
+    const option = root.querySelector('[data-role="plan"] option[value="tesollo_object"]');
+    option.textContent = plan?.solver_status === 'framewise_ik_whole_trajectory_validated'
+      ? `Tesollo DG5F · geometry passed · grasp ${plan.physical_status === 'failed' ? 'failed' : plan.physical_status === 'passed' ? 'passed' : 'unverified'}`
+      : 'Tesollo DG5F · diagnostic object plan';
+  }
   if (plan?.ready) ctl.setRetargetData(plan);
   else log(`Viewer: ${artifact} plan is unavailable for ${id}`, 'error');
 }
