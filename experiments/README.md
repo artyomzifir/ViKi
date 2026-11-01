@@ -105,3 +105,47 @@ The opt-in `--attach-on-any-pad` follow-up attaches on the first positive contac
 from either named pad and releases at the recorded release phase. It attached
 3/4 objects but did not achieve four-object placement; the same report documents
 the bystander collision that prevented the fourth pickup.
+
+## Shadow physics trajectory polish pilot
+
+`hocap_shadow_polisher.py` runs a bounded, opt-in 190-frame G10_2 Shadow Hand
+command search and a separately declared carry-timing ablation against unassisted
+MuJoCo physics. It exports named, time-stamped open-loop commands and rejects
+URDF position/velocity violations. The tested residuals and slower carries did
+not retain the object through the carry; no command was accepted. See
+[`docs/2026-10-25-shadow-physics-polisher.md`](../docs/2026-10-25-shadow-physics-polisher.md)
+for exact metrics, source hashes, command files, and reproduction.
+
+`hocap_shadow_palm_polisher.py` tests an object-frame palm-pose correction before
+first contact on the same 190-frame Shadow fixture. It solves the arm by FK/IK,
+keeps finger commands and timestamps fixed, screens joint/floor/self-collision
+constraints before physical replay, and exports a provenance-checked command.
+The best fixed candidate improves carry contact and tracking in this one scene
+but fails released placement and remains a diagnostic, not an accepted plan.
+See [`docs/2026-10-25-shadow-palm-polisher.md`](../docs/2026-10-25-shadow-palm-polisher.md).
+
+`hocap_shadow_multifinger_polisher.py` and its one 32-point
+`hocap_shadow_multifinger_followup.py` test acquisition-stage, per-digit finger
+commands on the saved −6 mm palm trajectory. Three distinct digits retain the
+object through most of carry, but the two-second static hold and unchanged
+released-placement gate still fail; the selected command is diagnostic only.
+See [`docs/2026-10-25-shadow-multifinger-polisher.md`](../docs/2026-10-25-shadow-multifinger-polisher.md)
+for the fixed 96-evaluation budget, contact-force measurements, exported
+commands, separate placement ablation, and reproducible results.
+
+`hocap_shadow_object_pose_placement.py` tests an offline object-centered palm
+correction for the saved three-digit grasp. It uses one observed MuJoCo
+object-to-palm pose to generate a full 190-frame open-loop arm command, derives
+upright support height from the official mesh, and checks a separate two-second
+post-release settle. The frozen eight candidates all failed finger-floor
+screening; a separately declared eight-point higher-clearance follow-up was
+feasible but still toppled the object. No task gate passed. See
+[`docs/2026-10-26-shadow-object-pose-placement.md`](../docs/2026-10-26-shadow-object-pose-placement.md).
+
+`hocap_shadow_feedback_placement.py` adds a two-setting offline simulator-state
+controller that exports extended open-loop placement commands, plus a separately
+declared two-setting thumb/index/middle force-maintenance follow-up. Both can
+leave the object upright, but physics-step review shows loss of grasp and a
+high-speed impact before qualified release; controlled placement and the strict
+full-scene gate fail. See
+[`docs/2026-10-26-shadow-feedback-placement.md`](../docs/2026-10-26-shadow-feedback-placement.md).
