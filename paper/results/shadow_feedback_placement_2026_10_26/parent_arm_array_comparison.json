@@ -1,0 +1,31 @@
+{
+  "original_190_replay": {
+    "object_positions": true,
+    "object_rotations": true,
+    "q_actual": true
+  },
+  "extended_independent": {
+    "object_positions": true,
+    "object_rotations": true,
+    "settle_object_positions": true,
+    "settle_object_rotations": true
+  },
+  "compiled_physics_equal": {
+    "body_mass": true,
+    "body_inertia": true,
+    "body_gravcomp": true,
+    "geom_friction": true,
+    "geom_contype": true,
+    "geom_conaffinity": true,
+    "geom_solref": true,
+    "geom_solimp": true,
+    "geom_priority": true,
+    "actuator_gainprm": true,
+    "actuator_biasprm": true,
+    "actuator_forcerange": true,
+    "jnt_range": true,
+    "exclude_signature": true
+  },
+  "timestep_equal": true,
+  "integrator_equal": true
+}

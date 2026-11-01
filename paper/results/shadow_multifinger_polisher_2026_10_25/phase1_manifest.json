@@ -1,0 +1,184 @@
+{
+  "schema": "shadow_multifinger_pilot_v1",
+  "protocol": {
+    "schema": "shadow_multifinger_protocol_v1",
+    "seed": 20261025,
+    "basis": "saved palm-best -6 mm object-local x arm; only finger residuals change",
+    "parameters": [
+      "MF flex J1/2/3",
+      "RF flex J1/2/3",
+      "LF flex J1/2/3",
+      "MF J4 abduction",
+      "RF J4 abduction",
+      "LF J4 abduction",
+      "LF J5 cup",
+      "TH J2 opposition"
+    ],
+    "finger_flex_weights": {
+      "J1": 1.0,
+      "J2": 0.7,
+      "J3": 0.35
+    },
+    "gate": "C1 rise frames 10..30, hold 30..125, fall 125..151; source after151",
+    "candidate_count": 64,
+    "probes": "each coordinate lower/full, lower/half, upper/half, upper/full, omitting zero duplicates",
+    "geometric_seeds": "MF/RF/LF flexion [0.02,0.08,0.18] radians at scales 0.5,1,1.5, based on fixed frame60 distal-gap finite differences",
+    "remainder": "seeded 8-D Latin-hypercube",
+    "force_threshold_n": 0.05,
+    "static": "replay through frame60 then freeze all 28 controls for 2.0s; require lift>20mm from settled start, no target world/neighbor support, no robot-table contact, peak slip<10mm, peak z-drop<10mm, last-second peak drift<5mm, peak relative rotation<10deg, thumb + >=2 other digits active >=80% last second",
+    "static_ranking": "min(300,peak_slip2_mm)+min(300,peak_zdrop2_mm)+min(100,peak_last1drift_mm)+min(100,peak_rotation2_deg)+100*(1-triad_last1_fraction)+1000*(not airborne_unpinned)",
+    "shortlist": "8 lowest static scores among airborne_unpinned feasible; if none, 8 lowest overall for explicit diagnostic, plus original and palm-best controls",
+    "final_ranking": "target_task_success first, then minimum old frozen score + 100*(1-carry thumb+two digit fraction); static_pass separately required to describe stable grasp",
+    "held_out_grid": {
+      "mass_kg": [
+        0.06,
+        0.1
+      ],
+      "robot_object_friction": [
+        0.9,
+        1.2
+      ]
+    },
+    "acceptance": "unchanged target/full-scene gates in hocap_shadow_polisher.rollout"
+  },
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    },
+    "palm_input": "e6f396cfc0cff06ccd5693159aac2adb68eb6dc3acc23a2e31ed522eb83c6e3e"
+  },
+  "palm_command_sha256": "2e60b16ffb525b9062161736c7d0a361ab6ae5694e02ad3e2bdae0514255be40",
+  "baseline_command_sha256": "452ec04abdf5cd45ba772d9b8d8681c12e05e0edc791cee4bc4846b98373e1f0",
+  "physics": "unchanged make_scene and rollout from hocap_shadow_polisher.py",
+  "collision_screen": "per-candidate passive fingers in Pinocchio; floor plus nearest eight retained URDF self pairs each frame; adjacent/nominal pairs excluded; scene object collisions only measured in MuJoCo",
+  "palm_floor_margin_m": 0.002846520810167265,
+  "palm_self_margin_m": 0.0001143725932527288,
+  "accepted": false,
+  "feasible_count": 17,
+  "feasibility_wall_s": 196.33531452699935,
+  "shortlist_fallback_no_airborne_candidate": false,
+  "shortlist_indices": [
+    3,
+    11
+  ],
+  "selected_index": 3,
+  "selected_residual_rad": [
+    0.12,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "selected_metrics": {
+    "score": 69.98207677262016,
+    "target_task_success": false,
+    "full_scene_success": false,
+    "frames": 190,
+    "object_position_mean_mm": 32.565446196732644,
+    "object_position_median_mm": 17.103489907668894,
+    "object_position_p95_mm": 92.612163323318,
+    "final_object_error_mm": 92.67336790774719,
+    "max_lift_mm": 248.0833303061959,
+    "carry_object_error_p95_mm": 52.16818703230742,
+    "thumb_contact_frames": 111,
+    "finger_contact_frames": 125,
+    "opposing_contact_frames": 111,
+    "carry_opposing_contact_fraction": 1.0,
+    "simultaneous_positive_force_carry_fraction": 1.0,
+    "longest_carry_opposing_contact_gap_s": 0.0,
+    "carry_height_deficit_step_fraction": 0.08546552949538024,
+    "carry_drop_step_fraction": 0.08546552949538024,
+    "robot_table_contact_steps": 0,
+    "robot_other_object_contact_steps": 0,
+    "target_table_contact_steps": 7243,
+    "max_neighbor_displacement_mm": 17.30599499956139,
+    "final_neighbor_displacement_mm": 17.30568034224535,
+    "final_target_speed_m_s": 0.007110735894615723,
+    "release_no_hand_contact_last_15_frames": true,
+    "terminal_supported_last_15_frames": true,
+    "terminal_settled_last_15_frames": false,
+    "terminal_max_step_speed_m_s": 0.03721119498504979,
+    "wrist_relative_object_slip_60_to_98_mm": 9.128833709218815,
+    "max_thumb_normal_force_n": 11.661390718446746,
+    "max_finger_normal_force_n": 12.029841755053644,
+    "min_target_contact_distance_mm": -8.120341092214929,
+    "any_actuator_effort_saturation_steps": 0,
+    "arm_tracking_median_rad": 0.010433362388469036,
+    "hand_tracking_median_rad": 0.0023672605734870135
+  },
+  "selected_digits": {
+    "carry_digit_active_fraction": [
+      1.0,
+      0.9763681592039801,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "carry_digit_mean_force_n": [
+      7.29621225074919,
+      3.4301922987478677,
+      4.033484695772153,
+      0.0,
+      0.0
+    ],
+    "carry_thumb_plus_two_fraction": 0.9763681592039801,
+    "release_digit_active_fraction": [
+      0.7114014251781473,
+      0.9334916864608076,
+      0.47743467933491684,
+      0.0,
+      0.0
+    ],
+    "release_thumb_plus_two_fraction": 0.19121140142517815,
+    "terminal_digit_active_fraction": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "selected_static_hold": {
+    "lift_from_settled_mm": 238.0545401690647,
+    "slip_2s_mm": 16.152552862412644,
+    "peak_slip_2s_mm": 16.152552862412644,
+    "z_drop_2s_mm": 19.204409429326663,
+    "peak_z_drop_2s_mm": 19.204409429326663,
+    "last_1s_drift_mm": 11.617770954968766,
+    "peak_last_1s_drift_mm": 11.617770954968766,
+    "relative_rotation_2s_deg": 19.35863996957663,
+    "peak_relative_rotation_2s_deg": 19.35863996957663,
+    "target_support_step_fraction_2s": 0.0,
+    "target_support_step_fraction_last_1s": 0.0,
+    "robot_table_contact_steps_2s": 0,
+    "airborne_unpinned": true,
+    "triad_last_1s_fraction": 1.0,
+    "digit_active_last_1s_fraction": [
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "mean_force_last_1s_n": [
+      6.77575881105498,
+      3.141848800371697,
+      3.783800050224306,
+      0.0,
+      0.0
+    ],
+    "static_score": 66.3333732162847,
+    "static_pass": false
+  },
+  "selected_command_sha256": "72305843fc72d12ee3e113759d3752ea6ccc03b4dd12cd93fc768ee40c6496b4",
+  "total_wall_s": 292.1367868519992
+}

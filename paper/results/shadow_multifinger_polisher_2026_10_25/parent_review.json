@@ -1,0 +1,17 @@
+{
+  "verdict": "Multifinger contact improves carry; end-to-end target task remains failed. No accepted production replacement.",
+  "independent_replay": "Original replay loop reproduces both followup and source-finger placement controls bitwise on object position/orientation, actual joints, contacts. Compiled physics arrays identical.",
+  "diagnosis": [
+    "Primary load was TH+FF; adding MF produces TH+FF+MF on every carry step in followup. RF/LF still carry no measurable force at .05N threshold.",
+    "Static selected hold after frame60 still slips13.40mm, drops17.15mm; separate stops at90 and98 lose contact within2s. Three contacts alone are not stable force closure.",
+    "Full carry p95 is dominated by early pickup lag. Orientation error about20degrees before placement increases toward90degrees at the table.",
+    "Stop-down + original opening + upward retreat reduces final error to70.40mm on phase1 MF+.12, but final object orientation error94.37degrees remains. This is a toppled object, not successful upright placement."
+  ],
+  "scope": "96 finger candidates in two declared phases, 2 palm-fade controls, 6 placement schedules (3 rejected before simulation). Existing gates and physics unchanged.",
+  "placement_protocol_wording_correction": "Initial straight-opening protocol used actual-segment velocity to mean command velocity over actual saved time intervals. Only command velocity margins are screened in that runner; source code now says this explicitly. No measured actual-velocity safety claim is made.",
+  "limits": [
+    "One scene; these sweeps are not a general success-rate evaluation.",
+    "No post-selection sensitivity grid was run for the separate source-finger placement control.",
+    "Sampled kinematic collision screen retains existing pair exclusions; no continuous-time collision guarantee."
+  ]
+}

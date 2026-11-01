@@ -1,0 +1,36 @@
+{
+  "checks": {
+    "zero_bitwise": true,
+    "timestamps_exact": true,
+    "fingers_bitwise": true,
+    "outside_gate_bitwise": true,
+    "shape": true,
+    "dtype": true,
+    "source_hashes_unchanged": true,
+    "export_hash_matches": true,
+    "joint_bounds": true,
+    "velocity_bounds": true
+  },
+  "position_margin_rad": 9.006836276803654e-08,
+  "velocity_margin_rad_s": 0.03922222487304561,
+  "selected_index": 2,
+  "selected_residual": [
+    -0.006,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "trajectory_arrays_bitwise": {
+    "contacts": true,
+    "object_positions": true,
+    "object_rotations": true,
+    "q_actual": true
+  },
+  "compiled_physics_identical": {
+    "body_mass": true,
+    "body_inertia": true,
+    "body_gravcomp": true,
+    "geom_friction": true,
+    "geom_contype": true,
+    "geom_conaffinity": true,
+    "geom_pos": true,
+    "geom_size": true,
+    "jnt_range": true,
+    "actuator_gainprm": true,
+    "actuator_biasprm": true,
+    "actuator_forcerange": true,
+    "exclude_signature": true,
+    "neq": true,
+    "timestep": true,
+    "integrator": true
+  },
+  "shared_metrics_exact": {
+    "frames": true,
+    "object_position_mean_mm": true,
+    "object_position_median_mm": true,
+    "object_position_p95_mm": true,
+    "final_object_error_mm": true,
+    "max_lift_mm": true,
+    "carry_object_error_p95_mm": true,
+    "thumb_contact_frames": true,
+    "finger_contact_frames": true,
+    "opposing_contact_frames": true,
+    "carry_opposing_contact_fraction": true,
+    "robot_table_contact_steps": true,
+    "arm_tracking_median_rad": true,
+    "hand_tracking_median_rad": true
+  },
+  "accepted": false,
+  "notes": "The independent original replay has a separate simulation loop and XML construction; source physics and commands were preserved."
+}

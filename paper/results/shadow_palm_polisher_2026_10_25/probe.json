@@ -1,0 +1,43 @@
+{
+  "world_fk_sanity": [
+    {
+      "frame": 0,
+      "wrist_position_mm": 6.432604994750554e-08,
+      "wrist_angle_deg": 1.6493249095569994e-08,
+      "palm_position_mm": 7.011745634974962e-08,
+      "palm_angle_deg": 1.649325208211591e-08
+    },
+    {
+      "frame": 42,
+      "wrist_position_mm": 5.926429812903176e-08,
+      "wrist_angle_deg": 1.7888272661859682e-08,
+      "palm_position_mm": 6.271003548762984e-08,
+      "palm_angle_deg": 1.788827208101357e-08
+    },
+    {
+      "frame": 90,
+      "wrist_position_mm": 5.8132228099460925e-08,
+      "wrist_angle_deg": 2.3218890899098146e-08,
+      "palm_position_mm": 5.520301938626806e-08,
+      "palm_angle_deg": 2.3218887836783383e-08
+    },
+    {
+      "frame": 125,
+      "wrist_position_mm": 6.233853352445252e-08,
+      "wrist_angle_deg": 1.6499701746264855e-08,
+      "palm_position_mm": 6.772010842634851e-08,
+      "palm_angle_deg": 1.6499704858335484e-08
+    },
+    {
+      "frame": 189,
+      "wrist_position_mm": 6.109802671175836e-08,
+      "wrist_angle_deg": 1.791398191434365e-08,
+      "palm_position_mm": 6.502472632718486e-08,
+      "palm_angle_deg": 1.7913981176759234e-08
+    }
+  ],
+  "baseline_floor_min_m": 0.002846520810167265,
+  "baseline_screened_collision_min_m": 0.00011437259325275373,
+  "baseline_floor_min_frame": 2,
+  "baseline_collision_min_frame": 37
+}

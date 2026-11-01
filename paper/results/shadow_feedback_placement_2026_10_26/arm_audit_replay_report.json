@@ -1,0 +1,50 @@
+{
+  "setting": {
+    "name": "firm",
+    "object_step_m": 0.003,
+    "object_turn_deg": 1.5,
+    "palm_accel_m": 0.0015,
+    "palm_angular_accel_deg": 0.75
+  },
+  "release_start_frame": 159,
+  "settle": {
+    "final_xy_error_mm": 8.394451980997774,
+    "final_z_error_mm": 1.523313740582205,
+    "final_orientation_error_deg": 13.30941318367508,
+    "final_upright_tilt_deg": 1.7667967611776347,
+    "last_1s_table_support_fraction": 1.0,
+    "last_1s_hand_force_steps": 0,
+    "last_1s_robot_table_steps": 0,
+    "last_1s_max_speed_m_s": 0.002846349283355646,
+    "last_1s_peak_position_drift_mm": 0.3717290142455305,
+    "last_1s_peak_rotation_drift_deg": 0.23644324639376724,
+    "placement_diagnostic_pass": true
+  },
+  "physical_audit": {
+    "max_neighbor_displacement_mm": 20.36200972546512,
+    "neighbor_5mm_gate_pass": false,
+    "robot_other_object_contact_steps": 0,
+    "robot_table_contact_steps": 0,
+    "min_target_contact_distance_mm": -7.617377385565974,
+    "effort_saturation_steps": 0,
+    "sampled_actual_joint_velocity_margin_rad_s": 0.02242234270332366,
+    "first_support_after_anchor_frame": 145,
+    "first_support_linear_speed_m_s": 0.7238830785709591,
+    "pre_support_triad_step_fraction": 0.6020583190394511,
+    "pre_support_longest_no_triad_gap_s": 0.464,
+    "controlled_touchdown_diagnostic_pass": false
+  },
+  "command_sha256": "e3cf5fa0d2fb3a797ec2d791fffb92b3f3751b9a05fbeb8c27a7f06424a5b219",
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    },
+    "input": "84a870d67441c9257fc995ed23b801e2bb5d84aec3160cb43e540ccdb4ec7fc7"
+  }
+}

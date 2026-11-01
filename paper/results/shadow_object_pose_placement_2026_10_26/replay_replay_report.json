@@ -1,0 +1,109 @@
+{
+  "metrics": {
+    "score": 67.93405201972286,
+    "target_task_success": false,
+    "full_scene_success": false,
+    "frames": 190,
+    "object_position_mean_mm": 28.2788369445396,
+    "object_position_median_mm": 14.764147419160732,
+    "object_position_p95_mm": 82.62047081421981,
+    "final_object_error_mm": 82.49752927600764,
+    "max_lift_mm": 247.81824572743065,
+    "carry_object_error_p95_mm": 51.333197457438374,
+    "thumb_contact_frames": 105,
+    "finger_contact_frames": 112,
+    "opposing_contact_frames": 104,
+    "carry_opposing_contact_fraction": 1.0,
+    "simultaneous_positive_force_carry_fraction": 1.0,
+    "longest_carry_opposing_contact_gap_s": 0.0,
+    "carry_height_deficit_step_fraction": 0.08351101634683725,
+    "carry_drop_step_fraction": 0.08351101634683725,
+    "robot_table_contact_steps": 0,
+    "robot_other_object_contact_steps": 0,
+    "target_table_contact_steps": 7494,
+    "max_neighbor_displacement_mm": 17.261833996446125,
+    "final_neighbor_displacement_mm": 17.257399655829975,
+    "final_target_speed_m_s": 0.0027541673077321905,
+    "release_no_hand_contact_last_15_frames": true,
+    "terminal_supported_last_15_frames": true,
+    "terminal_settled_last_15_frames": false,
+    "terminal_max_step_speed_m_s": 0.05036769991064749,
+    "wrist_relative_object_slip_60_to_98_mm": 8.905620305781335,
+    "max_thumb_normal_force_n": 10.793476248275978,
+    "max_finger_normal_force_n": 11.325034320843233,
+    "min_target_contact_distance_mm": -8.414070820580974,
+    "any_actuator_effort_saturation_steps": 0,
+    "arm_tracking_median_rad": 0.004859059092672147,
+    "hand_tracking_median_rad": 0.0020491816972889876
+  },
+  "settle": {
+    "final_xy_error_mm": 47.854829161700344,
+    "final_z_error_mm": 67.33144569864771,
+    "final_orientation_error_deg": 93.79975122659737,
+    "final_upright_tilt_deg": 95.2836614704379,
+    "last_1s_table_support_fraction": 1.0,
+    "last_1s_hand_force_steps": 0,
+    "last_1s_robot_table_steps": 0,
+    "last_1s_max_speed_m_s": 0.005800769051670892,
+    "last_1s_peak_position_drift_mm": 0.5399090129978628,
+    "last_1s_peak_rotation_drift_deg": 0.22711822284339675,
+    "final_object_position_m": [
+      0.14123886898867902,
+      0.16151426508525102,
+      0.007391939575762529
+    ],
+    "placement_diagnostic_pass": false
+  },
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    },
+    "input": "84a870d67441c9257fc995ed23b801e2bb5d84aec3160cb43e540ccdb4ec7fc7"
+  },
+  "command_sha256": "e267a3cbc63a2ce6e3b19472873601311a8dcd6e8ff481dc58ba97e051b69b1b",
+  "construction": {
+    "status": "feasible",
+    "position_margin_rad": 9.006836276803654e-08,
+    "command_velocity_margin_rad_s": 0.013624491037147912,
+    "max_ik_position_mm": 0.7305589581044285,
+    "max_ik_orientation_deg": 0.04351162438367584,
+    "endpoint_delta_position_mm": [
+      -8.509151503826807,
+      -0.7679255477680696,
+      14.841974618109557
+    ],
+    "endpoint_delta_rotation_deg": 9.313275767054249,
+    "target_endpoint_object": {
+      "position_m": [
+        0.12302572280168533,
+        0.11726083606481552,
+        0.08886681209054521
+      ],
+      "rotation_matrix": [
+        [
+          0.9942280335888457,
+          0.10293170191224116,
+          -0.030260237400070753
+        ],
+        [
+          -0.10037389432190488,
+          0.9920059476282006,
+          0.07648059367534131
+        ],
+        [
+          0.037890613147773027,
+          -0.07300181238659123,
+          0.9966117783889374
+        ]
+      ]
+    },
+    "floor_margin_m": 0.009366036226858249,
+    "screened_self_collision_margin_m": 0.00030302426396447034
+  }
+}

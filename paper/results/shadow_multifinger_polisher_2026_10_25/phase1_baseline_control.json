@@ -1,0 +1,103 @@
+{
+  "metrics": {
+    "score": 148.6347467276293,
+    "target_task_success": false,
+    "full_scene_success": false,
+    "frames": 190,
+    "object_position_mean_mm": 27.520624717970254,
+    "object_position_median_mm": 25.468175156730155,
+    "object_position_p95_mm": 69.23909519048924,
+    "final_object_error_mm": 25.200761380023,
+    "max_lift_mm": 243.42421564899047,
+    "carry_object_error_p95_mm": 104.56882837214297,
+    "thumb_contact_frames": 91,
+    "finger_contact_frames": 66,
+    "opposing_contact_frames": 66,
+    "carry_opposing_contact_fraction": 0.6904761904761905,
+    "simultaneous_positive_force_carry_fraction": 0.6780383795309168,
+    "longest_carry_opposing_contact_gap_s": 0.904,
+    "carry_height_deficit_step_fraction": 0.2222814498933902,
+    "carry_drop_step_fraction": 0.2222814498933902,
+    "robot_table_contact_steps": 0,
+    "robot_other_object_contact_steps": 0,
+    "target_table_contact_steps": 9115,
+    "max_neighbor_displacement_mm": 17.261833996446125,
+    "final_neighbor_displacement_mm": 17.257399655829975,
+    "final_target_speed_m_s": 0.0008036973172686533,
+    "release_no_hand_contact_last_15_frames": true,
+    "terminal_supported_last_15_frames": true,
+    "terminal_settled_last_15_frames": true,
+    "terminal_max_step_speed_m_s": 0.0028428570548835468,
+    "wrist_relative_object_slip_60_to_98_mm": 13.951754410635452,
+    "max_thumb_normal_force_n": 7.113246981098426,
+    "max_finger_normal_force_n": 7.295536094994567,
+    "min_target_contact_distance_mm": -13.057771588985162,
+    "any_actuator_effort_saturation_steps": 0,
+    "arm_tracking_median_rad": 0.01028332604633242,
+    "hand_tracking_median_rad": 0.0009074755092132744
+  },
+  "digits": {
+    "carry_digit_active_fraction": [
+      0.6926083866382374,
+      0.6787491115849325,
+      0.22761194029850745,
+      0.03802416488983653,
+      0.0
+    ],
+    "carry_digit_mean_force_n": [
+      2.948379915114592,
+      2.8204281788183687,
+      0.11431366147962835,
+      0.010411182224251875,
+      0.0
+    ],
+    "carry_thumb_plus_two_fraction": 0.23383084577114427,
+    "release_digit_active_fraction": [
+      0.3693586698337292,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "release_thumb_plus_two_fraction": 0.0,
+    "terminal_digit_active_fraction": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "static_hold": {
+    "lift_from_settled_mm": 234.86585606369826,
+    "slip_2s_mm": 314.66854703718326,
+    "peak_slip_2s_mm": 321.0883808377002,
+    "z_drop_2s_mm": 301.2549085769343,
+    "peak_z_drop_2s_mm": 308.20745158498863,
+    "last_1s_drift_mm": 305.6968592262156,
+    "peak_last_1s_drift_mm": 312.12005874921783,
+    "relative_rotation_2s_deg": 98.89145882815424,
+    "peak_relative_rotation_2s_deg": 104.37095301545298,
+    "target_support_step_fraction_2s": 0.23425,
+    "target_support_step_fraction_last_1s": 0.4685,
+    "robot_table_contact_steps_2s": 0,
+    "airborne_unpinned": false,
+    "triad_last_1s_fraction": 0.0,
+    "digit_active_last_1s_fraction": [
+      0.311,
+      0.312,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mean_force_last_1s_n": [
+      0.3349072361379941,
+      0.34148263287841896,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "static_score": 1900.0,
+    "static_pass": false
+  }
+}

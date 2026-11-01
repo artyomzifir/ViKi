@@ -1,0 +1,435 @@
+{
+  "schema": "source_finger_proximity_audit_v1",
+  "digits": [
+    "thumb",
+    "index",
+    "middle",
+    "ring",
+    "little"
+  ],
+  "carry_frames": [
+    42,
+    126
+  ],
+  "source_hashes": {
+    "/app/data/datasets/hocap_demo_object_v4/g10_object2_190/cln.npz": "4a1d43035ae52729e4f3e6568ef09445ac2f6501feb78397d7a68891a571c19f",
+    "/app/data/datasets/hocap_demo_object_v4/g10_object2_190/gt/joints3d_world.npz": "373791e7bd2af7d5f76397b9b5f44990ac0f9aeb3041dca77240cbbbaee4c423",
+    "/app/data/datasets/hocap_demo_object_v4/g10_object2_190/gt/object_poses_world.npz": "fe314ab09c4efb58b9f19f50037e959081f5e61005d9fddbfee4a0e2ea640fa5",
+    "/app/data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/object_models.npz": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "/app/data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_2.obj": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+    "/app/data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/alignment.json": "cb2a784ae2441816d278ce2f7ef878c9265b0993c7f2a4a61a83da5dffd2a3a2"
+  },
+  "radii_mm": [
+    13.920232653617859,
+    11.843171902000904,
+    8.979512378573418,
+    14.000000432133675,
+    9.802543558180332,
+    7.60807516053319,
+    14.000000432133675,
+    10.27918141335249,
+    7.971554063260555,
+    14.000000432133675,
+    9.533504024147987,
+    7.531560957431793,
+    11.952686123549938,
+    7.629112806171179,
+    6.415460724383593
+  ],
+  "method": "minimum signed capsule-to-convex-hull gap over each digit three phalanges; GT joints use fitted radii; fitted capsules use stored radii; tracked vs GT objects compared independently",
+  "limits": [
+    "Proximity proxy only, not measured contact force.",
+    "Semi-automatic joint/object annotations and hand thickness approximation can disagree with true skin contact.",
+    "Negative gaps indicate proxy penetration, not pressure.",
+    "Occluded digits in RGB do not prove absent contact."
+  ],
+  "object_pose_alignment_difference": {
+    "median_position_mm": 3.7815761865128525,
+    "max_position_mm": 9.018920250459209,
+    "median_rotation_deg": 12.172057435936487,
+    "max_rotation_deg": 26.865672435451863
+  },
+  "results": [
+    {
+      "source": "annotated_joints_gt_object",
+      "digits": [
+        {
+          "digit": "thumb",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -0.7169066873216898,
+          "gap_p10_p90_mm": [
+            -3.719677395213012,
+            0.05383423710893881
+          ],
+          "distal_gap_median_mm": -0.7169066873216898,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.8690476190476191,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        },
+        {
+          "digit": "index",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -7.05352692674193,
+          "gap_p10_p90_mm": [
+            -8.196966284070363,
+            -6.132508516210607
+          ],
+          "distal_gap_median_mm": -7.038854282653885,
+          "fraction_gap_le_threshold_mm": {
+            "0": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        },
+        {
+          "digit": "middle",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -3.121074252363515,
+          "gap_p10_p90_mm": [
+            -6.155054960701652,
+            -1.144362464256856
+          ],
+          "distal_gap_median_mm": -3.121074252363515,
+          "fraction_gap_le_threshold_mm": {
+            "0": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.011904761904761904
+        },
+        {
+          "digit": "ring",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -5.57635015539701,
+          "gap_p10_p90_mm": [
+            -8.599575684688304,
+            -3.294691420479767
+          ],
+          "distal_gap_median_mm": -5.57635015539701,
+          "fraction_gap_le_threshold_mm": {
+            "0": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        },
+        {
+          "digit": "little",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": 1.9739178234403552,
+          "gap_p10_p90_mm": [
+            -0.2015183881155435,
+            3.4377517707607312
+          ],
+          "distal_gap_median_mm": 1.9739178234403552,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.15476190476190477,
+            "3": 0.8452380952380952,
+            "5": 0.9523809523809523,
+            "10": 0.9880952380952381
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        }
+      ],
+      "sample_min_gap_mm": {
+        "42": [
+          -1.6465433053304512,
+          -9.009669017910337,
+          -10.988905327968478,
+          -9.174849228317115,
+          10.836426282530104
+        ],
+        "60": [
+          -0.14406455783714905,
+          -6.57046597995165,
+          -1.1851654505064466,
+          -3.2911298315814395,
+          2.79848759135462
+        ],
+        "90": [
+          -0.1707395609850254,
+          -7.824492209669955,
+          -1.5589570739107157,
+          -3.6696345739715843,
+          1.870608871103633
+        ],
+        "120": [
+          -3.348823135521411,
+          -6.450202319616222,
+          -5.283216688543376,
+          -7.626428102401517,
+          -0.21824794917058976
+        ],
+        "145": [
+          -0.8185597459852874,
+          -1.8804152180129514,
+          2.1845284489522934,
+          -1.4393210821476468,
+          10.687613789920215
+        ]
+      }
+    },
+    {
+      "source": "fitted_capsules_tracked_object",
+      "digits": [
+        {
+          "digit": "thumb",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -1.6092041141253324,
+          "gap_p10_p90_mm": [
+            -9.91971733505522,
+            3.9860958947520793
+          ],
+          "distal_gap_median_mm": -1.6092041141253324,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.6309523809523809,
+            "3": 0.8214285714285714,
+            "5": 0.9880952380952381,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.09523809523809523
+        },
+        {
+          "digit": "index",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -4.934072990250698,
+          "gap_p10_p90_mm": [
+            -14.359655887009184,
+            -1.9992226054936952
+          ],
+          "distal_gap_median_mm": -4.873037570137079,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.9880952380952381,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.2261904761904762
+        },
+        {
+          "digit": "middle",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -5.154589187007597,
+          "gap_p10_p90_mm": [
+            -9.483708951597144,
+            -1.4928214021614234
+          ],
+          "distal_gap_median_mm": -5.154589187007597,
+          "fraction_gap_le_threshold_mm": {
+            "0": 1.0,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.05952380952380952
+        },
+        {
+          "digit": "ring",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -4.392786573066932,
+          "gap_p10_p90_mm": [
+            -10.880703515477782,
+            1.636843649454292
+          ],
+          "distal_gap_median_mm": -4.392786573066932,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.7976190476190477,
+            "3": 0.9523809523809523,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.15476190476190477
+        },
+        {
+          "digit": "little",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": 0.5599888980096818,
+          "gap_p10_p90_mm": [
+            -3.345911249708995,
+            5.337023566743058
+          ],
+          "distal_gap_median_mm": 0.5599888980096818,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.4642857142857143,
+            "3": 0.6904761904761905,
+            "5": 0.8333333333333334,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        }
+      ],
+      "sample_min_gap_mm": {
+        "42": [
+          1.169259213934279,
+          -9.849677481953403,
+          -6.375961772448737,
+          -7.380858428065932,
+          -2.474477145648236
+        ],
+        "60": [
+          -6.990649454460826,
+          -5.080680399451879,
+          -4.954549444980749,
+          -5.0571160603087355,
+          0.03557313245731823
+        ],
+        "90": [
+          -5.518198426026497,
+          -3.400114566115671,
+          -3.068741936737454,
+          1.0281324862450072,
+          5.222563380160125
+        ],
+        "120": [
+          2.8368029721345613,
+          -13.89339548016093,
+          -7.884746164814024,
+          -10.26872136708334,
+          -2.7964892871114526
+        ],
+        "145": [
+          0.8703212135424462,
+          -7.508251671781551,
+          -2.919127149729677,
+          -5.158248869511297,
+          3.119311008400655
+        ]
+      }
+    },
+    {
+      "source": "fitted_capsules_gt_object",
+      "digits": [
+        {
+          "digit": "thumb",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -1.6157876694448157,
+          "gap_p10_p90_mm": [
+            -8.09710185674391,
+            3.3945801737791967
+          ],
+          "distal_gap_median_mm": -1.6157876694448157,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.6071428571428571,
+            "3": 0.8452380952380952,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.05952380952380952
+        },
+        {
+          "digit": "index",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -6.004347146640965,
+          "gap_p10_p90_mm": [
+            -8.861808786472231,
+            -2.8800752404744068
+          ],
+          "distal_gap_median_mm": -6.004347146640965,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.9880952380952381,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.011904761904761904
+        },
+        {
+          "digit": "middle",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -4.583230126637824,
+          "gap_p10_p90_mm": [
+            -6.861495389984313,
+            -3.0660418540582657
+          ],
+          "distal_gap_median_mm": -4.583230126637824,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.9880952380952381,
+            "3": 1.0,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        },
+        {
+          "digit": "ring",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": -3.302461205213531,
+          "gap_p10_p90_mm": [
+            -6.385830808532298,
+            0.2797044465238656
+          ],
+          "distal_gap_median_mm": -3.302461205213531,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.8809523809523809,
+            "3": 0.9761904761904762,
+            "5": 1.0,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        },
+        {
+          "digit": "little",
+          "valid_carry_frames": 84,
+          "min_any_phalanx_gap_median_mm": 2.2368606300171705,
+          "gap_p10_p90_mm": [
+            -1.9899248856342975,
+            5.223130014582941
+          ],
+          "distal_gap_median_mm": 2.2368606300171705,
+          "fraction_gap_le_threshold_mm": {
+            "0": 0.25,
+            "3": 0.7142857142857143,
+            "5": 0.8928571428571429,
+            "10": 1.0
+          },
+          "proxy_penetration_below_minus10mm_fraction": 0.0
+        }
+      ],
+      "sample_min_gap_mm": {
+        "42": [
+          -1.071376268043732,
+          -7.429995205241433,
+          -4.612846996202604,
+          -5.1219079334413795,
+          -0.2047559652807885
+        ],
+        "60": [
+          -6.538298197283734,
+          -6.645896308025227,
+          -5.06410220725489,
+          -3.0580429814519956,
+          2.9087585745492217
+        ],
+        "90": [
+          -4.711523964364498,
+          -4.454217398545016,
+          -4.754743882851507,
+          -1.2006481979608825,
+          3.523461423808428
+        ],
+        "120": [
+          2.8167812472030263,
+          -8.279198623451702,
+          -3.2452237462702542,
+          -5.365589937368812,
+          -2.6179865639389774
+        ],
+        "145": [
+          2.7172038187524925,
+          -4.270154347934271,
+          1.1766678562648274,
+          0.6150247528238697,
+          7.976246544442928
+        ]
+      }
+    }
+  ]
+}

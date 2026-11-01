@@ -1,0 +1,44 @@
+{
+  "schema": "shadow_feedback_placement_pilot_v1",
+  "protocol": {
+    "schema": "shadow_preload_placement_protocol_v1",
+    "candidate_count": 1,
+    "source": "saved MF+.10 RF+.08 grasp; original commands/timestamps through frame110 bitwise fixed",
+    "oracle": "actual MuJoCo object and actual palm FK observed after each generated frame, only during offline generation",
+    "controller": "current object-to-palm SE3, object-centered \u22642/3mm and \u22641/1.5deg steps; acceleration-limited palm command from source frame109\u2192110 velocity",
+    "phases": "align while airborne near anchor Z and XY/reference upright; descend to official mesh support+3mm only after upright tilt<8deg, XY<10mm, reference rotation<10deg; hold frame110 fingers until positive table support\u226595% for9 frames, tilt<8deg and speed<.03m/s; then source finger release frames125..151 at their exact original segment durations, palm hold, 50mm rise over24frames, 15frame settle; max260 frames",
+    "settings": [
+      {
+        "name": "firm_preserve_command_deflection",
+        "object_step_m": 0.003,
+        "object_turn_deg": 1.5,
+        "palm_accel_m": 0.0015,
+        "palm_angular_accel_deg": 0.75,
+        "preserve_command_deflection": true
+      }
+    ],
+    "extra_settle_s": 2.0,
+    "no_physics_or_object_forcing": true,
+    "evaluation": "extended placement gate separate from original190-frame baseline gate; no reference phase remapping of generated frames",
+    "limits": "original joint position, per-segment command velocity, IK\u22641.5mm/1deg, candidate passive-finger floor/self screen; no clamp of joint commands",
+    "hypothesis": "actual-palm absolute targets erase command-actual servo preload; apply the same world SE3 correction to the preceding command instead",
+    "controlled_touchdown": "independently require pre-support triad>=90%, max gap<=.05s, impact speed<.1m/s; upright landing alone is not success"
+  },
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    },
+    "input": "84a870d67441c9257fc995ed23b801e2bb5d84aec3160cb43e540ccdb4ec7fc7"
+  },
+  "physics": "unchanged make_scene",
+  "accepted": false,
+  "failure": "both settings rejected before an eligible replay",
+  "total_wall_s": 4.977822660999664,
+  "evaluated_count": 1
+}

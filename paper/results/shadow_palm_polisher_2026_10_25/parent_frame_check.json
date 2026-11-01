@@ -1,0 +1,329 @@
+{
+  "base_position": [
+    0.0,
+    -1.0,
+    0.0
+  ],
+  "base_rpy_deg": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "rows": [
+    {
+      "frame": 0,
+      "errors": [
+        {
+          "link": "shoulder_link",
+          "position_m": 0.0,
+          "rotation_rad": 9.008559308645117e-17
+        },
+        {
+          "link": "upper_arm_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.051033595304879e-10
+        },
+        {
+          "link": "forearm_link",
+          "position_m": 1.1087841768339534e-10,
+          "rotation_rad": 2.0510335106468932e-10
+        },
+        {
+          "link": "wrist_1_link",
+          "position_m": 3.465909670809048e-11,
+          "rotation_rad": 2.051034096700966e-10
+        },
+        {
+          "link": "wrist_2_link",
+          "position_m": 3.691178885552723e-11,
+          "rotation_rad": 4.0977171725647593e-10
+        },
+        {
+          "link": "wrist_3_link",
+          "position_m": 6.432604994750555e-11,
+          "rotation_rad": 2.878615010692733e-10
+        },
+        {
+          "link": "rh_ffproximal",
+          "position_m": 8.801550153230624e-11,
+          "rotation_rad": 2.8786132597851743e-10
+        },
+        {
+          "link": "rh_thproximal",
+          "position_m": 8.225747810862966e-11,
+          "rotation_rad": 3.9138237721982924e-07
+        }
+      ]
+    },
+    {
+      "frame": 23,
+      "errors": [
+        {
+          "link": "shoulder_link",
+          "position_m": 0.0,
+          "rotation_rad": 1.843460846073992e-16
+        },
+        {
+          "link": "upper_arm_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.0510348373215842e-10
+        },
+        {
+          "link": "forearm_link",
+          "position_m": 9.70127097042089e-11,
+          "rotation_rad": 2.0510340729427592e-10
+        },
+        {
+          "link": "wrist_1_link",
+          "position_m": 3.6912186364655827e-11,
+          "rotation_rad": 2.0510355402812204e-10
+        },
+        {
+          "link": "wrist_2_link",
+          "position_m": 3.4553627962107845e-11,
+          "rotation_rad": 4.0783952479787735e-10
+        },
+        {
+          "link": "wrist_3_link",
+          "position_m": 5.840477665513037e-11,
+          "rotation_rad": 3.151831612929581e-10
+        },
+        {
+          "link": "rh_ffproximal",
+          "position_m": 7.253490952647848e-11,
+          "rotation_rad": 3.1518297828708874e-10
+        },
+        {
+          "link": "rh_thproximal",
+          "position_m": 7.043069784883216e-11,
+          "rotation_rad": 3.9138582454236065e-07
+        }
+      ]
+    },
+    {
+      "frame": 42,
+      "errors": [
+        {
+          "link": "shoulder_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.355627754710054e-17
+        },
+        {
+          "link": "upper_arm_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.0510339115070649e-10
+        },
+        {
+          "link": "forearm_link",
+          "position_m": 8.868809047388309e-11,
+          "rotation_rad": 2.0510357110811012e-10
+        },
+        {
+          "link": "wrist_1_link",
+          "position_m": 3.4901756921856445e-11,
+          "rotation_rad": 2.0510346530181502e-10
+        },
+        {
+          "link": "wrist_2_link",
+          "position_m": 3.625622755365759e-11,
+          "rotation_rad": 4.066648430016744e-10
+        },
+        {
+          "link": "wrist_3_link",
+          "position_m": 5.926429812903176e-11,
+          "rotation_rad": 3.122092554439417e-10
+        },
+        {
+          "link": "rh_ffproximal",
+          "position_m": 7.280824630017945e-11,
+          "rotation_rad": 3.1220920694596336e-10
+        },
+        {
+          "link": "rh_thproximal",
+          "position_m": 7.05293273342741e-11,
+          "rotation_rad": 3.9138822038764014e-07
+        }
+      ]
+    },
+    {
+      "frame": 60,
+      "errors": [
+        {
+          "link": "shoulder_link",
+          "position_m": 0.0,
+          "rotation_rad": 1.4809182621582312e-19
+        },
+        {
+          "link": "upper_arm_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.0510356047766827e-10
+        },
+        {
+          "link": "forearm_link",
+          "position_m": 1.0963813095716157e-10,
+          "rotation_rad": 2.0510349010321454e-10
+        },
+        {
+          "link": "wrist_1_link",
+          "position_m": 6.973868365451729e-11,
+          "rotation_rad": 2.0510362399393598e-10
+        },
+        {
+          "link": "wrist_2_link",
+          "position_m": 5.0503864147886356e-11,
+          "rotation_rad": 4.0883772176647887e-10
+        },
+        {
+          "link": "wrist_3_link",
+          "position_m": 7.058270306135964e-11,
+          "rotation_rad": 3.1668416041976687e-10
+        },
+        {
+          "link": "rh_ffproximal",
+          "position_m": 8.861595471825216e-11,
+          "rotation_rad": 3.166839209698155e-10
+        },
+        {
+          "link": "rh_thproximal",
+          "position_m": 8.59255443953192e-11,
+          "rotation_rad": 3.913878605218608e-07
+        }
+      ]
+    },
+    {
+      "frame": 98,
+      "errors": [
+        {
+          "link": "shoulder_link",
+          "position_m": 0.0,
+          "rotation_rad": 1.3107634647604678e-16
+        },
+        {
+          "link": "upper_arm_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.0510352574482083e-10
+        },
+        {
+          "link": "forearm_link",
+          "position_m": 1.0516374632596554e-10,
+          "rotation_rad": 2.0510350283654397e-10
+        },
+        {
+          "link": "wrist_1_link",
+          "position_m": 5.252915903551424e-11,
+          "rotation_rad": 2.0510344687724704e-10
+        },
+        {
+          "link": "wrist_2_link",
+          "position_m": 3.7848750056372746e-11,
+          "rotation_rad": 4.0695791966063705e-10
+        },
+        {
+          "link": "wrist_3_link",
+          "position_m": 5.697331162908688e-11,
+          "rotation_rad": 3.502074589455207e-10
+        },
+        {
+          "link": "rh_ffproximal",
+          "position_m": 6.962835529829465e-11,
+          "rotation_rad": 3.5020729418917256e-10
+        },
+        {
+          "link": "rh_thproximal",
+          "position_m": 6.966248280970507e-11,
+          "rotation_rad": 3.9132895732198864e-07
+        }
+      ]
+    },
+    {
+      "frame": 125,
+      "errors": [
+        {
+          "link": "shoulder_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.1210318034164146e-16
+        },
+        {
+          "link": "upper_arm_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.0510338770881442e-10
+        },
+        {
+          "link": "forearm_link",
+          "position_m": 8.485702177256566e-11,
+          "rotation_rad": 2.0510334392512192e-10
+        },
+        {
+          "link": "wrist_1_link",
+          "position_m": 3.478600376555867e-11,
+          "rotation_rad": 2.0510344353300794e-10
+        },
+        {
+          "link": "wrist_2_link",
+          "position_m": 3.631642399646283e-11,
+          "rotation_rad": 4.054398373147058e-10
+        },
+        {
+          "link": "wrist_3_link",
+          "position_m": 6.233853352445252e-11,
+          "rotation_rad": 2.879741210693797e-10
+        },
+        {
+          "link": "rh_ffproximal",
+          "position_m": 8.039030006882241e-11,
+          "rotation_rad": 2.879741464061641e-10
+        },
+        {
+          "link": "rh_thproximal",
+          "position_m": 7.55637300890523e-11,
+          "rotation_rad": 3.9142206077871466e-07
+        }
+      ]
+    },
+    {
+      "frame": 189,
+      "errors": [
+        {
+          "link": "shoulder_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.3427628579781473e-16
+        },
+        {
+          "link": "upper_arm_link",
+          "position_m": 0.0,
+          "rotation_rad": 2.051035125451553e-10
+        },
+        {
+          "link": "forearm_link",
+          "position_m": 1.098115115895178e-10,
+          "rotation_rad": 2.051033766049314e-10
+        },
+        {
+          "link": "wrist_1_link",
+          "position_m": 3.472590887337478e-11,
+          "rotation_rad": 2.0510343658170945e-10
+        },
+        {
+          "link": "wrist_2_link",
+          "position_m": 3.6775749878146076e-11,
+          "rotation_rad": 4.0951040094345076e-10
+        },
+        {
+          "link": "wrist_3_link",
+          "position_m": 6.109802671175835e-11,
+          "rotation_rad": 3.1265796654801347e-10
+        },
+        {
+          "link": "rh_ffproximal",
+          "position_m": 8.103812924519665e-11,
+          "rotation_rad": 3.1265773408047757e-10
+        },
+        {
+          "link": "rh_thproximal",
+          "position_m": 7.756907484540033e-11,
+          "rotation_rad": 3.913723998078744e-07
+        }
+      ]
+    }
+  ]
+}

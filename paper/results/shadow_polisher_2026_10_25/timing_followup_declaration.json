@@ -1,0 +1,15 @@
+{
+  "schema": "shadow_polisher_timing_followup_v1",
+  "reason": "fixed ablation after 32 hand-only candidates failed the carry gate",
+  "trajectories": [
+    "baseline",
+    "hand_search_best"
+  ],
+  "carry_timing_factors": [
+    1.5,
+    2.0
+  ],
+  "retimed_intervals": "intervals ending at frames 42..125; all 190 poses preserved",
+  "ranking": "carry p95 error mm + 60*(1 - simultaneous opposing contact fraction) + 100*carry drop fraction + 0.1*final error mm + 1000*(robot-table contact exists)",
+  "new_search": false
+}

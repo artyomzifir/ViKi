@@ -1,0 +1,546 @@
+{
+  "schema": "shadow_object_pose_placement_diagnosis_v1",
+  "selected_index": 5,
+  "first_positive_table_support_after_frame120": 125,
+  "first_near_full_table_support_after_frame120": 126,
+  "triad_step_fraction_frames120_139": {
+    "120": 1.0,
+    "121": 1.0,
+    "122": 1.0,
+    "123": 0.43283582089552236,
+    "124": 0.0,
+    "125": 0.0,
+    "126": 0.0,
+    "127": 0.3582089552238806,
+    "128": 1.0,
+    "129": 1.0,
+    "130": 1.0,
+    "131": 1.0,
+    "132": 1.0,
+    "133": 0.6268656716417911,
+    "134": 0.0,
+    "135": 0.0,
+    "136": 0.0,
+    "137": 0.0,
+    "138": 0.0,
+    "139": 0.0
+  },
+  "sampled_frames": [
+    {
+      "frame": 90,
+      "time_s": 3.292407,
+      "object_position_m": [
+        0.09913017481305521,
+        0.06836727655071603,
+        0.306626444192999
+      ],
+      "reference_position_error_mm": 239.03686684715677,
+      "reference_rotation_error_deg": 20.008781716660426,
+      "upright_tilt_deg": 15.044738681716742,
+      "table_support_step_fraction": 0.0,
+      "digit_mean_force_n": [
+        4.223134587269406,
+        2.3425054541322776,
+        1.878197609241632,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 1.0,
+      "frame_rotation_rate_deg_s": 22.907362209011676
+    },
+    {
+      "frame": 100,
+      "time_s": 3.625737,
+      "object_position_m": [
+        0.09926637837555045,
+        0.0926926992268337,
+        0.23526591343079495
+      ],
+      "reference_position_error_mm": 164.97808857145154,
+      "reference_rotation_error_deg": 13.520574086954298,
+      "upright_tilt_deg": 12.915804470499255,
+      "table_support_step_fraction": 0.0,
+      "digit_mean_force_n": [
+        4.192756070962865,
+        2.2766933915141756,
+        2.034760498932774,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 1.0,
+      "frame_rotation_rate_deg_s": 22.854671830555368
+    },
+    {
+      "frame": 110,
+      "time_s": 3.9590669999999997,
+      "object_position_m": [
+        0.12109674719943533,
+        0.10791124399648687,
+        0.1362408786812641
+      ],
+      "reference_position_error_mm": 63.10039620938734,
+      "reference_rotation_error_deg": 8.34632350194727,
+      "upright_tilt_deg": 11.3413403417191,
+      "table_support_step_fraction": 0.0,
+      "digit_mean_force_n": [
+        3.652770992635533,
+        2.4062239461126937,
+        1.3781059283756374,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 1.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.11631545180626468,
+        0.11237239003186197,
+        0.13115028657737807
+      ],
+      "fixed_grasp_prediction_position_error_mm": 8.287142906565862,
+      "fixed_grasp_prediction_rotation_error_deg": 5.956863784164556,
+      "frame_rotation_rate_deg_s": 14.797255407646375
+    },
+    {
+      "frame": 115,
+      "time_s": 4.125732,
+      "object_position_m": [
+        0.12480587094102409,
+        0.11479616453286855,
+        0.10980696823843351
+      ],
+      "reference_position_error_mm": 36.06852307889768,
+      "reference_rotation_error_deg": 8.412482930344067,
+      "upright_tilt_deg": 9.922943725887746,
+      "table_support_step_fraction": 0.0,
+      "digit_mean_force_n": [
+        3.8670046935585227,
+        2.3602934503330215,
+        1.3695308103648132,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 1.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.1179318068007322,
+        0.11618472440463862,
+        0.1107059308041378
+      ],
+      "fixed_grasp_prediction_position_error_mm": 7.070289245630239,
+      "fixed_grasp_prediction_rotation_error_deg": 3.1695100123463305,
+      "frame_rotation_rate_deg_s": 124.84998138094558
+    },
+    {
+      "frame": 120,
+      "time_s": 4.292397,
+      "object_position_m": [
+        0.1190245730707137,
+        0.11329391925970402,
+        0.09213483734469982
+      ],
+      "reference_position_error_mm": 19.117174864366362,
+      "reference_rotation_error_deg": 10.38283247739367,
+      "upright_tilt_deg": 10.655770244759104,
+      "table_support_step_fraction": 0.0,
+      "digit_mean_force_n": [
+        3.8621377752589856,
+        2.50696966981411,
+        1.4738076043745514,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 1.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12037987411395555,
+        0.11710433174095074,
+        0.10169073753990972
+      ],
+      "fixed_grasp_prediction_position_error_mm": 10.376478821636258,
+      "fixed_grasp_prediction_rotation_error_deg": 8.561929179015273,
+      "frame_rotation_rate_deg_s": 75.13892234252383
+    },
+    {
+      "frame": 123,
+      "time_s": 4.392396,
+      "object_position_m": [
+        0.12162148627073893,
+        0.11141782913320859,
+        0.08074249766948717
+      ],
+      "reference_position_error_mm": 9.13168453343201,
+      "reference_rotation_error_deg": 13.329544140481786,
+      "upright_tilt_deg": 14.892435422704215,
+      "table_support_step_fraction": 0.0,
+      "digit_mean_force_n": [
+        2.1730256076507968,
+        0.4032345057100398,
+        2.1065712369874747,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.43283582089552236,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12251270745694028,
+        0.11764899769471512,
+        0.09433704506947334
+      ],
+      "fixed_grasp_prediction_position_error_mm": 14.981103292318364,
+      "fixed_grasp_prediction_rotation_error_deg": 13.197804093849292,
+      "frame_rotation_rate_deg_s": 72.22408351957816
+    },
+    {
+      "frame": 124,
+      "time_s": 4.425729,
+      "object_position_m": [
+        0.12314300018266959,
+        0.10891092092437993,
+        0.07593426678991615
+      ],
+      "reference_position_error_mm": 8.602860324945246,
+      "reference_rotation_error_deg": 16.63549306326727,
+      "upright_tilt_deg": 17.760733930586806,
+      "table_support_step_fraction": 0.0,
+      "digit_mean_force_n": [
+        2.079302997515018,
+        0.0,
+        2.418413429158113,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.1228254772580134,
+        0.11750205019673952,
+        0.09162782897879947
+      ],
+      "fixed_grasp_prediction_position_error_mm": 17.894027415828567,
+      "fixed_grasp_prediction_rotation_error_deg": 16.669189532741523,
+      "frame_rotation_rate_deg_s": 99.35495700846042
+    },
+    {
+      "frame": 125,
+      "time_s": 4.459061999999999,
+      "object_position_m": [
+        0.12411639449565302,
+        0.1074714038419553,
+        0.07158862779241572
+      ],
+      "reference_position_error_mm": 10.110028273266106,
+      "reference_rotation_error_deg": 18.396446939774037,
+      "upright_tilt_deg": 19.591868221030236,
+      "table_support_step_fraction": 0.1044776119402985,
+      "digit_mean_force_n": [
+        1.7655187162705455,
+        0.0,
+        1.877100047079874,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 19.89032797999229,
+      "fixed_grasp_prediction_rotation_error_deg": 18.31438171237433,
+      "frame_rotation_rate_deg_s": 87.04679101813738
+    },
+    {
+      "frame": 126,
+      "time_s": 4.492395,
+      "object_position_m": [
+        0.12388131269740565,
+        0.10830891218850598,
+        0.07088712005866267
+      ],
+      "reference_position_error_mm": 9.473517813450496,
+      "reference_rotation_error_deg": 18.30639144118497,
+      "upright_tilt_deg": 20.640553029455102,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.9119564302722618,
+        0.0,
+        0.5466089749724917,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 20.10514802665327,
+      "fixed_grasp_prediction_rotation_error_deg": 17.32460683629779,
+      "frame_rotation_rate_deg_s": 159.80902737979105
+    },
+    {
+      "frame": 130,
+      "time_s": 4.6257269999999995,
+      "object_position_m": [
+        0.12343509490854818,
+        0.10861193111038174,
+        0.07144895263472387
+      ],
+      "reference_position_error_mm": 8.989837973001027,
+      "reference_rotation_error_deg": 19.501998017444034,
+      "upright_tilt_deg": 20.890330312590756,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        1.520654990083538,
+        0.5481054376381783,
+        0.7205692473580003,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 1.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 19.453210391796496,
+      "fixed_grasp_prediction_rotation_error_deg": 17.42181533039918,
+      "frame_rotation_rate_deg_s": 33.0234253799805
+    },
+    {
+      "frame": 135,
+      "time_s": 4.7923919999999995,
+      "object_position_m": [
+        0.12064592032760743,
+        0.10959310556373823,
+        0.07133755676980334
+      ],
+      "reference_position_error_mm": 8.41752239856119,
+      "reference_rotation_error_deg": 19.886055045106296,
+      "upright_tilt_deg": 21.267167169197368,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.2753069909646708,
+        0.0,
+        0.26204973462927866,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 19.282185438588602,
+      "fixed_grasp_prediction_rotation_error_deg": 17.711059274925894,
+      "frame_rotation_rate_deg_s": 11.020646053659526
+    },
+    {
+      "frame": 137,
+      "time_s": 4.859058,
+      "object_position_m": [
+        0.11994558516528234,
+        0.10997410498476021,
+        0.07116846675069054
+      ],
+      "reference_position_error_mm": 8.35851453700631,
+      "reference_rotation_error_deg": 20.208354087046626,
+      "upright_tilt_deg": 21.565730640264594,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.019470399649069912,
+        0.0,
+        0.02190960597857265,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 19.387798510754855,
+      "fixed_grasp_prediction_rotation_error_deg": 18.014189796091234,
+      "frame_rotation_rate_deg_s": 11.454397553966183
+    },
+    {
+      "frame": 140,
+      "time_s": 4.959057,
+      "object_position_m": [
+        0.11574206372382427,
+        0.11129162163089931,
+        0.0705331573022834
+      ],
+      "reference_position_error_mm": 9.989818054793709,
+      "reference_rotation_error_deg": 19.255412311781036,
+      "upright_tilt_deg": 22.45488338572623,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.0,
+        0.0,
+        0.0028133258405920753,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 20.61247401650548,
+      "fixed_grasp_prediction_rotation_error_deg": 18.150642229090654,
+      "frame_rotation_rate_deg_s": 128.70899125884392
+    },
+    {
+      "frame": 142,
+      "time_s": 5.025723,
+      "object_position_m": [
+        0.10879871607168089,
+        0.11375351522615933,
+        0.06939167979520892
+      ],
+      "reference_position_error_mm": 15.321090986663634,
+      "reference_rotation_error_deg": 24.254642966289403,
+      "upright_tilt_deg": 25.564684088260826,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.0,
+        0.0,
+        0.046253957742937786,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 24.373242237798006,
+      "fixed_grasp_prediction_rotation_error_deg": 24.591934960586883,
+      "frame_rotation_rate_deg_s": 188.79513200698653
+    },
+    {
+      "frame": 145,
+      "time_s": 5.125722,
+      "object_position_m": [
+        0.10818554159338806,
+        0.11685611403408029,
+        0.06855296981607104
+      ],
+      "reference_position_error_mm": 15.768059421985031,
+      "reference_rotation_error_deg": 33.85411651821021,
+      "upright_tilt_deg": 30.471158771375364,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 25.16231597924439,
+      "fixed_grasp_prediction_rotation_error_deg": 34.762854079399595,
+      "frame_rotation_rate_deg_s": 90.6654020775407
+    },
+    {
+      "frame": 151,
+      "time_s": 5.330937,
+      "object_position_m": [
+        0.1301678281717624,
+        0.14957121343974247,
+        0.03834897806116181
+      ],
+      "reference_position_error_mm": 48.54365756065668,
+      "reference_rotation_error_deg": 75.16549013355771,
+      "upright_tilt_deg": 68.89813675673426,
+      "table_support_step_fraction": 0.9104477611940298,
+      "digit_mean_force_n": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302335072275813,
+        0.11725665018697674,
+        0.08887097012294037
+      ],
+      "fixed_grasp_prediction_position_error_mm": 60.3965747218064,
+      "fixed_grasp_prediction_rotation_error_deg": 75.3083468124582,
+      "frame_rotation_rate_deg_s": 361.43398363959795
+    },
+    {
+      "frame": 155,
+      "time_s": 5.470623,
+      "object_position_m": [
+        0.14441556497931307,
+        0.16067376087061294,
+        0.009438248499954801
+      ],
+      "reference_position_error_mm": 80.58068748108568,
+      "reference_rotation_error_deg": 94.4554081022718,
+      "upright_tilt_deg": 95.40284582294821,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302508463314364,
+        0.11725954681051975,
+        0.09257054775325275
+      ],
+      "fixed_grasp_prediction_position_error_mm": 96.19420882275263,
+      "fixed_grasp_prediction_rotation_error_deg": 92.71759264874977,
+      "frame_rotation_rate_deg_s": 300.1793583739164
+    },
+    {
+      "frame": 189,
+      "time_s": 6.6039449999999995,
+      "object_position_m": [
+        0.1402302409571166,
+        0.16178467987259282,
+        0.007436876788192709
+      ],
+      "reference_position_error_mm": 81.8003937438852,
+      "reference_rotation_error_deg": 93.72688879287092,
+      "upright_tilt_deg": 95.29914545298718,
+      "table_support_step_fraction": 1.0,
+      "digit_mean_force_n": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "thumb_plus_two_step_fraction": 0.0,
+      "fixed_grasp_predicted_object_position_m": [
+        0.12302545556710505,
+        0.11726030177242677,
+        0.13886686206954135
+      ],
+      "fixed_grasp_prediction_position_error_mm": 139.8294172074618,
+      "fixed_grasp_prediction_rotation_error_deg": 92.76136971490898,
+      "frame_rotation_rate_deg_s": 5.216795069219009
+    }
+  ],
+  "source_pose_oracle": "unforced simulation frame90; fixed object-to-palm transform",
+  "cause_hypothesis": "measured object-palm relative pose changes before touchdown; index force disappears by frame124 while object arrives about 20mm/18deg away from fixed-transform prediction, lands at about25deg tilt, loses hand forces by137, and tips after140 without sustained hand push",
+  "independent_export_replay": {
+    "full_metrics_exact": true,
+    "settle_metrics_exact": true,
+    "shared_trajectory_arrays_bitwise_equal": 10,
+    "settle_trace_arrays_bitwise_equal": 7
+  }
+}

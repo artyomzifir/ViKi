@@ -1,0 +1,223 @@
+<mujoco model="ur10">
+  <compiler angle="radian" />
+
+  <asset>
+    <mesh name="ur10_base" content_type="model/obj" file="/app/models/shadow_hand/converted/ur10_base.obj" />
+    <mesh name="base" content_type="model/stl" file="/app/models/robot_descriptions/ur_description/meshes/ur10/collision/base.stl" />
+    <mesh name="ur10_shoulder" content_type="model/obj" file="/app/models/shadow_hand/converted/ur10_shoulder.obj" />
+    <mesh name="shoulder" content_type="model/stl" file="/app/models/robot_descriptions/ur_description/meshes/ur10/collision/shoulder.stl" />
+    <mesh name="ur10_upperarm" content_type="model/obj" file="/app/models/shadow_hand/converted/ur10_upperarm.obj" />
+    <mesh name="upperarm" content_type="model/stl" file="/app/models/robot_descriptions/ur_description/meshes/ur10/collision/upperarm.stl" />
+    <mesh name="ur10_forearm" content_type="model/obj" file="/app/models/shadow_hand/converted/ur10_forearm.obj" />
+    <mesh name="forearm" content_type="model/stl" file="/app/models/robot_descriptions/ur_description/meshes/ur10/collision/forearm.stl" />
+    <mesh name="ur10_wrist1" content_type="model/obj" file="/app/models/shadow_hand/converted/ur10_wrist1.obj" />
+    <mesh name="wrist1" content_type="model/stl" file="/app/models/robot_descriptions/ur_description/meshes/ur10/collision/wrist1.stl" />
+    <mesh name="ur10_wrist2" content_type="model/obj" file="/app/models/shadow_hand/converted/ur10_wrist2.obj" />
+    <mesh name="wrist2" content_type="model/stl" file="/app/models/robot_descriptions/ur_description/meshes/ur10/collision/wrist2.stl" />
+    <mesh name="ur10_wrist3" content_type="model/obj" file="/app/models/shadow_hand/converted/ur10_wrist3.obj" />
+    <mesh name="wrist3" content_type="model/stl" file="/app/models/robot_descriptions/ur_description/meshes/ur10/collision/wrist3.stl" />
+    <mesh name="palm_E3M5" content_type="model/obj" file="/app/models/shadow_hand/converted/palm_E3M5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="f_knuckle_E3M5" content_type="model/obj" file="/app/models/shadow_hand/converted/f_knuckle_E3M5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="f_proximal_E3M5" content_type="model/obj" file="/app/models/shadow_hand/converted/f_proximal_E3M5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="f_middle_E3M5" content_type="model/obj" file="/app/models/shadow_hand/converted/f_middle_E3M5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="f_distal_pst" content_type="model/obj" file="/app/models/shadow_hand/converted/f_distal_pst.obj" scale="0.001 0.001 0.001" />
+    <mesh name="lf_metacarpal_E3M5" content_type="model/obj" file="/app/models/shadow_hand/converted/lf_metacarpal_E3M5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="th_proximal_E3M5" content_type="model/obj" file="/app/models/shadow_hand/converted/th_proximal_E3M5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="th_middle_E3M5" content_type="model/obj" file="/app/models/shadow_hand/converted/th_middle_E3M5.obj" scale="0.001 0.001 0.001" />
+    <mesh name="th_distal_pst" content_type="model/obj" file="/app/models/shadow_hand/converted/th_distal_pst.obj" scale="0.001 0.001 0.001" />
+  <mesh name="object_mesh_1" file="/app/data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_1.obj" /><mesh name="object_mesh_2" file="/app/data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_2.obj" /><mesh name="object_mesh_3" file="/app/data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_3.obj" /><mesh name="object_mesh_4" file="/app/data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_4.obj" /></asset>
+
+  <worldbody>
+    <body name="robot_base" pos="0.0 -1.0 0.0" euler="0.0 0.0 0.0" gravcomp="1"><geom quat="-1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="ur10_base" />
+    <geom quat="-1 0 0 0" type="mesh" mesh="base" friction="1.2 .005 .0001" />
+    <body name="shoulder_link" pos="0 0 0.1273" quat="0 0 0 1" gravcomp="1">
+      <inertial pos="0.021 -0.027 0" quat="0.699551 0.698588 0.121295 0.0888261" mass="7.1" diaginertia="0.0353866 0.0352903 0.0202532" />
+      <joint name="shoulder_pan_joint" range="-6.28319 6.28319" actuatorfrcrange="-330 330" />
+      <geom quat="0 0 0 1" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="ur10_shoulder" />
+      <geom quat="0 0 0 1" type="mesh" mesh="shoulder" friction="1.2 .005 .0001" />
+      <body name="upper_arm_link" quat="0.707107 0.707107 0 0" gravcomp="1">
+        <inertial pos="-0.232 0 0.158" quat="0.500033 0.499784 0.489585 0.510381" mass="12.7" diaginertia="0.77068 0.769758 0.0278114" />
+        <joint name="shoulder_lift_joint" range="-6.28319 6.28319" actuatorfrcrange="-330 330" />
+        <geom pos="0 0 0.220941" quat="0.5 0.5 -0.5 -0.5" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="ur10_upperarm" />
+        <geom pos="0 0 0.220941" quat="0.5 0.5 -0.5 -0.5" type="mesh" mesh="upperarm" friction="1.2 .005 .0001" />
+        <body name="forearm_link" pos="-0.612 0 0" gravcomp="1">
+          <inertial pos="-0.3323 0 0.068" quat="0.492051 0.507971 0.507346 0.492394" mass="4.27" diaginertia="0.30928 0.306743 0.00985709" />
+          <joint name="elbow_joint" range="-3.14159 3.14159" actuatorfrcrange="-150 150" />
+          <geom pos="0 0 0.049042" quat="0.5 0.5 -0.5 -0.5" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="ur10_forearm" />
+          <geom pos="0 0 0.049042" quat="0.5 0.5 -0.5 -0.5" type="mesh" mesh="forearm" friction="1.2 .005 .0001" />
+          <body name="wrist_1_link" pos="-0.5723 0 0.163941" gravcomp="1">
+            <inertial pos="0 -0.018 0.007" quat="0.973219 0.22966 0.00703423 -0.00716854" mass="2" diaginertia="0.00296017 0.00269992 0.00209991" />
+            <joint name="wrist_1_joint" range="-6.28319 6.28319" actuatorfrcrange="-56 56" />
+            <geom pos="0 0 -0.1149" quat="0.707107 0.707107 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="ur10_wrist1" />
+            <geom pos="0 0 -0.1149" quat="0.707107 0.707107 0 0" type="mesh" mesh="wrist1" friction="1.2 .005 .0001" />
+            <body name="wrist_2_link" pos="0 -0.1157 -2.37305e-11" quat="0.707107 0.707107 0 0" gravcomp="1">
+              <inertial pos="0 0.018 -0.007" quat="0.973219 0.22966 -0.00703423 0.00716854" mass="2" diaginertia="0.00296017 0.00269992 0.00209991" />
+              <joint name="wrist_2_joint" range="-6.28319 6.28319" actuatorfrcrange="-56 56" />
+              <geom pos="0 0 -0.1158" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="ur10_wrist2" />
+              <geom pos="0 0 -0.1158" quat="1 0 0 0" type="mesh" mesh="wrist2" friction="1.2 .005 .0001" />
+              <body name="wrist_3_link" pos="0 0.0922 -1.89105e-11" quat="0.707107 -0.707107 0 0" gravcomp="1">
+                <inertial pos="0 0 0.0264942" quat="0.707107 0 0 0.707107" mass="0.772992" diaginertia="0.00319861 0.00301801 0.000564748" />
+                <joint name="wrist_3_joint" range="-6.28319 6.28319" actuatorfrcrange="-56 56" />
+                <geom pos="0 0 -0.0922" quat="0.707107 0.707107 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="ur10_wrist3" />
+                <geom pos="0 0 -0.0922" quat="0.707107 0.707107 0 0" type="mesh" mesh="wrist3" friction="1.2 .005 .0001" />
+                <geom pos="0 0 0.055" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="palm_E3M5" />
+                <geom size="0.031 0.0035 0.049" pos="0.011 0.0085 0.093" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.018 0.0085 0.049" pos="-0.002 -0.0035 0.093" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.013 0.0085 0.005" pos="0.029 -0.0035 0.137" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.013 0.007 0.009" pos="0.0265 -0.001 0.125" quat="0.987241 0.0990545 0.0124467 0.124052" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.0105 0.0135 0.012" pos="0.0315 -0.0085 0.056" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.011 0.0025 0.02" pos="0.0125 -0.015 0.064" quat="0.971338 0 0 -0.237703" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.009 0.012 0.002" pos="0.011 0 0.144" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.01 0.012 0.02" pos="-0.03 0 0.064" type="box" friction="1.2 .005 .0001" />
+                <geom size="0.025 0.0275" pos="0 0 0.0275" type="cylinder" contype="0" conaffinity="0" group="1" density="0" />
+                <geom size="0.025 0.0275" pos="0 0 0.0275" type="cylinder" friction="1.2 .005 .0001" />
+                <body name="rh_ffknuckle" pos="0.033 0 0.15" gravcomp="1">
+                  <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="0.008" diaginertia="3.2e-07 2.6e-07 2.6e-07" />
+                  <joint name="rh_FFJ4" range="-0.349066 0.349066" actuatorfrcrange="-2 2" damping="0.1" axis="0 -1 0" />
+                  <geom pos="0 0 0.0005" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_knuckle_E3M5" />
+                  <geom size="0.007 0.007" quat="0.707105 0 0.707108 0" type="cylinder" friction="1.2 .005 .0001" />
+                  <body name="rh_ffproximal" gravcomp="1">
+                    <inertial pos="0 0 0.0225" quat="0.707107 0 0 0.707107" mass="0.03" diaginertia="1e-05 9.8e-06 1.8e-06" />
+                    <joint name="rh_FFJ3" range="-0.261799 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                    <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_proximal_E3M5" />
+                    <geom size="0.007 0.02" pos="0 0 0.025" type="cylinder" friction="1.2 .005 .0001" />
+                    <body name="rh_ffmiddle" pos="0 0 0.045" gravcomp="1">
+                      <inertial pos="0 0 0.0125" quat="0.707107 0 0 0.707107" mass="0.017" diaginertia="2.7e-06 2.6e-06 8.7e-07" />
+                      <joint name="rh_FFJ2" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                      <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_middle_E3M5" />
+                      <geom size="0.007 0.0125" pos="0 0 0.0125" type="cylinder" friction="1.2 .005 .0001" />
+                      <geom size="0.007" friction="1.2 .005 .0001" />
+                      <geom size="0.007" pos="0 0 0.025" friction="1.2 .005 .0001" />
+                      <body name="rh_ffdistal" pos="0 0 0.025" gravcomp="1">
+                        <inertial pos="0 0 0.0130769" quat="0.707107 0 0 0.707107" mass="0.013" diaginertia="1.28092e-06 1.12092e-06 5.3e-07" />
+                        <joint name="rh_FFJ1" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                        <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_distal_pst" />
+                        <geom quat="1 0 0 0" type="mesh" mesh="f_distal_pst" friction="1.2 .005 .0001" />
+                      </body>
+                    </body>
+                  </body>
+                </body>
+                <body name="rh_mfknuckle" pos="0.011 0 0.154" gravcomp="1">
+                  <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="0.008" diaginertia="3.2e-07 2.6e-07 2.6e-07" />
+                  <joint name="rh_MFJ4" range="-0.349066 0.349066" actuatorfrcrange="-2 2" damping="0.1" axis="0 -1 0" />
+                  <geom pos="0 0 0.0005" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_knuckle_E3M5" />
+                  <geom size="0.007 0.007" quat="0.707105 0 0.707108 0" type="cylinder" friction="1.2 .005 .0001" />
+                  <body name="rh_mfproximal" gravcomp="1">
+                    <inertial pos="0 0 0.0225" quat="0.707107 0 0 0.707107" mass="0.03" diaginertia="1e-05 9.8e-06 1.8e-06" />
+                    <joint name="rh_MFJ3" range="-0.261799 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                    <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_proximal_E3M5" />
+                    <geom size="0.007 0.02" pos="0 0 0.025" type="cylinder" friction="1.2 .005 .0001" />
+                    <body name="rh_mfmiddle" pos="0 0 0.045" gravcomp="1">
+                      <inertial pos="0 0 0.0125" quat="0.707107 0 0 0.707107" mass="0.017" diaginertia="2.7e-06 2.6e-06 8.7e-07" />
+                      <joint name="rh_MFJ2" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                      <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_middle_E3M5" />
+                      <geom size="0.007 0.0125" pos="0 0 0.0125" type="cylinder" friction="1.2 .005 .0001" />
+                      <geom size="0.007" friction="1.2 .005 .0001" />
+                      <geom size="0.007" pos="0 0 0.025" friction="1.2 .005 .0001" />
+                      <body name="rh_mfdistal" pos="0 0 0.025" gravcomp="1">
+                        <inertial pos="0 0 0.0130769" quat="0.707107 0 0 0.707107" mass="0.013" diaginertia="1.28092e-06 1.12092e-06 5.3e-07" />
+                        <joint name="rh_MFJ1" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                        <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_distal_pst" />
+                        <geom quat="1 0 0 0" type="mesh" mesh="f_distal_pst" friction="1.2 .005 .0001" />
+                      </body>
+                    </body>
+                  </body>
+                </body>
+                <body name="rh_rfknuckle" pos="-0.011 0 0.15" gravcomp="1">
+                  <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="0.008" diaginertia="3.2e-07 2.6e-07 2.6e-07" />
+                  <joint name="rh_RFJ4" range="-0.349066 0.349066" actuatorfrcrange="-2 2" damping="0.1" axis="0 1 0" />
+                  <geom pos="0 0 0.0005" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_knuckle_E3M5" />
+                  <geom size="0.007 0.007" quat="0.707105 0 0.707108 0" type="cylinder" friction="1.2 .005 .0001" />
+                  <body name="rh_rfproximal" gravcomp="1">
+                    <inertial pos="0 0 0.0225" quat="0.707107 0 0 0.707107" mass="0.03" diaginertia="1e-05 9.8e-06 1.8e-06" />
+                    <joint name="rh_RFJ3" range="-0.261799 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                    <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_proximal_E3M5" />
+                    <geom size="0.007 0.02" pos="0 0 0.025" type="cylinder" friction="1.2 .005 .0001" />
+                    <body name="rh_rfmiddle" pos="0 0 0.045" gravcomp="1">
+                      <inertial pos="0 0 0.0125" quat="0.707107 0 0 0.707107" mass="0.017" diaginertia="2.7e-06 2.6e-06 8.7e-07" />
+                      <joint name="rh_RFJ2" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                      <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_middle_E3M5" />
+                      <geom size="0.007 0.0125" pos="0 0 0.0125" type="cylinder" friction="1.2 .005 .0001" />
+                      <geom size="0.007" friction="1.2 .005 .0001" />
+                      <geom size="0.007" pos="0 0 0.025" friction="1.2 .005 .0001" />
+                      <body name="rh_rfdistal" pos="0 0 0.025" gravcomp="1">
+                        <inertial pos="0 0 0.0130769" quat="0.707107 0 0 0.707107" mass="0.013" diaginertia="1.28092e-06 1.12092e-06 5.3e-07" />
+                        <joint name="rh_RFJ1" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                        <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_distal_pst" />
+                        <geom quat="1 0 0 0" type="mesh" mesh="f_distal_pst" friction="1.2 .005 .0001" />
+                      </body>
+                    </body>
+                  </body>
+                </body>
+                <body name="rh_lfmetacarpal" pos="-0.033 0 0.07571" quat="0.887018 0 -0.461735 0" gravcomp="1">
+                  <inertial pos="0.0317487 0 0.0223529" quat="0.627216 0.326496 0.326496 0.627216" mass="0.03" diaginertia="1.638e-05 1.45e-05 4.272e-06" />
+                  <joint name="rh_LFJ5" range="0 0.785398" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                  <geom quat="0.887018 0 0.461735 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="lf_metacarpal_E3M5" />
+                  <geom size="0.009 0.012 0.02" pos="0.0269864 0 0.019" quat="0.887018 0 0.461735 0" type="box" friction="1.2 .005 .0001" />
+                  <body name="rh_lfknuckle" pos="0.0539727 0 0.0377946" quat="0.887018 0 0.461735 0" gravcomp="1">
+                    <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="0.008" diaginertia="3.2e-07 2.6e-07 2.6e-07" />
+                    <joint name="rh_LFJ4" range="-0.349066 0.349066" actuatorfrcrange="-2 2" damping="0.1" axis="0 1 0" />
+                    <geom pos="0 0 0.0005" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_knuckle_E3M5" />
+                    <geom size="0.007 0.007" quat="0.707105 0 0.707108 0" type="cylinder" friction="1.2 .005 .0001" />
+                    <body name="rh_lfproximal" gravcomp="1">
+                      <inertial pos="0 0 0.0225" quat="0.707107 0 0 0.707107" mass="0.03" diaginertia="1e-05 9.8e-06 1.8e-06" />
+                      <joint name="rh_LFJ3" range="-0.261799 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                      <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_proximal_E3M5" />
+                      <geom size="0.007 0.02" pos="0 0 0.025" type="cylinder" friction="1.2 .005 .0001" />
+                      <body name="rh_lfmiddle" pos="0 0 0.045" gravcomp="1">
+                        <inertial pos="0 0 0.0125" quat="0.707107 0 0 0.707107" mass="0.017" diaginertia="2.7e-06 2.6e-06 8.7e-07" />
+                        <joint name="rh_LFJ2" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                        <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_middle_E3M5" />
+                        <geom size="0.007 0.0125" pos="0 0 0.0125" type="cylinder" friction="1.2 .005 .0001" />
+                        <geom size="0.007" friction="1.2 .005 .0001" />
+                        <geom size="0.007" pos="0 0 0.025" friction="1.2 .005 .0001" />
+                        <body name="rh_lfdistal" pos="0 0 0.025" gravcomp="1">
+                          <inertial pos="0 0 0.0130769" quat="0.707107 0 0 0.707107" mass="0.013" diaginertia="1.28092e-06 1.12092e-06 5.3e-07" />
+                          <joint name="rh_LFJ1" range="0 1.5708" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                          <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="f_distal_pst" />
+                          <geom quat="1 0 0 0" type="mesh" mesh="f_distal_pst" friction="1.2 .005 .0001" />
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+                <body name="rh_thbase" pos="0.034 -0.00858 0.084" quat="0.653281 -0.270598 0.270598 -0.653281" gravcomp="1">
+                  <inertial pos="0 0 0" mass="0.01" diaginertia="1.6e-07 1.6e-07 1.6e-07" />
+                  <joint name="rh_THJ5" range="-1.0472 1.0472" actuatorfrcrange="-5 5" damping="0.2" axis="0 0 -1" />
+                  <geom size="0.0005 0.0005 0.0005" type="box" contype="0" conaffinity="0" group="1" density="0" />
+                  <geom size="0.011" friction="1.2 .005 .0001" />
+                  <body name="rh_thproximal" gravcomp="1">
+                    <inertial pos="0 0 0.019" mass="0.04" diaginertia="1.36e-05 1.36e-05 3.13e-06" />
+                    <joint name="rh_THJ4" range="0 1.22173" actuatorfrcrange="-3 3" damping="0.2" axis="0 1 0" />
+                    <geom quat="0.707107 0 0 0.707107" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.2 0.2 0.2 1" density="0" mesh="th_proximal_E3M5" />
+                    <geom size="0.012 0.009" pos="0 0 0.02" type="cylinder" rgba="0.2 0.2 0.2 1" friction="1.2 .005 .0001" />
+                    <body name="rh_thhub" pos="0 0 0.038" gravcomp="1">
+                      <inertial pos="0 0 0" mass="0.005" diaginertia="1e-06 1e-06 3e-07" />
+                      <joint name="rh_THJ3" range="-0.20944 0.20944" actuatorfrcrange="-2 2" damping="0.2" axis="0 1 0" />
+                      <geom size="0.0005 0.0005 0.0005" type="box" contype="0" conaffinity="0" group="1" rgba="0.7 0.7 0.7 1" density="0" />
+                      <geom size="0.01" rgba="0.7 0.7 0.7 1" friction="1.2 .005 .0001" />
+                      <body name="rh_thmiddle" gravcomp="1">
+                        <inertial pos="0 0 0.016" mass="0.02" diaginertia="5.1e-06 5.1e-06 1.21e-06" />
+                        <joint name="rh_THJ2" range="-0.698132 0.698132" actuatorfrcrange="-2 2" damping="0.1" axis="1 0 0" />
+                        <geom quat="0.707107 0 0 0.707107" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.2 0.2 0.2 1" density="0" mesh="th_middle_E3M5" />
+                        <geom size="0.011 0.009" pos="0 0 0.012" type="cylinder" rgba="0.2 0.2 0.2 1" friction="1.2 .005 .0001" />
+                        <geom size="0.011" pos="0 0 0.019" rgba="0.2 0.2 0.2 1" friction="1.2 .005 .0001" />
+                        <geom size="0.01 0.007" pos="0 0 0.032" quat="0.707105 0 0.707108 0" type="cylinder" rgba="0.2 0.2 0.2 1" friction="1.2 .005 .0001" />
+                        <body name="rh_thdistal" pos="0 0 0.032" gravcomp="1">
+                          <inertial pos="0 0 0.0145588" quat="0.707107 0 0 0.707107" mass="0.017" diaginertia="2.37794e-06 2.27794e-06 1e-06" />
+                          <joint name="rh_THJ1" range="-0.261799 1.5708" actuatorfrcrange="-1 1" damping="0.2" axis="1 0 0" />
+                          <geom quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.2 0.2 0.2 1" density="0" mesh="th_distal_pst" />
+                          <geom quat="1 0 0 0" type="mesh" rgba="0.2 0.2 0.2 1" mesh="th_distal_pst" friction="1.2 .005 .0001" />
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </body><body name="object_1" pos="-0.10410146 0.15223868 0.10237088" quat="0.9999999917796757 -2.231871329609427e-05 0.00011363627443930191 -5.503926433693575e-05"><freejoint name="object_free_1" /><geom name="object_geom_1" type="mesh" mesh="object_mesh_1" mass=".08" friction="1.2 .005 .0001" rgba=".078 .722 .651 1" /></body><body name="object_2" pos="0.08152285 0.11312416 0.07774157" quat="0.999999009040756 -0.0010103641151962164 -0.0007969895752204071 -0.0005708673032107265"><freejoint name="object_free_2" /><geom name="object_geom_2" type="mesh" mesh="object_mesh_2" mass=".08" friction="1.2 .005 .0001" rgba=".655 .545 .98 1" /></body><body name="object_3" pos="0.020502098 -0.03315209 0.02534687" quat="0.9999959441086386 -0.0008027722660976101 0.002556150829276084 -0.0009661345141035587"><freejoint name="object_free_3" /><geom name="object_geom_3" type="mesh" mesh="object_mesh_3" mass=".08" friction="1.2 .005 .0001" rgba=".639 .902 .208 1" /></body><body name="object_4" pos="-0.16893244 0.01111242 0.122713394" quat="0.9999998498088728 -5.096319073565615e-06 0.00013904170209663833 0.0005301166517751693"><freejoint name="object_free_4" /><geom name="object_geom_4" type="mesh" mesh="object_mesh_4" mass=".08" friction="1.2 .005 .0001" rgba=".984 .573 .235 1" /></body><geom name="table" type="box" pos="0 0 -0.025932975037026927" size=".7 .7 .025" rgba=".25 .28 .32 1" friction="1.0 .005 .0001" priority="1" /><light pos="0 -1 2" dir="0 .3 -1" diffuse=".8 .8 .8" /></worldbody>
+<option timestep="0.0005" integrator="implicitfast" /><contact><exclude body1="forearm_link" body2="wrist_2_link" /></contact><actuator><position name="cmd_shoulder_pan_joint" joint="shoulder_pan_joint" kp="1800" kv="120" forcerange="-330.0 330.0" /><position name="cmd_shoulder_lift_joint" joint="shoulder_lift_joint" kp="1800" kv="120" forcerange="-330.0 330.0" /><position name="cmd_elbow_joint" joint="elbow_joint" kp="1800" kv="120" forcerange="-150.0 150.0" /><position name="cmd_wrist_1_joint" joint="wrist_1_joint" kp="1800" kv="120" forcerange="-56.0 56.0" /><position name="cmd_wrist_2_joint" joint="wrist_2_joint" kp="1800" kv="120" forcerange="-56.0 56.0" /><position name="cmd_wrist_3_joint" joint="wrist_3_joint" kp="1800" kv="120" forcerange="-56.0 56.0" /><position name="cmd_rh_FFJ4" joint="rh_FFJ4" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_FFJ3" joint="rh_FFJ3" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_FFJ2" joint="rh_FFJ2" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_FFJ1" joint="rh_FFJ1" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_LFJ5" joint="rh_LFJ5" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_LFJ4" joint="rh_LFJ4" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_LFJ3" joint="rh_LFJ3" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_LFJ2" joint="rh_LFJ2" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_LFJ1" joint="rh_LFJ1" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_MFJ4" joint="rh_MFJ4" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_MFJ3" joint="rh_MFJ3" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_MFJ2" joint="rh_MFJ2" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_MFJ1" joint="rh_MFJ1" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_RFJ4" joint="rh_RFJ4" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_RFJ3" joint="rh_RFJ3" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_RFJ2" joint="rh_RFJ2" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_RFJ1" joint="rh_RFJ1" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_THJ5" joint="rh_THJ5" kp="16" kv=".15" forcerange="-5.0 5.0" /><position name="cmd_rh_THJ4" joint="rh_THJ4" kp="16" kv=".15" forcerange="-3.0 3.0" /><position name="cmd_rh_THJ3" joint="rh_THJ3" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_THJ2" joint="rh_THJ2" kp="16" kv=".15" forcerange="-2.0 2.0" /><position name="cmd_rh_THJ1" joint="rh_THJ1" kp="16" kv=".15" forcerange="-1.0 1.0" /></actuator><visual><global offwidth="1280" offheight="720" /><headlight ambient=".45 .45 .45" diffuse=".65 .65 .65" specular=".1 .1 .1" /></visual></mujoco>

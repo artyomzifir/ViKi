@@ -1,0 +1,587 @@
+{
+  "schema": "shadow_palm_polisher_pilot_v1",
+  "protocol": {
+    "schema": "shadow_palm_polisher_protocol_v1",
+    "seed": 20261025,
+    "family": "object-frame XYZ translation \u00b112 mm and XYZ rotation-vector \u00b18 deg; rotate palm about its own origin",
+    "gate": "C1 rise frames 10..23, hold 23..110, fall 110..125; source fingers and timestamps fixed",
+    "candidate_count": 48,
+    "axis_probes": "each of 6 axes at +/-half and +/-full bound (24)",
+    "random_candidates": "23 Latin-hypercube, fixed seed",
+    "position_ik_tol_m": 0.0015,
+    "orientation_ik_tol_deg": 1.0,
+    "floor_margin_m": 0.0,
+    "screened_self_collision_margin_m": 0.0,
+    "ranking": "same frozen score and target/full-scene gates as 2026-10-25 hand-command pilot",
+    "held_out_grid": {
+      "mass_kg": [
+        0.06,
+        0.1
+      ],
+      "robot_object_friction": [
+        0.9,
+        1.2
+      ]
+    },
+    "selection": "minimum frozen score across feasible nominal rollouts, including zero"
+  },
+  "parameter_bounds": [
+    [
+      -0.012,
+      0.012
+    ],
+    [
+      -0.012,
+      0.012
+    ],
+    [
+      -0.012,
+      0.012
+    ],
+    [
+      -0.13962634015954636,
+      0.13962634015954636
+    ],
+    [
+      -0.13962634015954636,
+      0.13962634015954636
+    ],
+    [
+      -0.13962634015954636,
+      0.13962634015954636
+    ]
+  ],
+  "candidate_parameters": [
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      -0.012,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      -0.006,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.006,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.012,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      -0.012,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      -0.006,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.006,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.012,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      -0.012,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      -0.006,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.006,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.012,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      -0.13962634015954636,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      -0.06981317007977318,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.06981317007977318,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.13962634015954636,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.13962634015954636,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.06981317007977318,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.06981317007977318,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.13962634015954636,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.13962634015954636
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      -0.06981317007977318
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.06981317007977318
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.13962634015954636
+    ],
+    [
+      0.0003545838852345336,
+      0.0003731462537673244,
+      0.00436961911044776,
+      -0.08704775566456133,
+      0.04150154060424785,
+      -0.0005772276712202873
+    ],
+    [
+      0.003317656777948161,
+      -0.009438915027047697,
+      -0.0023910674924721292,
+      -0.013848668091393068,
+      0.04402249901681962,
+      0.07848793371949545
+    ],
+    [
+      0.01000447630680723,
+      0.007706444758371667,
+      0.011557263359872411,
+      -0.053956785106635485,
+      -0.09497662888166733,
+      0.12876828042226093
+    ],
+    [
+      -0.005578559819325209,
+      0.0008741210692081412,
+      0.005524389790355834,
+      -0.07858133997145376,
+      -0.05609293537312447,
+      0.12131535426490567
+    ],
+    [
+      -0.0032929975585227374,
+      -0.011463867745100186,
+      0.0029668957047497817,
+      0.050925528227553696,
+      0.010922403014961668,
+      -0.10238351952567332
+    ],
+    [
+      -0.00704783924925583,
+      -0.0020285508463895024,
+      0.00871145265624335,
+      -0.12274647190829674,
+      -0.040712041873296995,
+      0.10767613043013266
+    ],
+    [
+      0.006769963597030221,
+      0.001660987475145254,
+      0.009152652858251824,
+      0.011045300775522654,
+      -0.11296707144533075,
+      -0.03565066418579603
+    ],
+    [
+      -0.0017066568357676122,
+      -0.0030834002739934807,
+      -0.003220347365990004,
+      0.03704982438681098,
+      -0.05284512777429794,
+      -0.12066919476251732
+    ],
+    [
+      -0.0005434518119611237,
+      -0.010815416635263433,
+      -0.008098533423928207,
+      0.12201043474886933,
+      0.1041743731591814,
+      0.0414206691810613
+    ],
+    [
+      0.00900700086606571,
+      0.005548593323701841,
+      -0.01083311729028071,
+      -0.004770455115368,
+      -0.08793600109680749,
+      0.09728988332809571
+    ],
+    [
+      -0.006177932819579099,
+      0.004191064907548302,
+      0.006611806793450182,
+      -0.0937588998587305,
+      -0.12170047907921984,
+      -0.06390623723069573
+    ],
+    [
+      -0.010843646455442104,
+      0.009378950006391759,
+      -0.004459771444310944,
+      0.030151810071872454,
+      0.0748330605345833,
+      -0.013083888384110787
+    ],
+    [
+      -0.004394734691255066,
+      0.008634102155628539,
+      -0.011300698808659252,
+      0.1044784281778931,
+      0.11956943121035182,
+      0.0117495562717507
+    ],
+    [
+      0.004527673619037463,
+      0.011147889141753544,
+      -0.0006715905951190041,
+      0.09431052983776397,
+      -0.12942883894694657,
+      0.08734239386106621
+    ],
+    [
+      0.0054205448908648465,
+      -0.007430854249879433,
+      0.010435669876858875,
+      -0.05610259959293763,
+      -0.07059680509038396,
+      -0.11014691472345167
+    ],
+    [
+      -0.011664840832318188,
+      -0.007952886631869858,
+      -0.0058804880394567665,
+      0.060623124713183096,
+      0.0925333733013669,
+      -0.06915033490610754
+    ],
+    [
+      -0.007931091744181249,
+      -0.004832468189660108,
+      0.001980111018423854,
+      0.12836811907751852,
+      0.0843130565469273,
+      0.05175453955154036
+    ],
+    [
+      0.002365997352720927,
+      -0.0064519016137484266,
+      -0.009723510676232958,
+      -0.13073744662164385,
+      -0.021616230680800097,
+      -0.0185974175517669
+    ],
+    [
+      0.011263605963215902,
+      -0.003960900613567821,
+      0.0004490717098031057,
+      0.07744154517395221,
+      0.000570240174122244,
+      -0.13783063736736495
+    ],
+    [
+      -0.009721844622638408,
+      0.010160608527872057,
+      -0.0074056858561277325,
+      -0.034638057090468855,
+      0.02960775708975888,
+      0.0627018260979762
+    ],
+    [
+      0.0013282752392810467,
+      -0.0013545545707481163,
+      -0.005270615736212224,
+      -0.10359845090664463,
+      0.06115407076634763,
+      -0.07926673406342585
+    ],
+    [
+      0.008743882335369678,
+      0.0031293688416233513,
+      0.007576036180763784,
+      -0.018699962359165753,
+      0.1324410111912044,
+      -0.04649679040884494
+    ],
+    [
+      0.007296579247036583,
+      0.005935051250701113,
+      0.0014550305506495984,
+      0.08571478103188146,
+      -0.010884585144089548,
+      0.020271853404274925
+    ]
+  ],
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    }
+  },
+  "baseline_command_sha256": "452ec04abdf5cd45ba772d9b8d8681c12e05e0edc791cee4bc4846b98373e1f0",
+  "physics_reused": "experiments/hocap_shadow_polisher.py make_scene and rollout; unchanged gates/score",
+  "scene_collision_screen": "IK checks floor and nearest eight retained URDF self-collision pairs per frame; adjacent and neutral-contact pairs excluded; tracked objects checked only in MuJoCo rollout",
+  "probe": {
+    "world_fk_sanity": [
+      {
+        "frame": 0,
+        "wrist_position_mm": 6.432604994750554e-08,
+        "wrist_angle_deg": 1.6493249095569994e-08,
+        "palm_position_mm": 7.011745634974962e-08,
+        "palm_angle_deg": 1.649325208211591e-08
+      },
+      {
+        "frame": 42,
+        "wrist_position_mm": 5.926429812903176e-08,
+        "wrist_angle_deg": 1.7888272661859682e-08,
+        "palm_position_mm": 6.271003548762984e-08,
+        "palm_angle_deg": 1.788827208101357e-08
+      },
+      {
+        "frame": 90,
+        "wrist_position_mm": 5.8132228099460925e-08,
+        "wrist_angle_deg": 2.3218890899098146e-08,
+        "palm_position_mm": 5.520301938626806e-08,
+        "palm_angle_deg": 2.3218887836783383e-08
+      },
+      {
+        "frame": 125,
+        "wrist_position_mm": 6.233853352445252e-08,
+        "wrist_angle_deg": 1.6499701746264855e-08,
+        "palm_position_mm": 6.772010842634851e-08,
+        "palm_angle_deg": 1.6499704858335484e-08
+      },
+      {
+        "frame": 189,
+        "wrist_position_mm": 6.109802671175836e-08,
+        "wrist_angle_deg": 1.791398191434365e-08,
+        "palm_position_mm": 6.502472632718486e-08,
+        "palm_angle_deg": 1.7913981176759234e-08
+      }
+    ],
+    "baseline_floor_min_m": 0.002846520810167265,
+    "baseline_screened_collision_min_m": 0.00011437259325275373,
+    "baseline_floor_min_frame": 2,
+    "baseline_collision_min_frame": 37
+  },
+  "feasibility_wall_s": 266.1979529350001,
+  "feasible_count": 30,
+  "selected_index": 2,
+  "selected_residual": [
+    -0.006,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "selected_metrics": {
+    "score": 87.2193200760046,
+    "target_task_success": false,
+    "full_scene_success": false,
+    "frames": 190,
+    "object_position_mean_mm": 45.58835197780304,
+    "object_position_median_mm": 20.823429750729623,
+    "object_position_p95_mm": 139.4912509410708,
+    "final_object_error_mm": 139.420567559159,
+    "max_lift_mm": 243.8512744486504,
+    "carry_object_error_p95_mm": 54.74137135136091,
+    "thumb_contact_frames": 116,
+    "finger_contact_frames": 81,
+    "opposing_contact_frames": 79,
+    "carry_opposing_contact_fraction": 0.8452380952380952,
+    "simultaneous_positive_force_carry_fraction": 0.8370646766169154,
+    "longest_carry_opposing_contact_gap_s": 0.4585,
+    "carry_height_deficit_step_fraction": 0.08759772565742716,
+    "carry_drop_step_fraction": 0.08759772565742716,
+    "robot_table_contact_steps": 0,
+    "robot_other_object_contact_steps": 0,
+    "target_table_contact_steps": 8355,
+    "max_neighbor_displacement_mm": 17.26183399644612,
+    "final_neighbor_displacement_mm": 17.25739965582997,
+    "final_target_speed_m_s": 0.00021712561626635124,
+    "release_no_hand_contact_last_15_frames": true,
+    "terminal_supported_last_15_frames": true,
+    "terminal_settled_last_15_frames": true,
+    "terminal_max_step_speed_m_s": 0.028346554512855456,
+    "wrist_relative_object_slip_60_to_98_mm": 7.098259469845228,
+    "max_thumb_normal_force_n": 38.68941825092735,
+    "max_finger_normal_force_n": 7.7590736029401475,
+    "min_target_contact_distance_mm": -10.260619669156759,
+    "any_actuator_effort_saturation_steps": 0,
+    "arm_tracking_median_rad": 0.010493668251378985,
+    "hand_tracking_median_rad": 0.0012394419382453434
+  },
+  "baseline_metrics": {
+    "score": 148.6347467276293,
+    "target_task_success": false,
+    "full_scene_success": false,
+    "frames": 190,
+    "object_position_mean_mm": 27.520624717970254,
+    "object_position_median_mm": 25.468175156730155,
+    "object_position_p95_mm": 69.23909519048924,
+    "final_object_error_mm": 25.200761380023,
+    "max_lift_mm": 243.42421564899047,
+    "carry_object_error_p95_mm": 104.56882837214297,
+    "thumb_contact_frames": 91,
+    "finger_contact_frames": 66,
+    "opposing_contact_frames": 66,
+    "carry_opposing_contact_fraction": 0.6904761904761905,
+    "simultaneous_positive_force_carry_fraction": 0.6780383795309168,
+    "longest_carry_opposing_contact_gap_s": 0.904,
+    "carry_height_deficit_step_fraction": 0.2222814498933902,
+    "carry_drop_step_fraction": 0.2222814498933902,
+    "robot_table_contact_steps": 0,
+    "robot_other_object_contact_steps": 0,
+    "target_table_contact_steps": 9115,
+    "max_neighbor_displacement_mm": 17.261833996446125,
+    "final_neighbor_displacement_mm": 17.257399655829975,
+    "final_target_speed_m_s": 0.0008036973172686533,
+    "release_no_hand_contact_last_15_frames": true,
+    "terminal_supported_last_15_frames": true,
+    "terminal_settled_last_15_frames": true,
+    "terminal_max_step_speed_m_s": 0.0028428570548835468,
+    "wrist_relative_object_slip_60_to_98_mm": 13.951754410635452,
+    "max_thumb_normal_force_n": 7.113246981098426,
+    "max_finger_normal_force_n": 7.295536094994567,
+    "min_target_contact_distance_mm": -13.057771588985162,
+    "any_actuator_effort_saturation_steps": 0,
+    "arm_tracking_median_rad": 0.01028332604633242,
+    "hand_tracking_median_rad": 0.0009074755092132744
+  },
+  "selected_command_sha256": "e6f396cfc0cff06ccd5693159aac2adb68eb6dc3acc23a2e31ed522eb83c6e3e",
+  "accepted": false,
+  "total_wall_s": 358.86531460000015,
+  "baseline_sampled_actual_velocity_margin_rad_s": 0.041538989579198216,
+  "selected_sampled_actual_velocity_margin_rad_s": 0.04111668601379148
+}

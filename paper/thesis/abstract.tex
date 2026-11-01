@@ -1,0 +1,17 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Robot learning from human demonstrations requires scalable data generation methods that preserve natural motion patterns while supporting diverse embodiments. This thesis presents ViKi, a system that transforms multiview RGB-D recordings of human manipulation into synthetic training datasets for robot learning via 3D Gaussian Splatting (3DGS).
+
+The pipeline consists of three key stages: (1) multiview RGB-D capture using synchronized Azure Kinect cameras, (2) hand and object reconstruction through pose estimation and 3D Gaussian scene representation, and (3) morphology-aware retargeting that generates robot trajectories for multiple embodiments from a single human demonstration.
+
+ViKi addresses the factorial scaling challenge in robot learning datasets: one human demonstration yields M robot embodiments × K camera viewpoints × P scene variations through 3DGS-based rendering. This enables affordable dataset generation without per-robot teleoperation or synthetic motion synthesis.
+
+The system was evaluated on reconstruction quality, multi-embodiment retargeting feasibility, and synthetic dataset properties. Experiments demonstrate photorealistic novel view synthesis, kinematically feasible trajectories across different robot morphologies, and data diversity metrics that support downstream learning applications.
+
+\vspace{1em}
+
+\noindent
+\textbf{Keywords:} robot learning, 3D Gaussian Splatting, human demonstrations, RGB-D perception, motion retargeting, multi-embodiment, dataset generation
+
+
