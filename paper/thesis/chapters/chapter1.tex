@@ -4,104 +4,250 @@
 \section{Background}
 \label{sec:background}
 
-Learning manipulation from demonstrations is limited by the cost of acquiring
-robot-executable examples. Teleoperation records robot states and actions
-directly, but needs a robot and a control interface during collection. Passive
-RGB-D capture instead records a person's unconstrained motion with cameras.
-It is cheaper to collect, but it does not itself provide robot actions: hand
-motion must be reconstructed, related to objects, and transferred to a robot
-with different geometry. Even a plausible joint trajectory need not lift or
-place an object when contacts and dynamics are simulated.
+Vision-based robot learning benefits from demonstrations that cover different
+objects, robot embodiments, camera viewpoints, and scene conditions. Direct
+teleoperation provides robot actions paired with observations, but acquiring
+additional recordings requires operator time and access to the relevant
+hardware. The cost depends on the collection interface and task; it need not
+grow in a fixed proportion to the number of robots. Demonstration reuse and
+synthetic data generation offer ways to reduce repeated collection
+\cite{mimicgen, real2render2real}.
 
-This thesis studies that chain as a source of training data. The target
-experiment is deliberately narrow: a person transfers a blue $40$~mm cube
-from a red support cube to a green target cube; a simulated old-generation
-UR10 with a Robotiq 2F-85 gripper attempts the same task. The goal is not to
-claim a general-purpose manipulation policy, nor to claim deployment on a
-physical robot that is not available for this study.
+Human demonstrations provide another source of manipulation motion. A person
+can perform a task while cameras record hand--object interaction, without
+controlling a robot during capture. Such recordings do not directly supply
+robot joint states or executable actions. Their use requires estimating motion,
+identifying task-relevant interactions, and adapting the resulting trajectory
+to the target robot \cite{dexmv, okami}.
+
+3D Gaussian Splatting (3DGS) supports novel-view synthesis from calibrated
+images and provides an editable representation of scene appearance
+\cite{gaussiansplatting}. Prior systems already use this representation for
+robot-data augmentation and human-to-robot data generation
+\cite{robosplat, real2render2real, robopaint}.
+This thesis investigates a ViKi workflow that combines markerless human-motion
+reconstruction from multiview RGB-D recordings with embodiment-specific
+retargeting and 3DGS-based rendering. Here, \emph{markerless} refers to tracking
+the demonstrator without worn markers or instrumented gloves; calibration
+targets may still be used to establish camera geometry.
 
 \section{Problem Statement}
 \label{sec:problem}
 
-The central question is whether passive demonstrations provide a measurable
-advantage when learning a robot policy in physics simulation. Three distinct
-gaps intervene. Perception must recover consistent hand and object motion from
-two imperfectly calibrated RGB-D views. Retargeting must turn a human motion
-into a reachable robot plan with a meaningful gripper command. Finally, the
-plan must survive physical execution: a kinematically valid approach may still
-miss a cube, slip during transfer, or fail on release.
+The objective is to reuse a recorded human manipulation episode to generate
+candidate robot observation--action sequences under several embodiment and
+viewing configurations. Three connected requirements define the problem.
+Perception must recover hand and object motion in a consistent metric frame.
+Retargeting must adapt task-relevant motion to the robot's reach, joint limits,
+end-effector geometry, and the geometric constraints represented in the model.
+Rendering must produce observations consistent with the retargeted robot,
+moving objects, and selected camera pose.
 
-Object-relative trajectories offer a way to transfer demonstrations to new
-cube placements, but they require a reliable object pose and must be checked
-again after transfer. Synthetic variations are therefore candidates for
-training, not valid demonstrations merely because a geometric transform can
-be computed. A second distinction is between learning with object coordinates
-and learning from images. The former isolates the quality of transferred data
-and control; the latter also tests perception and the visual simulation gap.
+The intended expansion is described by $M$ robot embodiments, $K$ viewpoints,
+and $P$ appearance configurations. Their Cartesian product contains up to
+$M K P$ candidate episode configurations per source demonstration. It is not
+a guarantee of $M K P$ feasible or independent demonstrations. Some robots may
+not reach the task, some views may reveal unobserved surfaces, and some edits
+may invalidate visual or geometric assumptions. The study therefore needs to
+report both the requested combinations and the subset that passes explicit
+checks.
+
+Stage-level measurements alone are insufficient. A low hand-reconstruction
+error, an admissible inverse-kinematics solution, and a plausible rendered
+image can still disagree at their interfaces. The generated episode must also
+preserve frame conventions, timestamps, object motion, and the correspondence
+between rendered robot state and exported action. Geometric consistency does
+not, by itself, establish force closure, successful manipulation, or usefulness
+for policy learning.
 
 \section{Research Gap}
 \label{sec:gap}
 
-Prior work covers parts of this problem. Teleoperation research develops
-retargeting objectives, while passive-video systems estimate human and object
-motion. MimicGen demonstrates that object-centric subtask transfer plus
-simulation filtering can expand a small source dataset \cite{mimicgen}. This
-work does not claim those operators as novel. Its question is whether an
-accessible, camera-only capture pipeline can produce useful robot-learning
-examples for the specified cube-transfer task, and which stage limits the
-yield. The comparison must include a controller that uses no ViKi examples;
-otherwise success in simulation cannot be attributed to the capture pipeline.
+The relevant literature includes integrated systems, not only isolated
+components. RoboSplat augments a robot demonstration across object poses,
+object types, camera views, scene appearance, lighting, and embodiments
+\cite{robosplat}. Real2Render2Real extracts object motion from a human video
+and generates robot data using reconstructed assets \cite{real2render2real}.
+RoboPaint combines multiview RGB-D human capture, glove-based retargeting, and
+hybrid rendering with a 3DGS background \cite{robopaint}. SplatSim generates
+synthetic observations for simulated demonstrations, while GaussianFactory
+synthesises demonstrations from a scene scan using grasp and trajectory
+planning \cite{splatsim, gaussianfactory}.
 
-\section{Research Questions and Hypotheses}
+Building on these systems, this thesis develops and assesses a particular
+markerless multiview RGB-D route:
+how reliably can reconstructed hand--object motion be reused across target
+robots and rendered observation conditions, and where does this reuse fail?
+The proposed contribution lies in the implementation and controlled
+characterisation of that route, including the effects of capture geometry,
+perception error, robot morphology, and rendering choices. Chapter~\ref{ch:lit}
+compares the input requirements and representations of the closest systems.
+
+\section{Research Questions}
 \label{sec:rq}
 
-\noindent\textbf{RQ.} \emph{Can passive two-view RGB-D demonstrations processed by
-\viki\ improve learning of a simulated UR10 cube-transfer policy, compared
-with the same training task without ViKi-derived examples?}
+The questions below define the intended evaluation of the pipeline. The
+implementation and results in Chapter~\ref{ch:impl} provide the evidence for
+answering them; questions without the required experiments remain open. A selected cohort of 28 HO-Cap manipulation sequences with eight
+RGB-D views provides the source material for the perception assessment; it is
+not the full dataset or its official held-out benchmark split.
 
-\begin{enumerate}[label=\textbf{RQ\arabic*.}, leftmargin=2.2em]
-  \item What fraction of recorded episodes survives hand reconstruction,
-        object tracking, retargeting and physical replay, and where are the
-        dominant losses?
-  \item Does object-aware, physics-validated transfer to new cube placements
-        improve held-out task success over equal-size world-frame or hand-only
-        training sets?
-  \item Under matched observations, control, training budget and evaluation
-        placements, do ViKi-derived examples improve policy success or sample
-        efficiency relative to learning without those examples?
-  \item Can a visual policy using simulated camera frames and robot state
-        retain task success without privileged object coordinates at test time?
-\end{enumerate}
+\subsection*{RQ1: Hand Reconstruction Accuracy}
 
-These are testable hypotheses, not findings. H1 predicts a nonzero yield of
-physically successful transferred episodes. H2 predicts that object-aware
-examples improve success on unseen, reachable cube placements when example
-count is controlled. H3 predicts that prior ViKi examples reduce the number
-of simulation interactions needed to reach a given success rate. H4 predicts
-that a camera-based policy trained from a successful state-based teacher can
-perform the task when evaluated using only deployment-available observations.
-Failure at any gate is a result to report, not a reason to relabel a geometric
-plan as a physically successful demonstration.
+How accurately does landmark detection, multiview reconstruction, and temporal
+regularisation recover human hand motion relative to the published HO-Cap
+annotations?
 
-\section{Contributions}
+\textit{Measures:} MPJPE, P95 joint error, PCK@20mm, and prediction coverage,
+with directly observed and temporally filled predictions reported separately.
+
+\textit{Reference:} HO-Cap's semi-automatic MANO-based annotations
+\cite{hocap}. These are reference labels, not a competing baseline or an
+independent motion-capture measurement. A parametric representation used by
+the reference does not imply that ViKi fits the same model.
+
+\subsection*{RQ2: Object Tracking Accuracy}
+
+How accurately can rigid-object motion be recovered, and how does the result
+depend on segmentation and initial pose information?
+
+\textit{Measures:} Translation and rotation error, their aggregation level,
+and tracking coverage. Orientation scoring must account for declared object
+symmetries or report the limitations of the chosen pose convention.
+
+\textit{Protocol:} Separate autonomous tracking from tracking with supplied
+instance masks. Reference-assisted first-frame alignment measures subsequent
+relative drift, not absolute localisation. Multiview agreement is a
+self-consistency measure unless checked against an independent reference.
+
+\subsection*{RQ3: Cross-Embodiment Retargeting Feasibility}
+
+For which target robots can the recovered trajectories satisfy stated
+kinematic and geometric constraints, and what tracking error remains?
+
+\textit{Measures:} Accepted-episode and accepted-frame rates, TCP translation
+and rotation error, joint and velocity-limit violations, self-collision
+margin, and clearance from explicitly modelled scene geometry. Solver
+convergence is reported separately from constraint satisfaction.
+
+\textit{Candidate embodiments:} UR10, UR5, Franka Panda, Kinova Gen3, and
+xArm7. The evaluation must state the actual robot models, base placements,
+end-effectors, and trajectories tested. Kinematic acceptance does not certify
+successful execution of the manipulation.
+
+\subsection*{RQ4: Gripper State Transfer}
+
+How consistently can observed thumb--index motion and interaction timing be
+mapped to a parallel-jaw gripper command?
+
+\textit{Measures:} Aperture tracking or command error against an explicitly
+defined mapping, opening and closing timing relative to annotated events,
+actuation-limit violations, and infeasible grasp-width cases. A mapped
+command is not a measurement of achieved contact.
+
+\textit{Scope:} Parallel-jaw transfer, initially using Robotiq 2F-85, is the
+primary case. Robotiq 3F and Allegro Hand require richer hand correspondences
+and a separate retargeting protocol; a scalar pinch signal does not determine
+their complete joint configurations.
+
+\subsection*{RQ5: Object-Aware Retargeting}
+
+Does incorporating object motion improve geometric interaction consistency
+relative to hand-only inverse kinematics?
+
+\textit{Comparison:} Hand-only and object-relative retargeting on the same
+source episodes and robot configurations; a contact-aware variant can be
+included where a defined contact model is available.
+
+\textit{Measures:} Relative hand/gripper--object pose error, unintended
+penetration, and consistency of designated contact regions and timing.
+These are geometric interaction measures, not physical grasp-success rates.
+Replaying an imposed object trajectory cannot establish that the robot would
+cause that motion.
+
+\subsection*{RQ6: 3DGS Reconstruction and Novel-View Fidelity}
+
+How do the number and placement of capture cameras affect reconstruction and
+novel-view quality for the scene components represented by 3DGS?
+
+\textit{Measures:} PSNR, SSIM, and valid-pixel depth RMSE on held-out views,
+with separate evaluation of background and task-relevant object regions.
+
+\textit{Protocol:} Fix train/test views and temporal splits before tuning.
+The rendered reference must depict the same scene state. A static background
+model must not be evaluated as if it reproduced the moving human and objects.
+Timing perturbations, if evaluated, are a separate controlled ablation.
+
+\subsection*{RQ7: Robot Compositing Consistency}
+
+How consistently can a retargeted robot and moving objects be rendered within
+the reconstructed scene across time and camera viewpoints?
+
+\textit{Measures:} Depth-ordering and occlusion errors, boundary artifacts,
+temporal stability, and agreement between rendered state and exported robot
+state. Paired image metrics such as LPIPS require a corresponding reference
+of the same target scene; a human demonstration frame is not a ground-truth
+image of the replacement robot.
+
+\textit{Comparison:} Alternative compositing methods on identical trajectories,
+camera poses, and scene states. Human ratings, if collected, require a stated
+sampling and rating protocol. Visual plausibility alone does not certify
+correct interaction.
+
+\subsection*{RQ8: Coverage and Yield of Dataset Expansion}
+
+What coverage of embodiment, viewpoint, and appearance configurations can be
+generated from each source demonstration while satisfying the defined
+kinematic, geometric, and data-consistency checks?
+
+\textit{Measures:} Requested and accepted episode counts, acceptance rate by
+factor combination, viewpoint coverage, failure categories, and generation
+time. Feature-space distances can describe visual variation under a fixed
+encoder, but are not evidence of additional task skills or learning benefit.
+
+\textit{Comparison:} Single-configuration export and controlled expansion of
+the same source episodes. A teleoperation cost comparison requires measured
+collection effort and an explicit accounting of calibration, scanning,
+annotation, computation, and rejected outputs.
+
+\medskip
+\noindent The evaluation concerns reconstruction, retargeting, rendering, and
+their integration. Policy training, task-success trials in simulation or on
+hardware, and real-robot deployment are outside this study. Claims about
+learning effectiveness or physically executable demonstrations require those
+additional experiments.
+
+\section{Intended Contributions}
 \label{sec:contributions}
 
-The implemented contribution is an offline pipeline from calibrated RGB-D
-recordings to hand trajectories, object tracks, and UR10 retarget plans. The
-experimental contribution sought here is a reproducible assessment of
-processing yield, simulated physical validity, object-relative variation,
-and the marginal value of ViKi-derived data for state and visual policies.
-Simulation replay, learning outcomes and real-world transfer are not claimed
-until measured. The proposed experiment uses no motion-capture ground truth
-or physical UR10; geometric consistency metrics must therefore not be
-presented as absolute pose accuracy.
+The planned contributions concern the implementation of the workflow and its
+experimental characterisation:
+
+\begin{enumerate}
+  \item An offline pipeline design that separates multiview human-motion
+        reconstruction, rigid-object tracking, robot retargeting, and visual
+        synthesis through explicit intermediate representations.
+  \item A workflow for reusing a source demonstration across robot,
+        viewpoint, and appearance configurations, with rejected cases and
+        configuration-dependent assumptions recorded rather than hidden in
+        the nominal expansion count.
+  \item An evaluation protocol for perception error, embodiment-specific
+        feasibility, novel-view fidelity, and observation--action consistency,
+        including controlled comparisons where reference data are available.
+  \item A characterisation of the resulting dataset coverage and generation
+        effort within the tested tasks and embodiments.
+\end{enumerate}
+
+The intended outcome is a dataset-generation workflow with measured operating
+limits, acceptance criteria, and documented failure cases.
 
 \section{Thesis Structure}
 \label{sec:structure}
 
-Chapter~\ref{ch:lit} reviews capture, retargeting and demonstration-driven
-robot learning. Chapter~\ref{ch:method} defines the implemented pipeline and
-the planned simulation study. Chapter~\ref{ch:impl} separates current evidence
-from experiments still to run. Chapter~\ref{ch:disc} treats uncertainty and
-validity, and Chapter~\ref{ch:concl} states the claims that the eventual
-results can and cannot support.
+Chapter~\ref{ch:lit} reviews human-motion representations, retargeting,
+3DGS-based data generation, task representations, and capture geometry.
+Chapter~\ref{ch:method} describes the pipeline formulations and assumptions.
+Chapter~\ref{ch:impl} reports the implementation and available evaluation.
+Chapter~\ref{ch:disc} examines measurement validity, failure cases, and the
+limits of generalisation. Chapter~\ref{ch:concl} summarises the supported
+findings and identifies the questions that require further experiments.

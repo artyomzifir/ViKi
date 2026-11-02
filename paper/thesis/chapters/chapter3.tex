@@ -1,539 +1,856 @@
+% Replacement Chapter 3 for the supplied thesis project.
+% Implementation claims were checked against artyomzifir/ViKi, main commit
+% 0fdbc02f8f68d82322d32fa9151097034593d30c (2026-10-07).
+% This is a source inspection, not a rerun of hardware or benchmark experiments.
+% Existing thesis labels are retained where their corrected meaning permits.
+% No new bibliography keys are required beyond the revised references.bib.
+
 \chapter{Design and Methodology}
 \label{ch:method}
 
-\section{System Overview}
+\section{System Overview and Implementation Boundary}
 \label{sec:overview}
 
-\viki\ is an offline pipeline: demonstrations are recorded, processed and
-exported in distinct stages, with no requirement that any stage run at
-interactive rates. This is a deliberate design choice. Relaxing the real-time
-constraint that shapes teleoperation systems permits offline reconstruction
-and robot-plan inspection. Physical replay is a planned validation interface,
-not an implemented or evaluated stage.
+\viki\ is designed as an offline pipeline that separates human-demonstration
+capture, motion reconstruction, robot-specific retargeting, and synthetic
+observation generation. Recording a human episode does not require the
+demonstrator to control a robot. Subsequent processing may use the complete
+episode, rather than meeting the latency requirements of teleoperation.
+This permits temporal fitting and trajectory-level optimisation, while making
+their processing cost and use of future observations explicit.
 
-The pipeline comprises six stages, shown in Fig.~\ref{fig:pipeline}.
-
-\begin{enumerate}[leftmargin=2em]
-  \item \emph{Capture.} Synchronised RGB-D streams are recorded from a
-        calibrated multi-camera rig while a demonstrator performs the task
-        bare-handed.
-  \item \emph{Perception.} Hand landmarks are detected per view, lifted to
-        three dimensions using sensor depth, and fused across views with
-        confidence weights to yield a wrist pose in $\SE$ and a gripper state.
-  \item \emph{Representation.} The wrist trajectory is expressed both relative
-        to the manipulated object and relative to the ChArUco workspace anchor.
-  \item \emph{Retargeting.} A robot joint trajectory is obtained by minimising
-        a single weighted cost functional subject to kinematic and collision
-        constraints.
-  \item \emph{Replay validation (stub).} The interface exists, but no physical
-        robot execution or replay-based acceptance is implemented.
-  \item \emph{Export.} A NumPy trajectory bundle and JSON manifest can be
-        written without implying physical validity; LeRobot export is optional
-        and subject to additional requirements.
-\end{enumerate}
+The target workflow has two branches after capture. The motion branch
+estimates hand and object trajectories and derives robot joint and gripper
+commands. The appearance branch reconstructs reusable scene assets and
+renders the resulting robot motion from selected cameras. Their outputs
+must agree on coordinate frames, timestamps, object identities, and robot
+state. Figure~\ref{fig:pipeline} shows this design.
 
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
-  node distance=4mm,
-  box/.style={draw, rounded corners=1pt, align=center, font=\footnotesize,
-              minimum height=8mm, text width=22mm, inner sep=2pt},
-  arr/.style={-{Latex[length=2mm]}, thick}]
-\node[box] (cap) {Capture\\\scriptsize 2$\times$Kinect};
-\node[box, right=of cap] (per) {Perception\\\scriptsize landmarks + fusion};
-\node[box, right=of per] (rep) {Representation\\\scriptsize object-relative $\SE$};
-\node[box, below=8mm of rep] (ret) {Retargeting\\\scriptsize single cost functional};
-\node[box, left=of ret] (val) {Replay\\\scriptsize stub};
-\node[box, left=of val] (exp) {Export\\\scriptsize NumPy bundle};
-\draw[arr] (cap) -- (per);
-\draw[arr] (per) -- (rep);
-\draw[arr] (rep) -- (ret);
-\draw[arr] (ret) -- (val);
-\draw[arr] (val) -- (exp);
-
+  node distance=7mm and 10mm,
+  box/.style={draw,rounded corners=1pt,align=center,font=\footnotesize,
+              minimum height=11mm,text width=40mm,inner sep=3pt},
+  proposed/.style={box,dashed},
+  arr/.style={-{Latex[length=2mm]},thick}]
+\node[box] (cap) {Calibrated RGB-D capture};
+\node[box,below left=of cap] (motion) {Hand and rigid-object motion};
+\node[proposed,below right=of cap] (scene) {3DGS scene assets};
+\node[box,below=of motion] (ik) {Embodiment-specific retargeting};
+\node[proposed,below=of scene] (render) {Robot and scene rendering};
+\node[proposed,below right=of ik] (data) {Checked observation--action episodes};
+\draw[arr] (cap) -- (motion);
+\draw[arr] (cap) -- (scene);
+\draw[arr] (motion) -- (ik);
+\draw[arr] (motion) -- (scene);
+\draw[arr] (scene) -- (render);
+\draw[arr] (ik) -- (render);
+\draw[arr] (ik) -- (data);
+\draw[arr] (render) -- (data);
 \end{tikzpicture}
-\caption{Stages of the \viki\ pipeline. Capture, perception and representation
-are embodiment-agnostic; retargeting is specific to the target manipulator.
-Replay is a stub, and export does not certify physical execution.}
+\caption{Target dataset-generation workflow. Solid boxes have corresponding
+processing code in the inspected revision; dashed boxes denote the proposed
+3DGS and synthetic-dataset extension. An implemented stage does not imply
+that its accuracy or downstream task performance has been established.}
 \label{fig:pipeline}
 \end{figure}
 
-\section{Hardware and Workspace}
+The implementation description is tied to repository revision
+\texttt{0fdbc02} of 7 October 2026.\footnote{Inspected source:
+\href{https://github.com/artyomzifir/ViKi/tree/0fdbc02f8f68d82322d32fa9151097034593d30c}{ViKi repository at the pinned revision}.}
+At that revision, capture, hand processing, rigid-object modelling,
+trajectory-level inverse kinematics (IK), object-relative diagnostics, and
+trajectory export have code implementations. An experimental cube-specific
+grasp planner also exists. The 3DGS reconstruction and robot-compositing
+stages described below are proposed extensions; the existing point-cloud
+viewer and image utilities do not implement them. Physical robot replay
+remains a stub, and the optional LeRobot writer is partial.
+
+Stage outputs are stored separately so that a failed downstream stage does
+not require recapturing the demonstration. The principal current artifacts
+are raw RGB-D recordings, per-camera landmarks in \texttt{rec.npz}, prepared
+hand trajectories in \texttt{cln.npz}, rigid-object models and tracks in
+\texttt{object\_models.npz}, and robot plans in \texttt{plan.h5}.
+Object-relative tracks are an additional artifact computed after IK.
+The proposed renderer consumes these estimates; it does not turn them into
+independently measured robot demonstrations.
+
+\section{Capture Geometry and Coordinate Frames}
 \label{sec:hardware}
 
-The local capture setup uses two Azure Kinect DK cameras observing a
-tabletop workspace. UR10 with a parallel-jaw gripper is the intended
-simulation target, not a physical manipulator mounted in this setup.
-Reachability of the unavailable local demonstrations cannot be quantified.
-The Azure Kinect time-of-flight depth characteristics are documented by the
-vendor \cite{mskinect} and studied independently \cite{tolgyessy}; neither
-source validates the current rig's calibration or fused trajectory accuracy.
+\subsection{Hardware and workspace}
 
-The two Kinects are placed to preserve substantial overlap in their fields of
-view. This is a direct consequence of the finding of Bu and Lee \cite{bulee}
-that iterative-closest-point refinement fails between near-opposing views for
-lack of point-cloud overlap; near-orthogonal placement retains both
-triangulation baseline and overlap.
+The local reference configuration uses two Azure Kinect RGB-D cameras
+viewing a bounded tabletop workspace. Camera placement should provide
+overlapping coverage of the hand and manipulated objects, while avoiding
+nearly parallel viewing rays in the interaction region. More views can
+reduce particular occlusions, but their benefit depends on placement,
+calibration, detector errors, and depth quality. Neither the number of
+cameras nor nominal sensor specifications establish reconstruction accuracy
+\cite{mskinect,tolgyessy,bulee}.
 
-\section{Calibration}
+The acquisition layer also contains a RealSense backend. Supporting a
+backend is distinct from validating a particular mixed-camera rig. Every
+experiment must record the devices, colour and depth modes, exposure
+settings, frame rate, synchronization mode, and calibration used. Camera
+motion invalidates the corresponding fixed-rig calibration. The robot is
+introduced as a kinematic model during offline processing; a physical robot
+is not required for human capture.
+
+\subsection{Calibration and frame convention}
 \label{sec:calib}
 
-\subsection{Intrinsics and extrinsics}
+Let $\bT^A_B$ map coordinates from frame $B$ to frame $A$.
+The implementation distinguishes a camera-rig frame $G$, a ChArUco
+calibration/workspace frame $C$, and the base frame $B_m$ of target robot
+$m$. The rig frame is tied to a reference camera. Inter-camera extrinsics
+and the workspace anchor are separate calibration quantities, rather than
+two names for the same world frame.
 
-Intrinsic parameters for every colour and depth stream are estimated from
-ChArUco board observations. Extrinsic calibration follows the workspace-anchor
-principle: rather than expressing cameras relative to one another, each camera
-is calibrated against a ChArUco board rigidly fixed to the workspace, defining
-a common world frame $W$. For camera $k$ this yields
+For a point observed by camera $k$, the complete transformation is
 \begin{equation}
-  \bT^{W}_{C_k} \in \SE,
+  \begin{bmatrix}\bx^C\\1\end{bmatrix}
+  = \bT^C_G\,\bT^G_k
+    \begin{bmatrix}\bx^k\\1\end{bmatrix}.
   \label{eq:extrinsic}
 \end{equation}
-the transform from the camera frame $C_k$ to the workspace frame $W$. Anchoring
-to the workspace rather than to a reference camera has two consequences: adding
-or moving a camera does not invalidate the calibration of the others, and the
-robot base can be registered into the same frame without a separate
-camera-to-camera chain.
+The camera geometry includes intrinsics and distortion or factory ray
+models, together with the relationship between colour and depth sensors.
+ChArUco observations provide constraints for the rig solve and workspace
+anchor \cite{opencvcharuco}. In the Azure Kinect path, factory-calibrated
+rays are used to place colour observations in an ideal pinhole plane for
+the multi-pose solve. This avoids treating raw distorted pixels as if they
+already followed that ideal model.
 
-\subsection{Robot registration}
+The saved calibration must retain the board dimensions and marker
+dictionary actually used. A numerically successful calibration solve or
+an automatic validation verdict is insufficient evidence of metric
+accuracy throughout the task volume. Reprojection residuals, cross-view
+surface agreement, and an independent dimension or distance check answer
+different questions and should be reported separately.
 
-The manipulator base frame $R$ is registered to $W$ by observing a ChArUco
-target held in a known end-effector pose across a set of configurations, giving
-$\bT^{W}_{R}$ directly. Where an explicit camera-to-robot transform is required
-instead, the Daniilidis dual-quaternion solver is used, following the
-robustness evidence of \cite{alihandeye}, with fifteen to twenty poses spanning
-a hemisphere.
+For retargeting, the configured robot-base pose is $\bT^C_{B_m}$, giving
+$\bT^{B_m}_H=(\bT^C_{B_m})^{-1}\bT^C_H$ for a human target frame $H$.
+The current code accepts a full base translation and orientation from
+configuration. It does not estimate this pose through a physical hand--eye
+calibration procedure. The transform therefore defines a virtual placement
+for geometric evaluation. Use on hardware would require an independently
+verified registration of the actual robot base. No automatic workspace
+rescaling or recentering is part of this transformation.
 
-\section{Synchronisation}
+\subsection{Synchronisation}
 \label{sec:sync}
 
-The two Azure Kinects are hardware-synchronised in master/subordinate
-configuration, with subordinate devices started before the master and depth
-exposures staggered to avoid mutual laser interference \cite{mskinect}. The
-RealSense cannot share that trigger; its synchronisation mode is incompatible
-at the electrical level.
-
-Cross-family alignment therefore uses a single host-side monotonic clock. Every
-frame, from every device, is stamped on arrival with
+The recorder stores both device timestamps and host timestamps. Host time
+is derived from a monotonic clock,
 \begin{equation}
-  \tau = \texttt{time.monotonic\_ns()},
+  \tau_{\mathrm{host},\mu\mathrm{s}}
+    = \left\lfloor\frac{t_{\mathrm{monotonic},\mathrm{ns}}}{1000}\right\rfloor,
   \label{eq:hostclock}
 \end{equation}
-and streams are aligned by nearest neighbour in $\tau$. Two points deserve
-emphasis. First, per-device hardware timestamps are \emph{not} used for
-cross-device arithmetic: distinct device families count their own cycles from
-their own epochs, and the vendor documentation states explicitly that equal
-timestamps across cameras are not guaranteed \cite{mskinect}. Second, a
-monotonic clock rather than wall-clock time is required, since wall-clock time
-may be adjusted discontinuously by time synchronisation daemons, which would
-corrupt interval computations mid-recording.
+and is used to select nearby buffered frames around a recording tick.
+The host-time acceptance window is a stale-frame guard; it does not certify
+simultaneous exposure.
 
-A future local evaluation must preserve paired device and host timestamps to
-measure alignment jitter and drift. No local synchronisation statistic is
-reported here; the HO-Cap benchmark cannot validate the Kinect rig.
+For a configured hardware-synchronised Kinect rig, the implementation
+checks master/subordinate roles and timestamp-offset stability before
+recording. It then matches subordinate device timestamps to the master,
+allowing for the measured offset. The inspected revision uses a
+$500\,\mu\mathrm{s}$ residual tolerance for this device-timestamp check.
+That configured tolerance is not a measured bound on optical exposure
+alignment or on the reconstruction error of an episode. Other acquisition
+configurations use host-based grouping unless a verified device-time
+relationship is available.
 
-\section{Perception and Multi-View Reconstruction}
+Offline multiview reconstruction groups observations by recorded
+synchronised frame index. Different cameras' host timestamps need not be
+identical within that group. An optional image-landmark time-alignment
+step is a distinct processing choice and must be recorded in the profile.
+Local synchronization assessment should report device-time residuals,
+host-arrival offsets, dropped groups, and drift over the recording. An
+external benchmark cannot validate the timing of the local camera rig.
+
+\section{Hand Reconstruction and Temporal Preparation}
 \label{sec:fusion}
 
-\subsection{Landmark detection and lifting}
+\subsection{Image observations and depth evidence}
 
-Hand landmarks are detected in each colour stream, yielding for view $k$ at
-time $t$ a set of image-plane landmarks with associated visibility scores
-$v^{k}_{i,t} \in [0,1]$. Each landmark is lifted to three dimensions using the
-registered depth map rather than a learned depth estimate, exploiting the
-time-of-flight measurement directly, and transformed into the workspace frame
-by \eqref{eq:extrinsic}.
+The working MediaPipe backend supplies 21 hand landmarks per detected hand
+in each colour image. Each observation contains image coordinates, a
+detector score, and, where available, a local depth measurement and depth
+spread. Detector confidence is evidence used by the estimator, not a
+calibrated probability of 3D correctness. Depth lifting uses the camera's
+colour--depth geometry and converts measurements to metres.
 
-\subsection{Multi-view triangulation}
+Per-camera observations and depth-lifted trajectories are retained before
+cross-camera fusion. This permits comparison of triangulation with the
+legacy depth-based path without rerunning the detector. Missing detections
+and invalid depth are recorded explicitly rather than replaced by zero
+coordinates.
 
-When a landmark is seen by two or more calibrated views, its position is not
-averaged from per-view depth lifts but estimated directly from the image
-observations, with depth entering as an additional soft residual rather than as
-the anchor. Averaging per-view lifts inherits the depth error of every view;
-triangulation is constrained by the camera geometry, which is known to
-calibration accuracy and does not degrade with range.
+\subsection{Calibrated multiview triangulation}
 
-For landmark $i$ at time $t$, let $\mathcal{K}_{i,t}$ be the views whose
-detector score clears a threshold and whose observation is finite. Every pair
-$(a,b) \subset \mathcal{K}_{i,t}$ yields a linear direct-linear-transform
-estimate, which is retained only if it lies in front of both cameras and if the
-two viewing rays subtend at least a minimum angle $\theta_{\min}$; a pair with a
-short effective baseline is ill-conditioned regardless of how confident the
-detector is. Each surviving hypothesis is scored against all views in
-$\mathcal{K}_{i,t}$ by the number of reprojection inliers, and the best is
-refined over its inlier set by
-\begin{equation}
-  \hat{\bx}_{i,t} \;=\;
-  \argmin_{\bx}\;
-  \sum_{k \in \mathcal{K}^{\text{in}}_{i,t}}
-  \rho\!\left(\norm{\pi_k(\bx) - \bu^{k}_{i,t}}^{2}\right)
-  \;+\;
-  \lambda_d \sum_{k} \beta^{k}_{i,t}\,
-  \rho_d\!\left(\left(z_k(\bx) - d^{k}_{i,t} - \delta_i\right)^{2}\right),
-  \label{eq:triangulate}
-\end{equation}
-where $\pi_k$ is the pinhole projection of view $k$, $\bu^{k}_{i,t}$ the
-observed pixel, $z_k$ the depth of $\bx$ in that camera, $d^{k}_{i,t}$ the
-measured depth, and $\delta_i$ a per-landmark offset from the skin surface to
-the joint centre---depth sees the skin, the joint sits inside the finger. The
-depth weight $\beta^{k}_{i,t}$ is attenuated by the local depth spread and set
-to zero for invalid samples, so that a single bad silhouette pixel cannot move
-an otherwise well-constrained point. Observations are undistorted once, before
-the linear estimate, and every projection downstream is a plain pinhole map;
-distortion is never re-applied inside the residual.
+The named multiview profiles use triangulation as their primary fusion
+method. For each landmark and frame, camera pairs provide direct linear
+triangulation hypotheses. A hypothesis must lie in front of both cameras
+and satisfy a minimum angle between its viewing rays. Candidate hypotheses
+are ranked by reprojection-inlier count, then inlier detector support and
+reprojection error. The best supported hypothesis is refined over its
+inlier views.
 
-The estimate carries a transparent geometric quality
-\begin{equation}
-  q_{i,t} \;=\;
-  \underbrace{\frac{\left|\mathcal{K}^{\text{in}}_{i,t}\right|}
-                   {\left|\mathcal{K}_{i,t}\right|}}_{\text{agreement}}
-  \cdot
-  \underbrace{\operatorname{clip}\!\left(
-      1 - \frac{\bar{e}_{i,t}}{2 e_{\text{in}}},\,0,\,1\right)}_{\text{reprojection}}
-  \cdot
-  \underbrace{\operatorname{clip}\!\left(
-      \frac{\theta_{i,t}}{\theta_{\text{ref}}},\,0,\,1\right)}_{\text{baseline}},
-  \label{eq:quality}
-\end{equation}
-with $\bar{e}_{i,t}$ the mean reprojection error over inliers, $\theta_{i,t}$
-the widest ray angle, and $e_{\text{in}}$ the inlier radius. This is a
-transparent heuristic, not a calibrated variance, and it is used as such: it
-weights evidence, and is never interpreted as an inverse covariance.
-
-A property of \eqref{eq:quality} deserves explicit statement, because it
-governs how much of a recording survives. The same $e_{\text{in}}$ is the
-acceptance threshold, the scale of the robust loss $\rho$ in
-\eqref{eq:triangulate}, and the denominator of the reprojection factor. The
-factor is therefore designed to grade confidence out to $2 e_{\text{in}}$,
-while the threshold admits nothing beyond $e_{\text{in}}$: half of the designed
-grading range is unreachable by construction. Widening $e_{\text{in}}$ does not
-introduce a soft-weighting mechanism, it permits the existing one to operate
-over its own range. A consequence is that $q$ is not comparable across settings
-of $e_{\text{in}}$: the same residual scores differently under a different
-denominator.
-
-\subsection{Single-view fallback}
-
-Where only one view observes a landmark, triangulation is undefined and the
-estimate falls back to the depth lift of that view. The historical multi-view
-path also combined per-view lifts by confidence-weighted averaging,
-\begin{equation}
-  \hat{\bx}_{i,t} \;=\;
-  \frac{\sum_{k} w^{k}_{i,t}\, \bx^{k}_{i,t}}
-       {\sum_{k} w^{k}_{i,t}},
-  \qquad
-  w^{k}_{i,t} \;=\;
-  \underbrace{v^{k}_{i,t}}_{\text{detector}}
-  \cdot
-  \underbrace{c^{k}_{i,t}}_{\text{sensor}}
-  \cdot
-  \underbrace{\frac{1}{\left(d^{k}_{i,t}\right)^{2}}}_{\text{range}}
-  \cdot
-  \underbrace{\max\!\left(0, \cos\theta^{k}_{i,t}\right)}_{\text{incidence}},
-  \label{eq:fusion}
-\end{equation}
-where $v^{k}_{i,t}$ is the detector score, $c^{k}_{i,t}$ the sensor depth
-validity at that pixel, $d^{k}_{i,t}$ the range, and $\theta^{k}_{i,t}$ the
-incidence angle. The range and incidence factors follow established practice in
-geometric depth fusion, where surfaces observed near perpendicular are weighted
-above obliquely observed ones because they are measured more accurately
-\cite{fusionpatent}; the detector and sensor factors follow confidence-map
-re-weighting \cite{zeng}. The product form ensures that a zero in any
-factor---an undetected landmark, an invalid depth pixel, a grazing view---
-removes that view's contribution entirely rather than attenuating it.
-
-This path is retained for reproducibility of earlier recordings and for
-single-camera operation. It is not the path used for the results reported here,
-because averaging per-view lifts propagates depth error into the fused point,
-whereas \eqref{eq:triangulate} constrains the point by geometry and admits
-depth only as evidence.
-
-\subsection{Wrist pose and gripper state}
-
-The wrist pose $\bT^{W}_{H,t} \in \SE$ is obtained by fitting an orthonormal
-frame to the fused wrist and knuckle landmarks. The gripper state is the thumb--index
-separation, mapped to a normalised opening,
-\begin{equation}
-  g_t \;=\;
-  \operatorname{clip}\!\left(
-    \frac{\norm{\hat{\bx}_{\text{thumb},t} - \hat{\bx}_{\text{index},t}}
-          - \tau_{\text{closed}}}
-         {\tau_{\text{open}} - \tau_{\text{closed}}},\,0,\,1\right),
-  \label{eq:gripper}
-\end{equation}
-temporally filtered to suppress chatter. An earlier formulation thresholded the
-same distance into a binary open/closed indicator; it was replaced because a
-parallel-jaw gripper is a continuously commandable actuator, and quantising the
-one degree of freedom that carries the grasp discards precisely the approach
-and release phases that distinguish a successful demonstration from a failed
-one. This single scalar remains the entire hand representation beyond the wrist
-frame, following the convention established for parallel-jaw targets in
-\cite{opentv, ace}.
-
-\section{External Hand-Joint Reference Protocol}
-\label{sec:hocap-method}
-
-The main external cohort contains all 28 selected single-hand HO-Cap
-pick-and-place sequences (24 right-hand and four left-hand, 29,706 frames)
-from the pinned HO-Cap mirror revision recorded in the archived batch
-status. All eight RealSense RGB-D views are processed with MediaPipe observations,
-calibrated triangulation and the frozen \texttt{hocap-mediapipe-triangulated-v1}
-profile. The HoloLens stream is excluded. These sequences are separate from
-the local Kinect cube cohort and cannot validate its calibration. Published
-semi-automatic MANO 21-joint positions are transformed into the
-\texttt{hocap\_tag\_1} frame. Extract and Prepare do not use the reference
-hand labels. Predictions are paired by exact frame index and synthetic
-capture timestamp, without root alignment, Procrustes fit, temporal search
-or reference-guided filtering. MPJPE is the mean Euclidean error over finite
-matched joints; coverage is matched joints divided by valid reference joints.
-We report PCK@20/50~mm and the per-sequence 95th percentile alongside MPJPE.
-The aggregate MPJPE and PCK are weighted by matched joint counts; an
-aggregate P95 cannot be recovered from per-sequence quantiles. Incomplete
-Prepare stages are excluded.
-
-For each of the four named objects in a sequence, a separate tracker receives
-\emph{published instance masks} and depth from the eight views. It does not
-predict segmentation. Model confidence must reach 0.35. A single
-right-multiplied object-local SE(3) transform is fit at the first confident
-frame using the published object pose. Later matched frames are scored by
-translation distance and geodesic SO(3) angle in the same world frame;
-coverage is tracked frames divided by valid reference frames. Thus these are
-\emph{relative tracking-drift} scores conditional on oracle masks and a
-reference-assisted first-frame gauge choice, not absolute 6-DoF localization.
-No symmetry-equivalent orientation metric or moving-only subset is applied.
-The 28-scene selection is a task-and-handedness subset, not an official
-held-out HO-Cap benchmark split. Earlier two-sequence, 120-frame two-versus-
-eight-view results remain a development pilot: its camera pair was selected
-on the same frames and cannot be treated as held-out evidence.
-
-\section{Object-Centric Representation}
-\label{sec:objcentric}
-
-Let $\bT^{W}_{O,t}$ denote the pose of the manipulated object in the workspace
-frame. Each demonstration is stored in two forms. The workspace-anchored form
-is $\bT^{W}_{H,t}$ directly; the object-relative form is
-\begin{equation}
-  \bT^{O}_{H,t} \;=\; \left(\bT^{W}_{O,t}\right)^{-1} \bT^{W}_{H,t}.
-  \label{eq:objrel}
-\end{equation}
-
-The object-relative form is what transfers. If the same task is to be performed
-with the object at a new pose $\bT^{R}_{O'}$ expressed in the robot frame, the
-desired end-effector pose at time $t$ is
-\begin{equation}
-  \bT^{R,\mathrm{des}}_{E,t} \;=\;
-  \bT^{R}_{O'} \; \bT^{O}_{H,t} \; \bT^{H}_{E},
-  \label{eq:transfer}
-\end{equation}
-where $\bT^{H}_{E}$ is a fixed offset relating the human wrist frame to the
-robot end-effector frame, determined once per embodiment. Trajectories are
-retained densely rather than reduced to keyframes, since the continuous
-velocity profile of the demonstration carries task-relevant information---
-approach speed, contact timing---that sparse keyframes discard.
-
-Both representations are exported. Storing both costs little and defers to the
-downstream consumer a choice that the literature does not settle universally:
-object-relative trajectories generalise across object placement
-\cite{orion, spot} but depend on object pose estimation, whereas
-workspace-anchored trajectories are simpler and adequate within a fixed layout.
-
-\section{Retargeting as a Single Cost Functional}
-\label{sec:retarget}
-
-\subsection{Formulation}
-
-Let $\bq_t \in \R^{n}$ be the manipulator configuration at time $t$ and
-$f(\bq_t) \in \SE$ the forward kinematics of the end-effector. The task-space
-residual with respect to the desired pose \eqref{eq:transfer} is the
-logarithmic map of the pose error,
-\begin{equation}
-  \be_t(\bq_t) \;=\;
-  \Log\!\left(
-    \left(\bT^{R,\mathrm{des}}_{E,t}\right)^{-1} f(\bq_t)
-  \right)^{\vee} \in \R^{6}.
-  \label{eq:residual}
-\end{equation}
-
-Retargeting is then posed as the single constrained problem
+For the angular-residual mode, let $s_k$ be the detector score, $f_k$ the
+camera focal scale, $d_k$ a valid depth observation, and $z_k(\bx)$ the
+predicted camera-axis depth. The residual for view $k$ contains
 \begin{equation}
 \begin{aligned}
-  \min_{\bq_{1:T}} \;\; J(\bq_{1:T}) \;=\; \sum_{t=1}^{T} \Big[\;
-   & \underbrace{\omega_t \,\rho_\delta\!\left(
-       \norm{\be_t(\bq_t)}_{\bm{\Sigma}}\right)}_{\text{data fidelity}}
-   \;+\;
-     \underbrace{\lambda_v \norm{\bq_t - \bq_{t-1}}^{2}}_{\text{velocity}}
-   \\[1mm]
-   &+\;
-     \underbrace{\lambda_a \norm{\bq_t - 2\bq_{t-1} + \bq_{t-2}}^{2}}
-       _{\text{acceleration}}
-   \;+\;
-     \underbrace{\lambda_r \norm{\bq_t - \bq_{\mathrm{ref}}}^{2}}
-       _{\text{posture}}
-  \;\Big]
+  \mathbf r_k(\bx)&=
+    \begin{bmatrix}
+      \sqrt{s_k}\,[\pi_k(\bx)-\bu_k]/f_k\\[1mm]
+      \sqrt{\lambda_d w^d_k}\,
+        [z_k(\bx)-d_k-\delta_i]/\max(z_k(\bx),\varepsilon)
+    \end{bmatrix},\\[2mm]
+  \hat\bx_{i,t}&=\argmin_{\bx}
+      \sum_{k\in\mathcal K^{\mathrm{in}}_{i,t}}\sum_a
+      \rho\!\left([\mathbf r_k(\bx)]_a\right).
 \end{aligned}
-\label{eq:cost}
+  \label{eq:triangulate}
 \end{equation}
-subject to
-\begin{align}
-  \bq_{\min} \;\le\; &\bq_t \;\le\; \bq_{\max}, \label{eq:cjoint}\\
-  \norm{\bq_t - \bq_{t-1}} \;&\le\; \dot{\bq}_{\max}\,\Delta t,
-    \label{eq:cvel}\\
-  h_j(\bq_t) \;&\ge\; 0, \quad j = 1,\dots,m, \label{eq:ccoll}
-\end{align}
-where
+Here $\pi_k$ projects into the undistorted image convention used by the
+solver. The depth row is omitted when depth is invalid. Its weight decreases
+with local depth spread; $\delta_i$ is a configurable surface-to-joint
+depth offset. The robust loss acts on scalar residual components. The
+legacy pixel-residual mode has a different scaling and is preserved as a
+separate profile choice.
 
-\begin{center}
-\begin{tabular}{@{\hspace{10mm}}p{28mm}@{}p{85mm}}
-$\omega_t$ & per-frame perception confidence weight, defined in \eqref{eq:conf};\\
-$\rho_\delta$ & Huber loss with transition parameter $\delta$;\\
-$\bm{\Sigma}$ & diagonal matrix normalising translational and rotational residual units;\\
-$\lambda_v, \lambda_a, \lambda_r$ & weights on velocity, acceleration and posture regularisation;\\
-$h_j$ & collision and self-collision barrier functions.
-\end{tabular}
-\end{center}
-
-\subsection{Confidence weighting}
-
-The per-frame weight aggregates the geometric qualities \eqref{eq:quality} of
-the landmarks that define the palm frame at time $t$,
+Triangulation does not remove range-dependent uncertainty. Small ray
+intersection angles, inaccurate calibration, motion between views, and
+consistent image-localisation errors can all produce an inaccurate 3D
+point. Its geometric quality score is
 \begin{equation}
-  \omega_t \;=\;
-  \left(\frac{1}{|\mathcal{I}|}\sum_{i \in \mathcal{I}} c_{i,t}\right)^{\alpha}
-  \cdot \mathbb{1}\!\left[\text{frame valid}\right],
+  q_{i,t}=\frac{n_{\mathrm{in}}}{n_{\mathrm{usable}}}
+    \left[1-\frac{\bar e}{2\epsilon_{\mathrm{in}}}\right]_{0}^{1}
+    \left[\frac{\theta_{\mathrm{best}}}{\theta_{\mathrm{ref}}}\right]_{0}^{1},
+  \label{eq:quality}
+\end{equation}
+where $[\cdot]_0^1$ denotes clipping, $\bar e$ is mean inlier reprojection
+error, and $\theta_{\mathrm{best}}$ is the largest inlier-pair ray angle.
+Profiles may additionally multiply this quantity by mean inlier detector
+score. Quality depends on the chosen gates and is not an independent
+accuracy measurement. With fewer than two usable views, this triangulation
+path leaves a gap.
+
+\subsection{Legacy fusion, interpolation, and articulated fitting}
+
+The alternative \texttt{xyz\_mean} path combines finite depth-lifted points
+on a common time grid:
+\begin{equation}
+  \hat\bx_{i,t}
+    =\frac{\sum_k w^k_{i,t}\bx^k_{i,t}}{\sum_k w^k_{i,t}}.
+  \label{eq:fusion}
+\end{equation}
+Its current weights come from the supplied per-camera confidence arrays.
+The implementation does not compute the previously proposed product of
+detector confidence, depth-sensor confidence, inverse squared range, and
+surface-incidence angle. This legacy mode can operate on single-view depth
+evidence, but it is not a per-landmark automatic fallback inside the strict
+named triangulation profiles. A custom run that falls back because a
+triangulation artifact is missing must be identified as such.
+
+After fusion, missing coordinates may be interpolated and the landmark
+sequence smoothed with a Savitzky--Golay filter. These are operations on
+landmark coordinates, not cubic interpolation on $\SE$. The inspected
+default profile, \texttt{stable-fused-hand-v4}, uses linear fused-gap
+interpolation, permits edge holding and unbounded gap length, and expresses
+several spatial and temporal settings in angular units or milliseconds.
+Consequently, a finite prepared coordinate can be temporally filled rather
+than directly supported by camera observations. Observed masks, gap lengths,
+and fitted-pose support must accompany accuracy and coverage statistics.
+
+An additional articulated-hand stage fits a constrained landmark/capsule
+model to the fused sequence. The stable landmark-only fitting path does
+not use a MANO surface model or dense depth fitting. Its outputs are saved
+alongside the original prepared landmarks, allowing fitted and landmark
+poses to be compared. Kinematic regularity of this fitted hand is useful
+internal evidence, but it is not independent proof that the recovered hand
+motion is correct.
+
+\subsection{Palm frame, interaction point, and gripper signal}
+
+The landmark-derived palm frame uses wrist and metacarpophalangeal (MCP)
+landmarks. Its longitudinal axis points from the wrist to the middle MCP;
+the normal is the normalised cross product of that axis with the
+index-to-pinky MCP vector. The remaining axis completes a right-handed
+frame. Degenerate or missing geometry requires a validity decision; an
+identity-orientation placeholder is not an observed palm rotation.
+
+The robot target need not be located at the wrist. The current pinch-centre
+option uses the midpoint of the thumb and index fingertips for target
+position, while orientation can come from the selected palm-pose source.
+Thus a run can combine a landmark-derived interaction point with an
+articulated-fit orientation. Both choices must be retained in provenance.
+
+For parallel-jaw transfer, the continuous gripper decoder uses a
+dimensionless pinch ratio rather than treating fingertip distance as the
+robot's metric aperture:
+\begin{align}
+  r_t &=\frac{\norm{\bx_{\mathrm{thumb},t}-\bx_{\mathrm{index},t}}}
+                  {\norm{\bx_{\mathrm{wrist},t}-\bx_{\mathrm{middleMCP},t}}},
+       \nonumber\\
+  g_t^{\mathrm{raw}}&=
+       \left[\frac{r_t-r_{\mathrm{closed}}}
+                    {r_{\mathrm{open}}-r_{\mathrm{closed}}}\right]_0^1,
   \qquad
-  c_{i,t} =
-  \begin{cases}
-    q_{i,t}, & \text{landmark triangulated,}\\
-    0, & \text{landmark interpolated,}
-  \end{cases}
+  g_t=g_{t-1}+\alpha_g(g_t^{\mathrm{raw}}-g_{t-1}).
+  \label{eq:gripper}
+\end{align}
+Here zero denotes closed and one fully open. Thresholds and smoothing are
+decoder parameters; the first valid sample initialises the filter, and a
+missing sample holds the previous command. A binary hysteresis decoder is
+also available. These mappings are design choices, rather than anatomical
+equivalences between a human hand and a robot gripper. As in other
+human-to-robot interfaces, the correspondence must match the target
+end-effector \cite{opentv,ace}. A scalar opening signal does not specify a
+complete dexterous-hand configuration or contact force.
+
+\section{Object Motion and Relative Representation}
+\label{sec:objcentric}
+
+\subsection{Segmentation and rigid modelling}
+
+The implemented scene branch uses prompted SAM~2.1 video segmentation
+\cite{sam2}. Prompts associate masks with persistent object identities and
+roles. An optional empty-background depth plate supports automatic prompt
+proposals from foreground components, but these proposals do not establish
+which object is manipulated or which surfaces define the task. Prompt
+correction and role assignment are recorded inputs.
+
+Calibrated RGB-D lifting converts masks into semantic point observations.
+The object modeller builds a temporally supported canonical core, tracks
+it with robust trimmed nearest-neighbour alignment and weighted rigid
+fitting, then adds supported shell points and refines the track.
+Operator-proximity flags suppress shell growth during possible contact,
+reducing the risk of incorporating hand points into the object model.
+They indicate geometric proximity, not measured contact or a stable grasp.
+
+The output contains object poses, confidence, support, rotation-information
+diagnostics, and validity. Partial visibility and object symmetry may leave
+rotation poorly constrained even when translation is stable. These
+artifacts are geometric models and motion estimates; they are not yet
+textured 3DGS assets and do not automatically alter the hand trajectory.
+
+\subsection{Relative tracks and proposed transfer}
+
+For a saved human frame $H$ and object $O$, the object-relative pose is
+\begin{equation}
+  \bT^O_{H,t}=(\bT^C_{O,t})^{-1}\bT^C_{H,t}.
+  \label{eq:objrel}
+\end{equation}
+The same construction yields object-relative target and achieved robot
+tool poses. The current \texttt{object\_relative.npz} artifact is computed
+after object modelling and IK. It permits analysis of relative motion and
+interaction error; it is not evidence that general object-relative
+retargeting drove the plan. Its saved human frame must also be distinguished
+from a pinch-centre robot target when those positions differ.
+
+A possible object-relative target construction for embodiment $m$ is
+\begin{equation}
+  \bT^{B_m,\mathrm{des}}_{E,t}
+    =\bT^{B_m}_{O',t}\,\bT^O_{H,t}\,\bT^H_{E,m},
+  \label{eq:transfer}
+\end{equation}
+where $O'$ is a specified target object trajectory and $\bT^H_{E,m}$ is a
+declared human-to-tool correspondence. This equation defines a proposed
+transfer option, not the current general-purpose IK input. A constant
+correspondence is only an approximation for changing human grasps and
+different gripper geometries. Altering object placement may also require
+changing approach, support, and release conditions. Object-relative
+representations are motivated by their ability to express task geometry
+\cite{orion,spot}; representation alone does not make a transferred
+interaction feasible.
+
+\subsection{Implemented cube-specific pilot}
+
+The inspected revision includes an experimental object-aware planner for
+a cube and Robotiq 2F-85. It requires one explicitly identified manipulated
+object, supported canonical geometry with suitable side planes, and
+sufficient motion/contact evidence. Missing or ambiguous prerequisites
+cause an error rather than a silent hand-only fallback.
+
+This planner separates approach, closure, carry, release, and retreat.
+During carry it follows object translation with a fixed pickup offset.
+Jaw orientation is aligned with supported cube geometry and held through
+the carry, rather than trusting uncertain framewise cube rotation. The
+opening command is derived from the modelled pad separation and the
+specified cube width. This is a restricted geometric grasp hypothesis.
+It intentionally modifies parts of the measured human motion, and neither
+its closure command nor its imposed object path demonstrates force closure
+or successful manipulation. Hand-only and cube-aware plans must therefore
+be evaluated as distinct methods.
+
+\section{Offline Trajectory Retargeting}
+\label{sec:retarget}
+
+\subsection{Robot model and target construction}
+
+Each target embodiment specifies an arm model, joint ordering and limits,
+base placement, reference posture, gripper, mounting adapter, and
+human-to-tool correspondence. The current arm registry contains UR3, UR5,
+UR10, UR5e, UR10e, and iiwa14 descriptions. A registry entry is not a
+cross-embodiment evaluation result. Panda, Gen3, and xArm7 remain candidate
+additions until their models and end-effectors are integrated and tested.
+
+The working Robotiq 2F-85 assembly uses the actual gripper geometry.
+Its positional task point is the midpoint of the two modelled contact-pad
+centres, and orientation is taken from the designated tool frame.
+Because the pad positions vary with gripper opening, the positional task
+is not a fixed flange offset. Let $\bq_t\in\mathbb R^{n_m}$ contain the
+arm joints and let $g_t$ determine the gripper's drive and mimic joints.
+Forward kinematics then provides
+$\mathbf p_m(\bq_t,g_t)$ and $\mathbf R_m(\bq_t,g_t)$.
+Gripper rate profiling precedes the arm optimisation; gripper joints are
+known framewise inputs rather than additional arm decision variables.
+
+The selected human position and orientation are transformed from rig to
+workspace coordinates, composed with the configured local tool
+correspondence, and then expressed in the robot base frame. These
+configuration offsets should not be described as a measured anatomical
+or hand--eye calibration. The cube-aware mode replaces the corresponding
+targets before the same robot optimisation.
+
+\subsection{Pose error and temporal terms}
+
+For target position $\mathbf p_t^*$ and orientation $\mathbf R_t^*$,
+the implemented task residual is
+\begin{equation}
+  \be_t(\bq_t)=
+  \begin{bmatrix}
+    \sqrt{w_p}\,[\mathbf p_m(\bq_t,g_t)-\mathbf p_t^*]\\
+    \sqrt{w_R}\,\Log_{\mathrm{SO}(3)}
+       \!\left((\mathbf R_t^*)^{\!\top}\mathbf R_m(\bq_t,g_t)\right)
+  \end{bmatrix}.
+  \label{eq:residual}
+\end{equation}
+The rotation logarithm is represented as a three-vector. This is a
+weighted stack of translation and rotation errors, rather than the full
+$\SE$ logarithm. The weights set the relative scale of metres and radians;
+they are not an estimated measurement covariance.
+
+For $\Delta t=1/f$, temporal operators use
+\begin{equation}
+  (D_1\bq)_t=\frac{\bq_{t+1}-\bq_t}{\Delta t},\qquad
+  (D_2\bq)_t=\frac{\bq_{t+2}-2\bq_{t+1}+\bq_t}{\Delta t^2}.
+\end{equation}
+The solver estimates $f$ from median positive timestamp intervals and
+uses a uniform time step. Recordings with substantial irregular timing
+therefore require explicit resampling or a separate timing analysis.
+Velocity and acceleration penalties couple adjacent frames, and a posture
+penalty favours the selected robot reference. Temporal regularisation and
+interaction refinement are also examined in related work such as DexFlow
+\cite{dexflow}. Here, the discrete penalties encourage smoothness; they do
+not establish continuous-time $C^2$ regularity, bounded jerk, or dynamic
+feasibility.
+
+\subsection{Confidence and robust data fitting}
+
+Let $c_{i,t}\in[0,1]$ be the prepared landmark confidence and let
+$\mathcal P$ contain wrist, index MCP, middle MCP, and pinky MCP.
+The default mean-palm evidence rule is
+\begin{equation}
+  \bar\omega_t=v_t
+     \left(\frac{1}{|\mathcal P|}\sum_{i\in\mathcal P}c_{i,t}\right)^\alpha,
   \label{eq:conf}
 \end{equation}
-with $\mathcal{I}$ the four landmarks defining the palm frame---wrist and the
-index, middle and little metacarpophalangeal joints---and $\alpha$ controlling
-how sharply low-confidence frames are discounted.
-
-Equation \eqref{eq:conf} as written admits a frame whose palm was only
-partially observed: a mean over four terms is non-zero whenever one of them is,
-so a palm with a single triangulated landmark still contributes at roughly a
-quarter weight, and the orientation it contributes was fitted partly through
-interpolated points. A stricter diagnostic variant zeroes the frame unless every landmark in
-$\mathcal{I}$ was triangulated,
+where $v_t$ is pose validity. Under the default episode-normalisation
+policy, triangulation quality is divided by the maximum quality in the
+episode before clipping. This relative normalisation should not be
+interpreted as absolute confidence across recordings. A stricter named
+profile uses
 \begin{equation}
-  \omega^{\text{strict}}_t \;=\;
-  \omega_t \cdot
-  \mathbb{1}\!\left[\,\forall i \in \mathcal{I}:\; \text{$i$ triangulated}\,\right].
+  \bar\omega_t^{\mathrm{all}}
+      =\bar\omega_t\prod_{i\in\mathcal P}o_{i,t},
   \label{eq:confstrict}
 \end{equation}
-This variant is a proposed diagnostic, not a measured improvement in the
-available evidence. It trades observation support for stricter provenance;
-a retained local cohort is needed to quantify the effect on tracking and
-coverage. The construction is analogous to distance-dependent switching
-weights in online teleoperation retargeting \cite{opentv}: poorly observed
-frames should exert less influence than well-observed frames.
+where $o_{i,t}$ indicates direct observation. This all-observed rule is an
+alternative, not the inspected default. Under the mean rule a partly
+interpolated palm can retain positive pose weight.
 
-\subsection{Robustification}
+Pinch-centre targeting further limits evidence by the lower fingertip
+confidence. Invalid target frames receive zero data weight. The solver
+clips remaining weights to $[0,1]$ and applies a small positive floor to
+nonzero weights; the inspected default floor is $0.05$. Consequently,
+arbitrarily weak positive evidence is not attenuated without limit.
+Position interpolation and rotation Slerp provide finite placeholders
+for invalid target rows, but those rows keep zero data weight.
 
-The Huber loss $\rho_\delta$ bounds the influence of gross outliers---a
-mis-detected hand, a depth dropout that survives the confidence weighting---at
-the level of the data term itself, rather than allowing a filtering stage to
-smear the outlier across neighbouring frames \cite{dexteleop0}. This is the
-mechanism that replaces pre-smoothing: outliers are down-weighted where they
-enter, not attenuated after they have already propagated.
+A Huber loss is applied to the norm of the scaled six-dimensional residual.
+Its iteratively reweighted least-squares (IRLS) multiplier satisfies
+$\gamma_t^2=\min(1,\delta/\max(\norm{\be_t},\varepsilon))$.
+Robust fitting reduces the influence of large residuals; it does not
+replace the interpolation and filtering already applied during preparation,
+and it cannot detect every plausible but incorrect hand pose.
 
-\subsection{Why a single functional}
+\subsection{Sparse batch solve and geometric constraints}
 
-Equation~\eqref{eq:cost} differs from the sequential alternative in one
-structurally important respect. The smoothness penalties act on $\bq_t$, in the
-space where smoothness is required, and they are traded against data fidelity
-by the solver rather than applied blindly beforehand. In the sequential
-pipeline, task-space filtering cannot guarantee joint-space smoothness because
-the forward kinematics is nonlinear, and it cannot distinguish task-relevant
-fast motion from noise because it operates without reference to the data term.
-Here the trade-off is explicit: on high-confidence frames $\omega_t$ is large
-and the solution tracks the observation; on low-confidence frames the
-smoothness terms dominate and the solution interpolates.
+The current solver optimises the whole arm trajectory using a custom
+sparse Gauss--Newton/IRLS procedure. With current stacked joint vector
+$\mathbf q$, pose Jacobians $J_t$, stacked reference
+$\mathbf q_{\mathrm{ref}}$, and increment $\Delta\mathbf q$, its QP
+subproblem minimises
+\begin{equation}
+\begin{split}
+  \frac12\Bigg[&\sum_t\omega_t\gamma_t^2
+       \norm{\be_t+J_t\Delta\bq_t}^{2}
+       +\lambda_v\norm{D_1(\mathbf q+\Delta\mathbf q)}^2\\
+       &+\lambda_a\norm{D_2(\mathbf q+\Delta\mathbf q)}^2
+       +\lambda_r\norm{\mathbf q+\Delta\mathbf q-\mathbf q_{\mathrm{ref}}}^2
+       +\mu\norm{\Delta\mathbf q}^2\Bigg].
+\end{split}
+\label{eq:cost}
+\end{equation}
+This equation states the implemented local least-squares scaling.
+The code's separate logged merit uses the Huber data term plus the full
+weighted temporal and posture penalties; it is not numerically identical
+to the quadratic model in \eqref{eq:cost}. The fixed damping $\mu$ is a
+Tikhonov term, rather than an adaptive Levenberg--Marquardt schedule.
 
-Second-order smoothness, expressed by the acceleration term, follows the
-$C^2$-continuity argument of DexFlow \cite{dexflow}. A trajectory that is
-first-order smooth may still exhibit curvature discontinuities that appear as
-jerk on the physical manipulator and as label noise to a policy trained on the
-data.
+Joint positions and velocities are constrained componentwise:
+\begin{align}
+  \bq_{\min}&\leq\bq_t\leq\bq_{\max},
+       \label{eq:cjoint}\\
+  -\dot{\bq}_{\max}&\leq(D_1\bq)_t\leq\dot{\bq}_{\max}.
+       \label{eq:cvel}
+\end{align}
+The geometric constraints have the form
+\begin{equation}
+  h_j(\bq_t,g_t)\geq0,
+  \label{eq:ccoll}
+\end{equation}
+with local linearisation inside each QP. They cover the workspace floor
+plane for represented moving bodies, including the adapter and gripper
+contact points, and enabled self-collision pairs. The calibrated plane is
+transformed into robot coordinates, including for a tilted base.
+These checks do not include arbitrary scene obstacles, general
+robot--object contact constraints, torque limits, or hard acceleration
+and jerk limits.
 
-\subsection{Solution}
+Pinocchio supplies kinematics and Jacobians, Pink supplies the configured
+self-collision barriers \cite{pink}, and \texttt{qpsolvers} invokes the
+sparse OSQP backend. Pink does not itself formulate the entire batch
+objective. The trajectory starts from the tiled reference posture, normally
+the registered robot home, rather than a sequential frame-to-frame IK
+warm start. Each QP also limits increment magnitude. Backtracking checks
+the nonlinear merit and represented geometric margins once the current
+trajectory is geometrically feasible; an initially infeasible trajectory
+may require a feasibility-repair step.
 
-The problem is solved with Pink on Pinocchio \cite{pink}. Each term of
-\eqref{eq:cost} maps onto a weighted task in the quadratic program---a frame
-task for the data term, posture and velocity regularisation tasks for the
-smoothness terms---while \eqref{eq:cjoint}--\eqref{eq:ccoll} enter as
-inequality constraints, with collision avoidance expressed through control
-barrier functions. Levenberg--Marquardt damping stabilises the solution near
-singularities.
+The final trajectory is checked again against exact represented floor
+and self-collision margins. The inspected floor tolerance is
+$0.5$\,mm; it is a numerical acceptance tolerance for the model, not a
+physical clearance guarantee. A small accepted increment can trigger the
+solver's convergence flag even if tracking error remains large. Convergence,
+constraint satisfaction, target-tracking error, and task success are
+therefore separate outcomes.
 
-Because the setting is offline, the problem is solved over the whole trajectory
-rather than frame by frame, so the acceleration term is well defined at every
-interior timestep and the solution is not constrained by the causality
-requirement that an online solver faces. The trajectory is initialised from the
-previous solution warm-started along $t$, and boundary conditions at $t=1,2$
-are handled by replicating the initial configuration.
+\subsection{Approach segment and matched baseline}
 
-\subsection{Interpolation}
+After retargeting, a quintic approach connects the registered home posture
+to the first demonstration configuration. Its duration is increased as
+needed to satisfy velocity limits, and the concatenated trajectory is
+checked for represented joint, velocity, floor, and enabled collision
+constraints. The approach is generated robot motion rather than a measured
+part of the human episode. It must be separated from demonstration frames
+when aligning video, object motion, or accuracy statistics.
 
-Where gaps remain after fusion---landmarks lost across all views---the
-trajectory is completed by cubic spline interpolation over $\SE$ prior to
-optimisation. Dynamic filters that impose a motion model, such as Kalman or
-extended Kalman filters, are deliberately not applied: they introduce a prior
-about the dynamics that is subsequently re-estimated by the optimiser, and the
-interaction between the two priors is difficult to characterise. The optimiser
-already imposes the required regularity through
-$\lambda_v$ and $\lambda_a$.
+An optional comparison path runs causal framewise IK followed by
+Savitzky--Golay smoothing. A meaningful comparison uses the same targets,
+robot assembly, gripper sequence, and data weights, and reports resulting
+constraint violations as well as tracking error. Smoothing a sequential
+solution does not by itself preserve its feasibility.
 
-\section{Replay Validation}
-\label{sec:replay}
+\section{Proposed 3DGS Reconstruction and Robot Rendering}
+\label{sec:gs-method}
 
-Physical replay remains an interface stub: no robot execution, measured
-proprioception, contact outcome, or controller tracking residual is available.
-Kinematic plans must not be presented as replay-validated demonstrations.
-Simulator or physical validation would require recorded execution, contact
-checks, explicit success criteria, and rejection of failed episodes; these
-results are not part of the present evidence.
+\subsection{Scene decomposition and asset acquisition}
 
-\section{Dataset Export}
+The proposed appearance branch uses 3DGS for reusable scene appearance
+\cite{gaussiansplatting}, combined with separately represented moving
+objects and a robot model. This hybrid design follows the general use of
+reconstructed assets in human-to-robot data generation
+\cite{real2render2real,robopaint}; it is not presented as a previously absent
+combination of components.
+
+The initial target is a static workspace background, a small set of rigid
+task objects, and one articulated robot. Human masks exclude the
+demonstrator from background fitting. An empty-scene scan or additional
+views are needed where the human or task objects otherwise hide the
+background. Moving objects are reconstructed in canonical coordinates
+and positioned using their estimated tracks. A multiview point cloud
+or a set of segmentation masks is an input to this process, not already
+a trained Gaussian scene.
+
+For the first implementation, the background is to use 3DGS and the robot
+is to use its articulated visual meshes. Task objects may use scanned
+meshes or rigid Gaussian assets, with the representation fixed for each
+comparison. All assets share the calibrated metric frame. Additional
+scans, segmentation corrections, and asset preparation contribute to the
+data-collection cost even though they do not require per-robot teleoperation.
+
+\subsection{Reconstruction objective and supported views}
+
+A candidate reconstruction objective for scene parameters $\Theta$ is
+\begin{equation}
+\begin{split}
+  \mathcal L(\Theta)=&\lambda_{\mathrm{rgb}}
+       \mathcal L_{\mathrm{rgb}}(M\odot\hat I,M\odot I)
+       +\lambda_{\mathrm{ssim}}\mathcal L_{\mathrm{ssim}}(\hat I,I;M)\\
+       &+\lambda_z\,
+       \frac{\sum_{u}M_z(u)\,|\hat z(u)-z(u)|}
+            {\sum_u M_z(u)}.
+\end{split}
+\label{eq:gs-loss}
+\end{equation}
+Here $M$ selects valid observations of the modelled component, while
+$M_z$ additionally excludes invalid depth and depth-boundary regions.
+The depth term is evaluated only when valid pixels exist. A consistent
+camera-axis depth convention is required for both measured and rendered
+depth. The masked structural term must avoid windows crossing excluded
+regions. Loss weights, Gaussian initialisation, optimisation schedule,
+and any depth regularisation remain experimental choices to be specified
+with the implementation; no performance is assumed from this formulation.
+
+Novel cameras are sampled within a declared operating region supported
+by the captured geometry. The method does not assume that a small fixed
+rig observes every surface. Disoccluded or poorly supported regions are
+marked and included in rejection or coverage statistics. Hallucinated
+completion, if later introduced, would require a separately identified
+method and evaluation.
+
+\subsection{Time-consistent robot compositing}
+
+At demonstration time $t$, the renderer receives the retargeted arm state,
+the profiled gripper command, object poses, camera intrinsics and
+extrinsics, and appearance parameters. Robot link transforms are computed
+from the same model and joint ordering used for the exported state.
+Rendering uses the achieved forward-kinematics pose, rather than drawing
+the end-effector at an unreachable human target.
+
+The compositor must resolve visibility between robot meshes, moving
+objects, and the Gaussian background in a consistent depth convention.
+A foreground overlay without scene-depth tests is insufficient. The
+chosen treatment of Gaussian opacity and depth must be specified and
+checked at contact boundaries and thin structures. RGB, depth, component
+masks, and camera metadata should be generated together when supported.
+
+Object motion initially remains a prescribed estimate from the source
+episode. Displaying an object next to the gripper does not establish that
+the gripper can cause that motion. Penetration and contact-region checks
+can reject geometric inconsistencies, but physical manipulation success
+would require a contact simulation or hardware experiment outside this
+study's evaluation scope.
+
+\section{Factorial Generation and Episode Acceptance}
+\label{sec:factorial-method}
+
+For source episode $d$, let $m\in\{1,\ldots,M\}$ denote embodiment,
+$k\in\{1,\ldots,K\}$ a camera configuration, and
+$p\in\{1,\ldots,P\}$ an appearance configuration. The proposed output is
+a sequence
+\begin{equation}
+  \mathcal E_d^{m,k,p}=
+  \left\{\hat I_{d,t}^{m,k,p},\bq_{d,t}^{m},g_{d,t}^{m},
+         \bT^C_{O,d,t},\tau_{d,t},\mathcal V_{d,t}^{m,k,p}\right\}_{t=1}^{T_d},
+  \label{eq:factorial-episode}
+\end{equation}
+where $\mathcal V$ stores relevant validity and support information.
+Embodiment-specific retargeting is performed before varying cameras and
+appearance, so the same accepted robot trajectory can support multiple
+visual observations. Appearance variation is initially restricted to
+declared edits that preserve geometry and visibility checks. A lighting
+change is not automatically physically valid for a Gaussian model with
+baked appearance. Any edit that changes task geometry requires new
+retargeting and interaction checks.
+
+The Cartesian product gives $M K P$ requested configurations, not a
+guaranteed number of usable demonstrations. Define
+$A_d^{m,k,p}\in\{0,1\}$ for configurations that pass the stated checks;
+then
+\begin{equation}
+  N_{d,\mathrm{accepted}}
+     =\sum_{m=1}^{M}\sum_{k=1}^{K}\sum_{p=1}^{P}A_d^{m,k,p}
+     \leq M K P.
+  \label{eq:accepted-expansion}
+\end{equation}
+Acceptance policies should be fixed before the final comparison and retain
+failure reasons. They must distinguish insufficient hand/object evidence,
+robot constraints or unacceptable tracking error, unsupported camera
+views, visible geometric interaction defects, and inconsistent data
+alignment. Thresholds are experimental parameters, not values inferred
+from the existence of a processing stage. Current trajectory-export
+eligibility is weaker than this proposed synthetic-episode acceptance.
+
+All variants of a source episode share its original motion evidence and
+are statistically dependent. Dataset splits must therefore be made by
+source episode, and where appropriate by subject, object, or scene,
+before factorial expansion. Viewpoint or appearance changes increase
+observation variation; they do not create independent manipulation
+strategies. Counts, yield, processing time, and manual preparation effort
+are reported per source and per factor combination.
+
+\section{Evaluation Protocol}
+\label{sec:hocap-method}
+
+\subsection{External hand and object references}
+
+HO-Cap supplies an external multiview RGB-D reference for perception
+\cite{hocap}. The protocol specified for the selected 28-sequence
+single-hand pick-and-place cohort uses all eight RealSense views and
+excludes the HoloLens stream. This cohort is a task/handedness subset,
+not an official held-out split or the full dataset. Reproducing its
+results requires the exact sequence list, dataset revision, frame counts,
+profile manifest, and completed-stage records. The inspected application
+source alone does not establish that a benchmark run was completed.
+
+Reference hand labels are excluded from detection, reconstruction, and
+parameter fitting. Predictions and references are compared in a common
+metric frame by exact frame identity, without root alignment,
+Procrustes fitting, temporal search, or reference-based sample selection.
+The hand measures are MPJPE, PCK@20/50\,mm, P95 error, and prediction
+coverage. Directly observed, interpolated, and articulated-fit outputs
+are distinguished. Matched-joint-weighted aggregate means and PCK values
+are reported alongside per-sequence statistics; averaging sequence
+quantiles does not produce a pooled P95. HO-Cap's semi-automatic
+MANO-based annotations are reference labels, not independent motion-capture
+ground truth or a competing estimator run inside \viki.
+
+The reference-assisted object protocol supplies published instance masks
+and depth to the tracker. It therefore tests tracking conditional on
+segmentation, separately from the autonomous SAM-based branch. One
+constant object-local transform is fitted at the first confident frame
+using the reference pose; subsequent translation and geodesic rotation
+errors measure relative tracking drift under that initial alignment.
+The documented confidence threshold is $0.35$. Reference-assisted initial
+alignment does not measure absolute pose localisation. Coverage,
+stationary/moving subsets, and object symmetries must be stated; a raw
+geodesic score without symmetry handling has that limitation.
+
+Benchmark error and local-rig self-consistency remain separate evidence.
+Neither a small calibration residual nor agreement with a fitted hand
+model substitutes for comparison with an independent reference.
+
+\subsection{Retargeting and interaction comparisons}
+
+For each actually tested robot assembly, the evaluation records base
+placement, model revision, tool correspondence, solver settings, and
+source profile. It measures TCP position and rotation error, accepted
+frames and episodes, joint and velocity-limit violations, and represented
+floor/self-collision margins. Error is reported separately on
+evidence-supported and filled targets. Solver convergence flags are
+reported alongside these measures, rather than used as their substitute.
+
+Hand-only and cube-aware retargeting use matched source episodes and
+robot assemblies. Object-relative TCP error, contact-region alignment,
+closure timing, and geometric penetration characterise their interaction
+consistency. Gripper commands are compared against the declared decoder
+and actual modelled pad gap. These measures do not become grasp-success
+rates without an executed interaction. General object-relative transfer
+requires its own implementation and matched comparison before a benefit
+can be claimed.
+
+Dense source trajectories preserve more timing information than sparse
+keyframes, but filters, gap filling, gripper decoding, reference-posture
+penalties, and cube-specific orientation replacement can change the
+motion. Where natural-motion preservation is investigated, it is measured
+through timing, path, and orientation differences on supported intervals;
+it is not assumed from markerless capture.
+
+\subsection{Rendering and expansion experiments}
+
+The proposed reconstruction evaluation holds out cameras and scene states
+before tuning. PSNR, SSIM, and valid-pixel depth RMSE compare corresponding
+scene components in matching states, with background and task-object
+regions reported separately. A static background model is not evaluated
+against unmasked moving humans. A human demonstration image is also not
+a paired ground-truth image of the replacement robot.
+
+Compositing comparisons use identical trajectories, object states, and
+camera poses. They inspect depth ordering, robot/object boundaries,
+temporal stability, and agreement between rendered geometry and exported
+state. Paired perceptual metrics require a corresponding target image;
+otherwise the evaluation uses explicitly defined geometric and consistency
+tests rather than a misleading full-image similarity score.
+
+Factorial expansion is compared with single-configuration generation on
+the same source episodes. The report includes requested and accepted
+combinations, rejection categories, supported viewpoint range, runtime,
+and manual intervention. Any comparison with teleoperation effort must
+include capture, calibration, scans, corrections, robot-model preparation,
+computation, and rejected outputs. Policy-training benefit is not inferred
+from appearance diversity or episode count.
+
+\section{Export, Provenance, and Replay Status}
 \label{sec:export}
 
-The implemented default export writes a self-contained NumPy trajectory bundle
-and a JSON manifest. It does not imply physical replay or outcome screening.
-An optional LeRobot-format export has additional eligibility requirements and
-dependencies; neither format makes an unvalidated plan a physical
-demonstration.
+The working default exporter writes a self-contained NumPy trajectory
+bundle and JSON metadata. It retains joint trajectories and derivatives,
+normalised gripper opening, modelled metric opening, target and achieved
+poses, tracking errors, source timing, and evidence information. Optional
+object-model and post-IK object-relative artifacts are copied when their
+stages are complete. Units, frame names, source episode, processing
+profile, robot assembly, and parameter provenance must remain available.
+In the inspected plan schema, the metric gripper opening is based on the
+URDF pad-centre gap; older schemas may use nominal width and must be
+interpreted by version.
 
-\section{Assumptions and Simplifications}
+Current export requires a readable plan, not a demonstrated manipulation
+outcome. It may include unlabelled episodes and reports missing or skipped
+artifacts in its manifest. The optional LeRobot path has stricter
+eligibility and partial annotation support; shape-correct placeholders
+are not measured object-relative labels. The existing bundle is therefore
+a trajectory artifact, rather than the completed rendered dataset in
+\eqref{eq:factorial-episode}.
+
+For the proposed synthetic export, every rendered frame must be paired
+with the state that produced it. The schema must distinguish state at
+$t$ from a command for $t+1$ and specify whether an action is an absolute
+joint target, an increment, or a velocity command. Camera calibration,
+appearance seed, renderer and asset versions, validity masks, and
+acceptance decisions are additional provenance. Original human-camera
+videos cannot be relabelled as robot observations merely because a robot
+trajectory has been generated.
+
+\subsection{Physical replay}
+\label{sec:replay}
+
+The current dry-run replay path echoes a plan and does not measure robot
+tracking. The physical driver and several screening checks remain
+unimplemented. No physical-replay acceptance or achieved hardware state
+can therefore be inferred from a dry-run result. Hardware execution,
+contact simulation, and policy training lie outside the present
+reconstruction, retargeting, and rendering evaluation. They would supply
+additional evidence needed for claims about executable manipulation or
+learning effectiveness.
+
+\section{Assumptions and Operating Limits}
 \label{sec:assumptions}
 
-The following assumptions delimit the scope of the work and are revisited in
-Section~\ref{sec:implications}.
+The initial scope is a fixed, calibrated RGB-D rig, one tracked hand,
+rigid task objects, a bounded workspace, and parallel-jaw transfer.
+Handedness, object identities, task roles, and robot placement must be
+declared. Unknown geometry and uncertain observations remain explicit
+rather than being treated as valid because an intermediate file exists.
 
-\begin{enumerate}[leftmargin=2em]
-  \item \emph{Parallel-jaw target.} The hand is reduced to a wrist pose and a
-        single continuous gripper opening \eqref{eq:gripper}. Multi-fingered
-        dexterous targets would require the finger-level representation
-        rejected in Section~\ref{sec:lit-hand}.
-  \item \emph{The gripper body is not the hand.} The target is the midpoint
-        between thumb and index tips, but a parallel-jaw gripper interposes a
-        body of its own between the flange and that point, and the whole
-        assembly must stay above the workspace plane. For tasks performed
-        against the table surface the demonstrated pose can therefore be
-        kinematically unreachable even when the arm's reach is ample. The
-        size of this gap requires evaluation on retained source episodes.
-  \item \emph{Rigid objects.} The object-relative representation
-        \eqref{eq:objrel} presupposes a rigid body with a well-defined pose.
-        Deformable objects would require a flow-based representation
-        \cite{novaflow}.
-  \item \emph{Single-arm, quasi-static tasks.} The task class is restricted to
-        single-arm tabletop manipulation at moderate speed, where the
-        quasi-static assumption underlying purely kinematic retargeting holds.
-  \item \emph{Fixed workspace.} The ChArUco anchor is rigidly attached to the
-        workspace and the camera rig is not moved within a recording session.
-  \item \emph{Kinematic-only transfer.} Forces and contact dynamics are not
-        estimated. Tasks whose success depends on force regulation are outside
-        the scope.
-\end{enumerate}
+The reconstruction assumes sufficient visibility and stable calibration.
+The retargeter assumes that the selected human-to-tool correspondence and
+robot model are appropriate for the task. Its collision checks cover only
+the represented geometry. The proposed appearance branch assumes a
+separable static background and rigid moving assets; deformable objects,
+general scene relighting, and arbitrary unseen surfaces require further
+models and validation.
+
+The intended outcome is a measured set of geometrically consistent
+candidate robot episodes derived without per-robot teleoperation during
+human capture. Whether a source episode supports multiple embodiments,
+views, and scene appearances is an experimental result. Preservation of
+task-relevant human motion, physical manipulability, and downstream
+learning benefit are separate claims with separate evidence requirements.

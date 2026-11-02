@@ -1,395 +1,728 @@
+% Literature Review revised for the multiview RGB-D / retargeting / 3DGS topic.
+% Uses the original thesis citation keys, plus mimicgen, dexretargeting,
+% robowheel and opencvcharuco from the previously supplied references.bib.
+% Only dexteleop0 is deliberately not cited: its supplied entry identifies
+% no author, paper, venue, DOI or URL and says "Citation to be confirmed".
+% Bibliographic corrections to check in the existing .bib (not new claims):
+% - dexflow: Lin et al., "DexFlow: A Unified Approach for Dexterous Hand
+%   Pose Retargeting and Interaction", arXiv:2505.01083 (2025).
+% - keyobj: Xin, Yu, Jiang, Zhang and Li, arXiv:2506.09384 (2025).
+% - gaussianfactory: arXiv:2609.21112 is a 2026 paper, not a 2024 paper.
+% - legs: arXiv:2606.01458 is a 2026 paper, not a 2024 paper.
+% - robosimgs: arXiv:2510.10637 is a 2025 paper, not a 2024 paper.
+% - alihandeye: the supplied title identifies Enebuse et al. (2022),
+%   PLOS ONE 17(10):e0273261, DOI 10.1371/journal.pone.0273261.
+% - hrbf: Xu, Nan, Zhou, Wang and Wang (2022), ACM TOG 41(3), article 35,
+%   DOI 10.1145/3516521; the supplied author/year fields are incomplete.
+% - ridgerun: use the precise RR Syncer technical documentation discussed here:
+%   https://developer.ridgerun.com/wiki/index.php/GStreamer_Buffer_Synchronization/Documentation/GStreamer
+% Existing section labels are preserved for compatibility with the thesis.
+
 \chapter{Literature Review}
 \label{ch:lit}
 
 \section{Preamble}
 \label{sec:lit-preamble}
 
-This chapter surveys the state of knowledge relevant to converting passively
-recorded human manipulation demonstrations into robot-executable datasets. It
-is organised not chronologically but by the architectural elements of the
-proposed system, so that for every design decision taken in
-Chapter~\ref{ch:method} the alternatives considered and the reason for the
-choice are visible.
+Generating robot demonstrations from human recordings connects several
+research problems: recovering hand--object interaction, adapting that interaction
+to another embodiment, reconstructing the scene, and producing observations
+consistent with the resulting robot motion. The literature contains both
+specialised methods for these problems and integrated data-generation systems.
+The purpose of this review is to identify the representations and assumptions
+that can support the proposed ViKi workflow, and the measurements needed to
+assess their combination.
 
-Section~\ref{sec:lit-hand} examines how the human hand is represented, from
-full parametric meshes to the minimal wrist-pose-plus-gripper abstraction.
-Section~\ref{sec:lit-retarget} contrasts sequential and single-cost-functional
-retargeting formulations and reviews the solvers used to realise them.
-Section~\ref{sec:lit-repr} compares object-centric and world-frame task
-representations. Section~\ref{sec:lit-calib} covers multi-camera RGB-D
-calibration, depth fusion and cross-device synchronisation, with emphasis on
-reported quantitative accuracy. Section~\ref{sec:lit-dataset} reviews dataset
-formats, downstream policies and demonstration curation.
-Section~\ref{sec:positioning} positions \viki\ against the nearest published
-systems, and Section~\ref{sec:lit-conclusion} states the resulting
-methodological choices.
+The chapter retains work on teleoperation, calibration, geometric fusion, and
+downstream learning because these areas establish requirements on the generated
+data even when they are not themselves the final application of the thesis.
+Teleoperation offers reference retargeting formulations; calibration and fusion
+determine the metric consistency of the source; learning systems define the
+observations and action labels that a usable dataset must supply. Their
+relevance is therefore methodological as well as comparative.
 
-Sources were drawn from arXiv (\texttt{cs.RO}, \texttt{cs.CV}, \texttt{cs.LG}),
-the proceedings of CoRL, RSS, ICRA, IROS, CVPR and NeurIPS, peer-reviewed
-sensor and calibration literature, and vendor documentation for the depth
-cameras and solvers employed. Where a source is a recent preprint whose
-peer-review status could not be confirmed, this is stated explicitly.
+Section~\ref{sec:lit-hand} examines human-motion representations and acquisition
+interfaces. Section~\ref{sec:lit-retarget} reviews retargeting objectives,
+temporal processing, and solvers. Section~\ref{sec:lit-3dgs} discusses 3DGS-based
+rendering and demonstration generation. Sections~\ref{sec:lit-repr}
+and~\ref{sec:lit-calib} address task coordinates and capture geometry.
+Section~\ref{sec:lit-dataset} considers dataset construction and assessment.
+Section~\ref{sec:positioning} positions ViKi relative to the closest systems,
+and Section~\ref{sec:lit-conclusion} synthesises the design implications.
+The review is a narrative comparison of the cited publications and technical
+documentation, rather than evidence of an exhaustive absence of related work.
 
 \section{Representing the Human Hand}
 \label{sec:lit-hand}
 
-\subsection{Full parametric reconstruction}
+\subsection{Articulated hand and body reconstruction}
 
-A large body of work recovers the complete kinematics of the demonstrator.
-OKAMI \cite{okami} combines SMPL-H for the body with MANO for the hand and
-retargets the two separately. DexCanvas \cite{dexcanvas} builds a human--robot
-correspondence dataset by fitting MANO to data from twenty-two infrared motion
-capture cameras and two RGB-D sensors. DexMV \cite{dexmv} likewise recovers a
-full MANO hand together with object pose from video before translating the
-demonstration into simulation.
+The representation of a demonstration determines which aspects of manipulation
+can be transferred. A wrist trajectory captures global hand motion, whereas
+finger articulation and hand--object geometry are needed to distinguish
+contacts that share a similar wrist pose. DexMV combines hand and object pose
+estimation with demonstration translation for dexterous robot learning
+\cite{dexmv}. OKAMI uses a single RGB-D video to derive a manipulation plan,
+retargeting body and hand motion with object-aware adaptation
+\cite{okami}. These works establish that human reconstruction and robot action
+generation are connected stages, rather than interchangeable outputs.
 
-Full reconstruction yields a rich representation---the pose of every finger
-joint---and is necessary when the target embodiment is a multi-fingered
-dexterous hand. It also introduces a heavy perception stack and an additional,
-poorly characterised error source: the mesh fit itself. For a parallel-jaw
-gripper, most of that representational richness is discarded downstream.
+DexCanvas provides an instrumented reference for richer interaction capture
+\cite{dexcanvas}. Its acquisition system combines 22 infrared motion-capture
+cameras, two RGB-D cameras, and markers on the hand and objects. The observations
+are fitted to MANO and used in a real-to-simulation process that reconstructs
+contact-related forces through reinforcement learning. Its relevance to ViKi
+is twofold: articulated representations retain information needed by dexterous
+end-effectors, and contact annotations require evidence beyond a visually
+plausible hand trajectory. Its marker-based acquisition also differs from the
+proposed markerless reconstruction route.
 
-\subsection{Minimal representation: wrist pose and gripper state}
+A fitted hand model can regularise noisy or partially observed landmarks, but
+it introduces assumptions about shape, articulation, and correspondence.
+Landmark error, mesh-fit error, and the accuracy of inferred contacts should
+therefore be evaluated separately. A parametric model used to create reference
+annotations need not be the model used by the evaluated perception pipeline.
+For ViKi, a useful representation preserves the available articulated
+observations while allowing target-specific reductions for simpler grippers.
+This avoids committing the entire source dataset to a single end-effector.
 
-The alternative, adopted in this work, represents the hand as a wrist pose in
-$\SE$ together with a scalar or binary gripper state. This is not a concession
-made for tractability; it is the representation used by the mainstream of
-current teleoperation systems. Open-TeleVision \cite{opentv} maps the operator's
-wrist pose to the arm end-effector through closed-loop inverse kinematics and
-encodes a parallel gripper by the single thumb--index vector. Bunny-VisionPro
-\cite{bunny} and ACE \cite{ace} adopt the same decomposition, ACE additionally
-demonstrating that it transfers across dexterous hands, parallel grippers and
-quadrupeds.
+\subsection{Compact arm and gripper representations}
 
-Methodological support for down-weighting the wrist comes from the ablation
-study of Xin et al.\ \cite{keyobj}, who assemble a comprehensive retargeting
-objective---global hand pose, overall hand shape, relative fingertip positions
-and fingertip orientations---and remove terms one at a time. They find that
-precise tracking of the global wrist pose is frequently unnecessary and can
-degrade fingertip accuracy, and consequently replace the wrist-position
-objective with a thumb-tip objective while regularising wrist orientation only
-weakly. The implication for a wrist-plus-gripper representation is that the
-wrist target should enter the optimisation as a weighted soft task rather than
-a hard constraint.
+For a parallel-jaw target, a pose in $\SE$ together with an opening command
+provides a compact action description. It can represent approach, transport,
+and approximate closing and release timing. It does not encode all finger
+contacts, in-hand manipulation, or the forces exerted by the demonstrator.
+Consequently, a scalar pinch signal can be an appropriate target abstraction
+without being a lossless representation of the original hand motion.
 
-\subsection{Egocentric and monocular capture}
+AnyTeleop supports different arms, hands, and camera configurations within a
+vision-based teleoperation framework \cite{anyteleop}. Open-TeleVision maps
+operator arm and hand motion to robot embodiments while providing immersive
+visual feedback \cite{opentv}. Bunny-VisionPro combines bimanual dexterous
+teleoperation with haptic feedback and collision and singularity avoidance
+\cite{bunny}. These systems motivate separating arm motion, finger
+correspondence, and embodiment-specific constraints instead of treating
+retargeting as a uniform rescaling of a human skeleton.
 
-Several systems reduce capture-hardware requirements further. EgoMimic
-\cite{egomimic} records bare-handed demonstrations through Project Aria glasses
-and co-trains on human and robot data. DexWild \cite{dexwild} collects
-in-the-wild bare-hand data through a low-cost portable device and likewise
-co-trains. A recent egocentric RGB-D system \cite{shadowing} generates
-trajectories offline using analytic damped-least-squares inverse kinematics and
-replays them on a low-cost arm. These works confirm a trend toward lighter
-capture rigs, but each accepts monocular or single-view geometry, and none
-combines it with the metric multi-view accuracy that the present work requires.
+ACE further demonstrates that one collection interface can serve humanoid
+hands, arm--hand, arm--gripper, and quadruped--gripper configurations
+\cite{ace}. It combines a hand-facing camera with an exoskeleton to observe
+finger and wrist motion. Thus, teleoperation does not necessarily require a
+completely different operator interface for every robot. The distinction
+relevant to ViKi is whether a source demonstration can be recorded independently
+of a target robot and subsequently converted into several robot datasets.
+
+The retargeting study of Xin et al. analyses the contribution of alternative
+hand-configuration objectives through ablations and manipulation experiments
+\cite{keyobj}. Its results support evaluating the choice and weighting of
+correspondences, rather than assuming that maximal similarity to every human
+joint is always desirable. Conclusions from a dexterous-hand ablation do not,
+by themselves, determine the correct wrist weight for a different arm--gripper
+system. That weight depends on which task relationships the target must retain.
+
+\subsection{Egocentric capture and human--robot co-training}
+
+EgoMimic records egocentric human observations and 3D hand motion using Project
+Aria glasses and co-trains on human and robot demonstrations
+\cite{egomimic}. DexWild likewise uses human hand interactions collected across
+diverse environments, together with robot data, to improve policy transfer
+\cite{dexwild}. These are relevant alternatives to converting every human
+frame into a photorealistic image of a replacement robot. They show that human
+data can be useful through shared representations and co-training, although
+that route has different dataset requirements from explicit robot-action and
+robot-view synthesis.
+
+Vision-Based Hand Shadowing provides a closer analytical video-to-robot
+workflow \cite{shadowing}. It uses an egocentric RGB-D camera, MediaPipe
+landmarks, depth lifting, damped-least-squares inverse kinematics, and a
+thumb--index-based gripper mapping for the SO-ARM101. Its reported degradation
+under occlusion makes visibility a relevant evaluation condition, not merely
+a reason to prefer more cameras. Multiview capture can add geometric evidence,
+but any improvement must be measured with controlled calibration, timing, and
+view selection.
 
 \section{Retargeting Formulations}
 \label{sec:lit-retarget}
 
-\subsection{The single cost functional}
+\subsection{Correspondences, objectives, and confidence}
 
-The prevailing modern formulation poses retargeting as a constrained nonlinear
-least-squares or quadratic program over the robot configuration $\bq_t$ at each
-timestep, minimising a weighted sum of a data-fidelity term and a temporal
-smoothness term subject to joint limits. AnyTeleop \cite{anyteleop} gives the
-canonical instance: the objective sums, over keypoints, the squared residual
-between a scaled human keypoint vector and the corresponding robot
-forward-kinematics vector, plus a first-order penalty on configuration change
-between consecutive frames. The accompanying \texttt{dex-retargeting} library
-exposes a vector optimiser for real-time teleoperation, a position optimiser
-explicitly recommended for offline dataset processing, and a contact-aware
-DexPilot optimiser; it is built on Pinocchio and solved with sequential
-quadratic programming.
+Retargeting converts an observed human configuration or interaction into robot
+variables subject to a different kinematic structure. Position-based methods
+match selected points; vector-based methods match relative directions or
+lengths; task-space methods track a wrist, tool, or object relationship.
+AnyTeleop and the accompanying \texttt{dex-retargeting} toolkit illustrate
+several such formulations \cite{anyteleop, dexretargeting}. Their common
+principle is to select geometric correspondences that the target can realise,
+while accounting for joint limits and temporal behaviour.
 
-Two refinements are directly relevant here. First, per-term confidence
-weighting: in the formulation reported by Open-TeleVision \cite{opentv}, each
-keypoint residual is scaled by a distance-dependent switching weight that
-increases when a pinch is detected. The mechanism is precisely analogous to
-weighting by a per-frame perception confidence, and it establishes that
-weighting individual data terms by a scalar signal is accepted practice.
-Second, second-order smoothness: DexFlow \cite{dexflow} augments the standard
-objective with a dynamic smoothing weight and Hessian regularisation to enforce
-$C^2$ continuity, penalising curvature and not merely velocity. Robustification
-by a Huber loss on the data term, reported in recent dexterous teleoperation
-work \cite{dexteleop0}, provides a mechanism for rejecting perception outliers
-inside the optimiser rather than smoothing them away beforehand.
+These objectives can be combined, but their weights have different meanings.
+A task weight expresses the importance of a relationship, while a perception
+weight expresses the reliability of its observation. A contact-dependent
+weight need not be a calibrated uncertainty estimate. In ViKi, this distinction
+matters when an occluded fingertip remains important to the task: increasing
+its task importance cannot compensate for a missing measurement. Confidence
+weighting therefore needs an evaluation of its own effects on tracking,
+missing intervals, and failure cases.
 
-\subsection{The sequential pattern and its critique}
+The choice between wrist, fingertip, and object-relative residuals also depends
+on the target end-effector. For a parallel gripper, aperture and tool pose may
+be sufficient for a restricted pick-and-place task. For an Allegro-type hand,
+additional finger correspondences and grasp objectives are required. The
+representation should expose these differences rather than imply that one
+pinch mapping solves cross-morphology transfer in general.
 
-Against this, the sequential pattern---filter the observed task-space
-trajectory, solve inverse kinematics per frame, filter the joint output---
-remains common in offline video-to-robot pipelines. Its deficiency is
-structural rather than empirical. Filtering is applied in task space, whereas
-the smoothness requirement is on the joint trajectory; because inverse
-kinematics is nonlinear, a smooth Cartesian input does not imply a smooth joint
-output, particularly near singularities. Pre-filtering also attenuates genuine
-fast motion indiscriminately with noise. In the single-functional formulation
-the smoothness penalty acts directly on $\bq_t$, so joint-space smoothness is
-obtained by construction.
+\subsection{Temporal objectives and sequential processing}
 
-\subsection{Offline pipelines and their retargeting operators}
+Offline access to a complete demonstration permits temporal filtering,
+sliding-window optimisation, or optimisation over a complete robot trajectory.
+A sequential alternative reconstructs and smooths task-space motion, solves
+inverse kinematics frame by frame, and optionally filters joint commands.
+Because inverse kinematics is nonlinear and may switch solution branches,
+smooth Cartesian targets need not imply smooth joint motion. Conversely,
+filtering joint commands can change the end-effector path or invalidate
+previously checked clearances.
 
-ORION \cite{orion} does not perform per-frame hand retargeting: it constructs an
-object-centric plan over sparse keyframes from an open-world object graph.
-OKAMI \cite{okami} warps a reference trajectory to a new object position and
-then solves inverse kinematics---the sequential pattern. HOWTransfer
-\cite{howtransfer}, the closest published pipeline in workflow terms, performs
-passive markerless capture and transfers trajectories using flow-matching
-$\SE$ grasp sampling with Laplacian trajectory editing, not a single weighted
-cost functional; its representation is hand-centric rather than object-centric.
-No offline pipeline located in this review adopts the AnyTeleop-style single
-functional.
+DexFlow combines hand-pose alignment with temporal consistency and
+hand--object interaction refinement \cite{dexflow}. Its formulation includes
+sliding-window processing and motion prediction, and the authors discuss
+higher-order continuity in connection with regularisation. This supports
+examining temporal terms alongside pose alignment. It does not establish that
+any implementation using a smoothness penalty automatically satisfies a
+velocity, acceleration, or jerk bound.
 
-\subsection{Solvers}
+A useful distinction is between a penalty and a constraint. Penalising large
+joint differences expresses a preference; enforcing a limit requires an
+explicit bound or an acceptance test on the resulting trajectory. Similarly,
+a robust residual may reduce the influence of an outlier but does not identify
+an unobserved contact or recover information lost during occlusion. The
+comparison of preprocessing and joint-space regularisation should therefore
+report both geometric tracking error and the motion derivatives affected by
+the chosen method.
 
-Pinocchio underlies the retargeting stack of AnyTeleop, Open-TeleVision and
-ACE. Pink \cite{pink} exposes weighted inverse kinematics directly as a
-quadratic program: each task contributes a quadratic residual with a weight
-matrix normalising task coordinates to common units, while joint limits,
-velocity limits and self-collision barriers enter as inequality constraints,
-optionally with control-barrier formulations. This structure admits the entire
-proposed cost functional natively---a frame task for the wrist target, posture
-and velocity regularisation tasks for smoothness, and limits as constraints---
-solved as one program per frame. The solver choice made in
-Chapter~\ref{ch:method} therefore lies on the mainstream path rather than
-diverging from it.
+\subsection{Offline transfer and interaction-aware alternatives}
+
+HOWTransfer estimates temporally consistent hand motion, localises contact
+intervals, converts grasp intent into parallel-jaw grasp hypotheses, and edits
+the resulting trajectories \cite{howtransfer}. Its hand-centric formulation
+is relevant when reliable contact cues are available without complete explicit
+object-state tracking. It offers a distinct comparison to a pipeline that
+first reconstructs object poses and then imposes object-relative constraints.
+
+ORION instead derives an object-centric manipulation plan from a human RGB-D
+video \cite{orion}. RoboWheel integrates human hand--object reconstruction,
+physical-plausibility refinement, cross-embodiment retargeting, and simulation
+augmentation \cite{robowheel}. These systems demonstrate that offline
+reconstruction, transfer, and data generation have already been studied in
+combination. The relevant comparison is between their assumptions and
+representations, not a division into integrated ViKi and otherwise isolated
+prior components.
+
+For ViKi, hand-only, object-relative, and contact-aware retargeting can be
+compared using the same source motion and robot geometry. Contact-aware
+checking must distinguish permitted gripper--object contact from unintended
+penetration. It must also state which scene surfaces enter the collision
+model. A self-collision-free arm trajectory is not necessarily clear of the
+table, and imposing a recorded object trajectory does not show that the robot
+would physically cause that motion.
+
+\subsection{Inverse-kinematics libraries and trajectory optimisation}
+
+Pink provides a task-based differential inverse-kinematics interface built on
+Pinocchio \cite{pink}. Weighted tasks and supported limits or barriers can be
+assembled into local quadratic programs. This is useful for expressing
+end-effector targets and kinematic restrictions. However, a local program at
+one timestep and a batch problem coupling many timesteps have different
+variables and numerical properties. Choosing Pink does not, on its own,
+implement a complete trajectory-level objective.
+
+The solver description should therefore distinguish local inverse kinematics,
+temporal coupling, and final verification. Joint limits, velocity limits,
+collision geometry, and numerical tolerances are properties of the configured
+application as well as the library. The resulting trajectory needs checks in
+the original geometry, particularly when linearised collision constraints or
+post-processing are used. This motivates retargeting-feasibility measurements
+without equating solver convergence with successful manipulation.
+
+\section{3DGS for Robot Learning}
+\label{sec:lit-3dgs}
+
+3DGS represents scene appearance using explicit Gaussian
+primitives with optimised position, covariance, opacity, and view-dependent
+colour. Kerbl et al. demonstrate high-quality novel-view synthesis with an
+efficient splatting renderer \cite{gaussiansplatting}. Its explicit spatial
+representation supports component editing and compositing, making it useful
+for generating observations beyond the original camera views. Robot actions,
+contact geometry, and time-varying object states must still come from another
+part of the system.
+
+\subsection{Augmenting recorded robot demonstrations}
+
+RoboSplat starts from a robot demonstration and multiview scene images, then
+edits reconstructed Gaussian components to generate additional training data
+\cite{robosplat}. Its six augmentation dimensions are object pose, object
+type, camera view, scene appearance, lighting, and embodiment. Thus, it already
+addresses embodiment variation as well as viewpoint and appearance changes.
+The distinction from the proposed ViKi acquisition stage is that its source
+motion comes from robot teleoperation. Its geometric editing operations should
+not be described as a general diffusion-based trajectory generator.
+
+This example separates two forms of expansion. Re-rendering an existing
+trajectory changes the observation distribution; adapting object poses or
+robot embodiment may also require changing the action trajectory. Both can
+increase dataset coverage, but they create different validity requirements.
+A rendered robot must agree with its exported state, and a new geometric
+configuration must be checked for reachability and interaction consistency.
+
+\subsection{Simulation-based data generation and hybrid rendering}
+
+SplatSim uses Gaussian splatting for photorealistic observations coupled to a
+simulator \cite{splatsim}. Its experiments include demonstrations collected
+through simulated teleoperation or generated by motion planners, followed by
+policy training and real-world deployment. It is therefore relevant both as a
+rendering approach and as a synthetic-data workflow. It does not depend on
+recovering motion from a passive human recording.
+
+RoboSimGS combines Gaussian scene appearance with interactive mesh assets and
+physics simulation \cite{robosimgs}. Its pipeline includes inference of
+object properties and articulated structures using a multimodal model. The
+method is relevant to ViKi's separation of appearance and interaction
+geometry: photorealistic background reconstruction and usable collision assets
+are related but different reconstruction products.
+
+LEGS uses a mesh foreground for the robot and objects over a reconstructed
+3DGS background, together with procedural motion primitives for humanoid
+loco-manipulation \cite{legs}. It also studies alignment between rendered
+appearance and the deployment camera. Its separation of motion and appearance
+allows demonstrations to be re-rendered under changed scene conditions. The
+human-motion source differs from ViKi's proposal, but the hybrid rendering
+architecture and appearance calibration remain directly relevant.
+
+These systems establish that a 3DGS-based pipeline need not render every
+component as Gaussians. A mesh foreground can supply articulation and depth
+while a splat background supplies appearance. Such a combination still requires
+metric alignment, compatible camera models, and correct visibility ordering.
+A visually detailed background does not compensate for a misplaced robot or
+an incorrect object state.
+
+\subsection{Planning demonstrations from reconstructed scenes}
+
+GaussianFactory generates demonstrations from a video scan by reconstructing
+editable 3DGS assets and planning task motion geometrically
+\cite{gaussianfactory}. Grasp formation uses a pretrained contact model, and
+the work includes downstream policy evaluation. Its input is scene structure
+rather than a human manipulation trajectory. This offers an alternative
+motion source for dataset generation, not evidence that procedurally generated
+motion is inherently inferior. A comparison with demonstration transfer should
+consider the tasks covered, preparation effort, and the interaction information
+that must be specified or inferred in each case.
+
+\subsection{Human demonstrations and novel-view synthesis}
+
+Tool-as-Interface is a particularly relevant precedent \cite{toolif}. It uses
+two RGB views, MASt3R reconstruction, and Gaussian splatting to augment human
+tool-use observations across viewpoints. Tool poses provide task-space action
+labels, while segmentation removes embodiment-specific regions from human
+and robot observations. This combines human demonstration reuse with 3D-aware
+visual synthesis without requiring the complete human hand to be reconstructed.
+Its shared-tool representation differs from explicitly rendering target robot
+embodiments, but its existence rules out treating human-to-robot transfer and
+Gaussian view augmentation as unrelated lines of work.
+
+Real2Render2Real uses a smartphone object scan and a monocular human
+manipulation video to recover object-part motion and generate robot trajectories
+\cite{real2render2real}. It uses 3DGS for asset construction and tracking,
+then converts reconstructed assets to textured meshes for rendering in
+IsaacLab with dynamics disabled. The project supports retargeting across robot
+embodiments and variation in camera and scene conditions. Its sensing and final
+rendering differ from ViKi's proposed multiview RGB-D route, but its reuse of
+human-demonstrated object motion is a close methodological precedent.
+
+RoboPaint more directly combines multiview RGB-D human capture, retargeting,
+and 3DGS-based visual synthesis \cite{robopaint}. It records glove kinematics
+and tactile signals alongside camera observations, uses wrist markers, and
+retargets motion with kinematic and tactile objectives. Its hybrid renderer
+combines a static 3DGS background with mesh robots and moving objects, supporting
+novel views and scene edits. The principal acquisition distinction proposed
+for ViKi is recovery from camera observations without worn hand markers or
+instrumented gloves. That distinction is a design choice to evaluate, rather
+than proof that the broad integration is new.
+
+\subsection{Reconstruction boundaries and evaluation}
+
+The reviewed methods use direct splat rendering, hybrid rendering, or
+3DGS-to-mesh conversion for different purposes. These choices affect how
+objects are segmented, how trajectories drive the scene, and which surfaces
+are observable from new cameras. A manipulation recording also contains a
+moving demonstrator and possibly moving objects; a static reconstruction
+cannot simply be assumed to reproduce all of them consistently over time.
+
+ViKi therefore needs an explicit decomposition into the background, moving
+object assets, and replacement robot, together with a method for removing the
+human from generated observations. Reconstruction quality can be measured
+against held-out views of the same scene state. Replacement-robot compositing
+requires additional checks on depth, boundaries, temporal consistency, and
+agreement with exported states. A human image is not a paired pixel-level
+reference for an image containing a different robot. These distinctions keep
+visual fidelity separate from the correctness of the generated action labels.
 
 \section{Task Representation}
 \label{sec:lit-repr}
 
-Object-centric representations dominate recent work on cross-environment and
-cross-embodiment generalisation. ORION \cite{orion} represents a task as the
-three-dimensional object trajectory relative to initial and final object
-positions, arguing that this generalises across visual backgrounds, camera
-shifts, spatial layouts and novel object instances, and that full-body
-reconstruction of the demonstrator is unnecessary. SPOT \cite{spot} encodes each
-task as the $\SE$ object-pose trajectory relative to the target explicitly in
-order to decouple embodiment-specific actions from sensory input, enabling
-learning from action-free human demonstrations, and conditions a diffusion
-policy on the object trajectory. Flow-based formulations \cite{novaflow} make an
-equivalent argument while relaxing the rigid-object assumption that
-pose-trajectory methods require.
+\subsection{World, object, and tool coordinates}
 
-OKAMI \cite{okami} occupies an intermediate position: the representation is
-demonstrator-centric, but object-aware warping adapts trajectories to new object
-positions---an implicit acknowledgement that pure world-frame replay fails when
-the object moves. Vi-RoIL \cite{viroil} is object-centric by construction,
-expressing wrist trajectories and keyframe hand poses in the object frame, but
-recovers metric scale from a monocular view of a marker cube and evaluates only
-in simulation.
+A trajectory expressed in the capture workspace is straightforward to inspect,
+but replaying it after an object has moved may miss the intended interaction.
+Object-centric and tool-centric representations instead preserve selected
+relations between the end-effector and the task. ORION extracts an
+object-centric plan, and SPOT represents task motion using an object-pose
+trajectory relative to a target \cite{orion, spot}. Their relevance is the
+separation of task structure from the particular joint trajectory used to
+realise it.
 
-The trade-off is that object-centric representations require robust object pose
-or segmentation, and pose-trajectory variants assume rigidity, whereas
-world-frame trajectories are simpler but tied to the recording layout. Storing
-both, as proposed in Section~\ref{sec:objcentric}, defers the choice to the
-downstream consumer at negligible storage cost.
+OKAMI occupies a related position: object-aware adaptation modifies recovered
+human motion for new object locations \cite{okami}. Vi-RoIL expresses wrist
+trajectories and key-frame hand poses in object coordinates after monocular
+hand--object reconstruction with a wrist-mounted marker cube
+\cite{viroil}. Its reported qualitative simulation results support discussion
+of coordinate consistency, while providing a different evidence level from a
+quantitative real-robot manipulation benchmark.
 
-\section{Multi-Camera RGB-D Calibration, Fusion and Synchronisation}
+Tool-as-Interface uses the tool as a shared physical interface between the
+human and robot \cite{toolif}. This is particularly useful when the tool can
+be rigidly attached or grasped with a known transform. It also illustrates the
+limits of a universal wrist representation: task-relevant motion may be more
+naturally specified at the tool than at an anatomical hand joint.
+
+\subsection{Flow representations and non-rigid interaction}
+
+NovaFlow generates task videos from descriptions, extracts actionable object
+flow, and uses that flow for robot planning \cite{novaflow}. For rigid objects,
+it derives relative poses; for deformable objects, it uses flow as an objective
+for model-based planning. Its motion source is generated video rather than a
+recorded human demonstration. Nevertheless, it is relevant to the representation
+choice because it shows how a flow-based interface can extend beyond a single
+rigid-pose trajectory.
+
+A rigid-object ViKi pipeline should therefore identify its object assumptions
+without implying that all demonstration-driven transfer requires rigidity.
+Cloth, fluids, and changing topology require a different motion and interaction
+model. Even for rigid objects, symmetry and occlusion can make orientation
+ambiguous. A stable-looking object track may still impose an incorrect
+relative grasp when used downstream.
+
+\subsection{Implications for reusable demonstrations}
+
+Object-relative motion can be stored alongside world-frame observations, as
+considered in Section~\ref{sec:objcentric}. Retaining both allows comparison
+of direct hand tracking with interaction-aware retargeting and preserves the
+original evidence when an object estimate fails. Object-relative coordinates
+do not create invariance to arbitrary scene changes: the new layout must still
+admit the interaction and a feasible robot path.
+
+The relevant preservation target is task-dependent hand--object motion and
+interaction timing. A robot with a different reach or end-effector may need a
+different approach or grasp. Consequently, cross-embodiment reuse should report
+which relationships were preserved, which were adapted, and which source
+episodes could not be transferred under the declared constraints.
+
+\section{Multiview RGB-D Capture Geometry}
 \label{sec:lit-calib}
 
-HO-Cap provides eight calibrated RealSense views and semi-automatic MANO
-hand--object annotations \cite{hocap}. It is an external reference for the
-hand-joint stage, not an optical-motion-capture measurement of our two-Kinect
-rig. Camera selection on the evaluated sequences must be reported as pilot
-selection rather than held-out performance.
+\subsection{Reference data and camera configuration}
 
-\subsection{Fiducial choice}
+HO-Cap provides eight RealSense views and a HoloLens recording, together with
+semi-automatic hand and object annotations \cite{hocap}. It is relevant both
+as a source of manipulation recordings and as an external reference for
+perception assessment. The annotations are not an independent optical-motion-
+capture measurement of ViKi's own rig. Dataset-specific performance and local
+capture accuracy remain separate quantities.
 
-ChArUco boards combine the sub-pixel corner accuracy of a checkerboard with the
-robust identification and occlusion tolerance of ArUco markers. A $6\times8$
-board provides up to thirty-five corners per view against four for a single
-AprilTag, and remains detectable under partial occlusion and at the image
-boundary where a plain checkerboard fails. Reported reprojection errors for
-ChArUco and ArUco calibration are typically below half a pixel. AprilTags are
-easier to detect at long range and oblique incidence and suffice for
-extrinsic-only estimation, but are ill-suited to intrinsic calibration owing to
-the small number of corners. Current practice is therefore to use ChArUco for
-intrinsics and either fiducial for extrinsics, preferring AprilTags for oblique
-overhead views.
+Camera count, baseline, overlap, viewing direction, and timing jointly affect
+what can be reconstructed. Additional views may reveal occluded fingers or
+object surfaces, but inconsistent calibration can also introduce conflicting
+constraints. A camera subset selected on the evaluation frames measures a
+development choice rather than held-out generalisation. This motivates
+controlled comparisons of camera configurations without making two cameras
+a defining property of the proposed method.
 
-\subsection{Reported accuracy of multi-Azure-Kinect rigs}
+\subsection{Fiducials and multiview registration}
 
-Romeo et al.\ \cite{romeo} provide the cleanest direct comparison of calibration
-procedures for multi-Kinect rigs, reporting that three-dimensional procedures
-outperform two-dimensional chessboard approaches, with mean distances between
-corresponding point-cloud points of $21.4$~mm at colour resolution and
-$9.9$~mm at infrared resolution for a static scene, and $20.9$~mm and $7.4$~mm
-respectively for a dynamic scene; body-joint alignment error was $35.4$~mm.
-Darwish et al.\ \cite{darwish} calibrate five Azure Kinects against a
-ChArUco-coded cube, combining reprojection error with point-to-plane and
-patch-to-plane terms to compensate depth noise. Kim et al.\ \cite{kimcal}
-perform coarse registration from body tracking followed by feature-match
-refinement, retaining above ninety-five per cent inliers. Bu and Lee
-\cite{bulee} use markerless coarse calibration with coloured ICP refinement and
-report---importantly for rig geometry---that ICP fails for near-opposing camera
-placements owing to insufficient point-cloud overlap.
+ChArUco combines marker identification with chessboard-corner localisation and
+supports calibration from partially visible boards \cite{opencvcharuco}.
+The appropriate target depends on visibility, workspace size, and whether
+intrinsics, extrinsics, or a workspace anchor are required. A small image
+reprojection error is one useful diagnostic; it does not alone establish
+metric agreement between depth clouds or accurate camera-to-robot registration.
 
-Single-sensor specifications bound the achievable accuracy from below. The
-Azure Kinect DK is specified at a random error standard deviation of at most
-$17$~mm and a typical systematic error below $11$~mm plus $0.1$ per cent of
-distance \cite{mskinect}; independent evaluation confirms these figures
-\cite{tolgyessy}, and comparative work finds improved spatial and temporal
-accuracy relative to Kinect~v2 beyond $2.5$~m \cite{kurillo}. The Intel
-RealSense D435i is specified at depth accuracy below one per cent of distance
-\cite{intel}. The practical consequence is that centimetre-level, not
-millimetre-level, agreement should be expected between calibrated views.
+Romeo et al. compare two- and three-dimensional calibration procedures for
+Azure Kinect data \cite{romeo}. Their reported correspondence errors differ
+between colour and infrared reconstructions and between static and dynamic
+experiments. Darwish et al. calibrate a five-Azure-Kinect system with a
+ChArUco-coded cube and combine reprojection with point-to-plane and
+patch-to-plane terms \cite{darwish}. Both studies motivate evaluating spatial
+consistency in the reconstructed geometry, rather than treating an image-space
+residual as the only calibration criterion.
 
-\subsection{Depth fusion}
+Kim et al. initialise multiview registration using body tracking and refine it
+through feature matching and mismatch rejection \cite{kimcal}. Their feature
+inlier ratios describe the refinement procedure, not directly the absolute
+accuracy of a manipulation trajectory. Bu and Lee similarly combine
+body-tracking-based coarse alignment with ICP refinement \cite{bulee}.
+Such approaches offer markerless calibration alternatives, but depend on
+initial alignment and sufficient geometric information for refinement. They
+remain relevant to camera placement even if ViKi uses a fiducial workspace
+anchor.
 
-Naive averaging of overlapping depth observations is inferior to
-confidence-weighted fusion. Weighting by distance and by the angle between the
-surface normal and the viewing direction---so that surfaces observed near
-perpendicular contribute more than obliquely observed ones---is established
-practice \cite{fusionpatent}. Learned confidence maps estimated from the depth
-signal itself are used to re-weight depth features before fusion
-\cite{zeng}, and surfel-based reconstruction attaches an explicit confidence
-value to each element and performs curvature-weighted registration
-\cite{hrbf}. Both sensor families used in this work expose per-pixel
-invalidation or confidence signals that can drive such weights directly.
+\subsection{Sensor characterisation and metric accuracy}
 
-\subsection{Cross-device synchronisation}
+T\"olgyessy et al. evaluate Azure Kinect precision, systematic error, warm-up,
+material response, and depth artifacts \cite{tolgyessy}. Kurillo et al.
+compare Azure Kinect and Kinect v2 using reference geometry and analyse
+variation with range and image position \cite{kurillo}. These studies show
+why depth quality should be characterised under the actual sensing conditions:
+central planar surfaces, object boundaries, reflective materials, and partially
+occluded hands do not present the same estimation problem.
 
-Azure Kinect devices support hardware synchronisation through daisy-chained or
-star-wired trigger cabling, with subordinate devices required to start before
-the master and depth exposures staggered to prevent laser interference; the
-vendor documentation states explicitly that equal timestamps between depth and
-colour streams, or between cameras, are not guaranteed \cite{mskinect}.
-RealSense devices provide an analogous inter-camera synchronisation mode, with
-the counter-intuitive property that timestamps appear aligned when hardware
-synchronisation is disabled and exhibit bounded drift when it is enabled, the
-drift itself serving as verification \cite{intel, ridgerun}.
+The RealSense D400 documentation likewise distinguishes depth accuracy, fill
+rate, spatial noise, and temporal noise under stated test conditions
+\cite{intel}. These are useful specifications for choosing and testing capture
+settings, but they are not interchangeable with multiview registration error,
+3D hand-joint error, or robot TCP error. Nor does an upper specification bound
+establish a lower error floor for all measurements. ViKi's metric claims need
+controls on the relevant rig and clearly defined reference quantities.
 
-The pitfall for a heterogeneous rig is that hardware clocks on different device
-families are not mutually comparable, since each counts its own cycles from its
-own epoch. Documented practice for such rigs is to stamp every arriving frame
-with a single host-side monotonic clock and to align streams by nearest
-timestamp in that common domain, accepting millisecond-scale precision
-\cite{ridgerun}. Because Azure Kinect and RealSense triggers are mutually
-incompatible, this is the only available mechanism for aligning the two
-families, and it is the mechanism adopted in Section~\ref{sec:sync}.
+\subsection{Depth lifting, triangulation, and fusion}
 
-\subsection{Hand--eye calibration}
+Depth lifting estimates a surface location from an image coordinate and a depth
+sample. Multiview triangulation instead combines viewing rays, optionally with
+depth constraints. For hand tracking, the visible skin surface and anatomical
+joint centre are not identical. For scene reconstruction, missing depth and
+mixed pixels at boundaries can affect geometry and subsequent occlusion
+rendering. These distinctions motivate separating sparse landmark fusion from
+dense surface reconstruction.
 
-The OpenCV \texttt{calibrateHandEye} routine implements the Tsai--Lenz,
-Park--Martin, Horaud--Dornaika, Andreff and Daniilidis solvers. A comparative
-noise study \cite{alihandeye} finds the Daniilidis, Chou and Park methods most
-robust to translation noise, with Daniilidis yielding the best translation
-estimates, while Tsai, Li and Lu degrade as rotation noise grows. Methods that
-decouple rotation from translation are faster but propagate rotation error into
-the translation estimate; Daniilidis solves both simultaneously through dual
-quaternions. Because the present system anchors cameras and robot to a shared
-ChArUco workspace frame, classical hand--eye estimation is largely bypassed;
-where an explicit camera-to-robot transform is required, Daniilidis is used.
+The ray-casting fusion described in U.S. Patent 10,818,071 aggregates
+signed-distance information from several depth images and includes weighting
+related to view geometry and visibility \cite{fusionpatent}. It is relevant
+as a concrete geometric fusion design, rather than comparative evidence that
+a particular weighting law is optimal for hand landmarks.
 
-\section{Dataset Generation and Downstream Policies}
+Zeng et al. learn confidence-dependent RGB-D feature fusion for surface-normal
+estimation \cite{zeng}. Their contribution concerns weighting depth features
+before combining them with colour features in a single-image prediction
+network. It supports the broader treatment of depth reliability, but is not
+a direct validation of multi-camera joint averaging. HRBF-Fusion uses
+continuous implicit surfaces for camera tracking and derives curvature and
+confidence information for RGB-D fusion \cite{hrbf}. It provides a geometric
+alternative concerned with reconstruction quality and tracking robustness.
+
+These approaches justify considering uncertainty and local geometry when
+combining observations. For ViKi, the reliability signal still needs to be
+defined and tested: detector confidence, depth validity, reprojection agreement,
+and interpolated samples represent different kinds of evidence. Filling a
+trajectory gap increases completeness without adding an observation, so
+coverage should be reported alongside reconstruction error.
+
+\subsection{Exposure synchronisation and software alignment}
+
+Azure Kinect supports wired multi-device synchronisation and configurable
+exposure delays; its documentation also addresses interference between depth
+emitters \cite{mskinect}. RealSense documentation describes its own capture
+and synchronisation interfaces \cite{intel}. The applicable trigger modes and
+timestamp domains must be established for the actual device combination,
+rather than inferred from the fact that both families expose timestamps.
+
+RidgeRun's RR Syncer documentation illustrates a separate software layer:
+aligning video buffers by presentation timestamps, applying a synchronisation
+window, and dropping unmatched buffers \cite{ridgerun}. Buffer alignment is
+useful for managing streams, but does not by itself establish simultaneous
+exposure. Similarly, a host monotonic clock measures arrival or application
+timing unless a mapping to sensor acquisition time has been established.
+
+For heterogeneous capture, the defensible requirement is a stated
+synchronisation procedure with measured residual offsets and dropped-frame
+behaviour. The literature does not justify declaring hardware coordination
+between camera families impossible or treating host-side nearest-timestamp
+pairing as the only available mechanism. Timing accuracy also matters to
+3DGS reconstruction when moving hands and objects are observed from several
+cameras.
+
+\subsection{Camera-to-robot registration}
+
+The generated robot must share a metric frame with the reconstructed scene.
+A workspace anchor can connect fixed cameras to a calibrated robot-base pose;
+hand--eye calibration is another relevant tool when suitable camera and robot
+motions are available. The comparative study by Enebuse et al. finds that
+hand--eye algorithm behaviour depends on translation and rotation noise and
+on the motion range used for calibration \cite{alihandeye}. Its relevance
+is the need to match and test the procedure under the intended conditions,
+rather than to declare one solver universally preferable.
+
+For dataset generation without a physical target robot, the chosen base pose
+is a virtual placement whose transform and reachability still need to be
+recorded. For later deployment, an independently established real camera-to-
+robot transform is required. Neither case is validated solely by a plausible
+overlay of the rendered robot on the captured scene.
+
+\section{Dataset Generation and Downstream Requirements}
 \label{sec:lit-dataset}
 
-LeRobot-compatible datasets together with ACT and Diffusion Policy are
-potential downstream consumers. The implemented default export is a NumPy
-trajectory bundle, not a replay-validated LeRobot dataset. OpenVLA-OFT \cite{openvlaoft} reports that parallel decoding, action
-chunking, a continuous action representation and $L1$ regression raise average
-success across four task suites from $76.5$ to $97.1$ per cent while increasing
-action-generation throughput twenty-six-fold, and is therefore a credible
-alternative consumer of the generated data.
+\subsection{Demonstration reuse and episode structure}
 
-Curation matters as much as generation. Demo-SCORE \cite{demoscore} trains a
-classifier on policy rollouts to filter low-quality demonstrations and reports
-an absolute success-rate improvement exceeding fifteen to thirty-five per cent
-over training on all demonstrations. Smoothness-based scoring of trajectories
-has been reported to yield comparable gains at a fraction of the data. This motivates treating dataset curation as an
-explicit pipeline stage rather than an afterthought, and---in the present
-design---eventually screening physical replay before export. This screening
-is not implemented in the current system.
+MimicGen adapts segments of a limited set of robot demonstrations to generate
+additional demonstrations under new scene configurations \cite{mimicgen}.
+Together with the human-source pipelines reviewed above, it establishes
+reuse as a general data-generation strategy. The important distinctions are
+the source of task motion, the assumptions used for adaptation, and the checks
+applied to the generated episodes.
+
+For ViKi, a learning episode needs temporally consistent observations, robot
+states, and actions, with explicit units and coordinate conventions. The
+rendered camera pose and scene state must correspond to the exported motion.
+Changing the robot can change action dimension and limits; changing a camera
+changes observations even when the joint trajectory is unchanged. A trajectory
+bundle and a rendered observation--action dataset are therefore distinct
+outputs. Compatibility with a format such as LeRobot concerns organisation
+and interfaces, not certification of physical task success.
+
+\subsection{Learning architectures as downstream consumers}
+
+ACT, Diffusion Policy, and vision-language-action models motivate retaining
+synchronised observations and action sequences, even though training them is
+outside the present evaluation. OpenVLA-OFT studies action decoding,
+continuous action representations, action chunking, and fine-tuning objectives
+\cite{openvlaoft}. Its relevance is that action representation and temporal
+organisation affect how a dataset can be consumed. Its policy results are not
+evidence that a new synthetic dataset will be useful without a corresponding
+learning experiment.
+
+This downstream perspective also favours retaining robot identity, camera
+calibration, source episode, retargeting parameters, and editing provenance.
+Those fields allow consumers to distinguish new observations of an existing
+action sequence from genuinely adapted motion, and make failures traceable to
+the relevant pipeline stage.
+
+\subsection{Curation and evidence of quality}
+
+Demo-SCORE filters heterogeneous demonstration data using a classifier trained
+and cross-validated on successful and unsuccessful policy rollouts
+\cite{demoscore}. It is relevant because increasing demonstration count can
+retain unreliable strategies as well as useful variation. Its quality signal,
+however, depends on online experience. A pipeline without such rollouts cannot
+claim equivalent success-based screening from trajectory smoothness alone.
+
+ViKi can assess reconstruction error, geometric feasibility, rendering
+consistency, and coverage before policy training. These are useful curation
+criteria with a narrower interpretation than demonstrated manipulation
+success. Geometric acceptance should specify which constraints were tested,
+and rejected episodes should remain visible in the generation statistics.
+A visually plausible sequence or a valid file schema cannot substitute for
+that information.
+
+\subsection{Factorial expansion, diversity, and generation effort}
+
+With $M$ embodiments, $K$ camera viewpoints, and $P$ appearance configurations,
+a source episode can define up to $M K P$ candidate configurations. The actual
+yield depends on reachability, grasp compatibility, scene observability, and
+the stated acceptance checks. Multiple views of one motion improve observation
+coverage without becoming independent manipulation strategies. Appearance
+changes may increase visual diversity without changing task geometry.
+
+Consequently, dataset characterisation should report requested and accepted
+combinations, failure categories, camera coverage, trajectory variation, and
+processing time. Feature-space distances can provide supplementary measures
+of visual variation when the encoder and sampling procedure are fixed. They
+do not alone establish learning benefit or coverage of additional skills.
+Likewise, a cost comparison with teleoperation needs measured operator,
+calibration, annotation, scanning, computation, and rejection costs. Savings
+cannot be inferred from the nominal expansion factor alone.
 
 \section{Positioning of the Proposed System}
 \label{sec:positioning}
 
-Table~\ref{tab:positioning} compares \viki\ against the nearest published
-systems along the six criteria that jointly define the proposed architecture:
-(C1) passive markerless capture without teleoperation hardware; (C2)
-multi-camera metrically calibrated RGB-D sensing; (C3) object-centric dense
-trajectory representation; (C4) retargeting as a single confidence-weighted
-cost functional; (C5) export of an imitation-learning-ready dataset; and (C6)
-physical replay used to validate the dataset before export.
+The closest comparisons depend on the stage under consideration. Instrumented
+capture systems help assess what interaction information can be recovered;
+teleoperation systems supply retargeting alternatives; geometric reconstruction
+and rendering systems define visual-generation choices. Table~\ref{tab:positioning}
+compares representative integrated workflows by their motion source and visual
+representation. It avoids equating a planned ViKi capability with a capability
+already evaluated by another system.
 
-\begin{table}[htbp]
-\caption{Comparison of the Proposed System Against the Nearest Published Work\\
-Along the Six Criteria Defined in Section~\ref{sec:positioning}}
-\label{tab:positioning}
-\centering
+\begingroup
 \small
-\begin{tabular}{lcccccc}
+\setstretch{1.15}
+\setlength{\tabcolsep}{4pt}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{3.2cm}>{\raggedright\arraybackslash}p{4.9cm}>{\raggedright\arraybackslash}p{6.7cm}@{}}
+\caption{Motion Sources, Representations, and Visual Generation in Related Work}
+\label{tab:positioning}\\
 \toprule
-System & C1 & C2 & C3 & C4 & C5 & C6 \\
+System & Motion source and representation & Visual generation and relation to ViKi \\
 \midrule
-\viki\ (proposed)      & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
-HOWTransfer \cite{howtransfer} & \checkmark & $\sim$ & --- & --- & $\sim$ & \checkmark \\
-Vi-RoIL \cite{viroil}          & $\sim$ & --- & \checkmark & --- & $\sim$ & --- \\
-ORION \cite{orion}             & \checkmark & $\sim$ & \checkmark & --- & --- & --- \\
-OKAMI \cite{okami}             & \checkmark & $\sim$ & $\sim$ & --- & $\sim$ & --- \\
-EgoMimic \cite{egomimic}       & \checkmark & --- & --- & --- & $\sim$ & --- \\
-DexWild \cite{dexwild}         & $\sim$ & --- & --- & --- & $\sim$ & --- \\
-Tool-as-Interface \cite{toolif}& \checkmark & $\sim$ & $\sim$ & --- & $\sim$ & --- \\
-RoboPaint \cite{robopaint}     & --- & \checkmark & $\sim$ & --- & \checkmark & \checkmark \\
-DexCanvas \cite{dexcanvas}     & --- & \checkmark & --- & --- & $\sim$ & --- \\
+\endfirsthead
+\toprule
+System & Motion source and representation & Visual generation and relation to ViKi \\
+\midrule
+\endhead
 \bottomrule
-\end{tabular}
+\endfoot
+HOWTransfer \cite{howtransfer} & Human hand motion and contact intervals; grasp hypotheses and trajectory editing. & Relevant offline transfer alternative; not the same objective as synthesising robot-view datasets. \\[3pt]
+Vi-RoIL \cite{viroil} & Monocular human motion with marker-assisted calibration; object-relative representation. & Relevant geometric front-end; reported evaluation is qualitative simulation. \\[3pt]
+Tool-as-Interface \cite{toolif} & Two-view human RGB recordings; tool-centric actions. & Gaussian novel-view augmentation and embodiment masking, rather than replacement-robot rendering. \\[3pt]
+Real2Render2Real \cite{real2render2real} & Human video and object-part motion; robot-specific grasping and IK. & 3DGS-to-mesh assets and synthetic rendering, including embodiment reuse. \\[3pt]
+RoboPaint \cite{robopaint} & Multiview RGB-D, glove kinematics, tactile data, and wrist markers. & Human-to-robot retargeting with a 3DGS background and mesh foreground. \\[3pt]
+RoboWheel \cite{robowheel} & Human interaction reconstruction and cross-embodiment retargeting. & Simulation augmentation; integrated precedent for human-source data generation. \\[3pt]
+RoboSplat \cite{robosplat} & Robot demonstration with geometric augmentation. & Editable Gaussians for embodiment, viewpoint, and scene variation. \\[3pt]
+SplatSim \cite{splatsim} & Simulated teleoperation or planned demonstrations. & Gaussian observations coupled to simulation; includes policy-transfer evaluation. \\[3pt]
+GaussianFactory \cite{gaussianfactory} & Grasp and trajectory planning from a scene scan. & Editable 3DGS scene; planning supplies the motion. \\[3pt]
+LEGS / RoboSimGS \cite{legs, robosimgs} & Procedural motion or simulated interaction. & Hybrid Gaussian appearance and mesh foreground; different motion-generation assumptions. \\[3pt]
+ViKi (proposed) & Markerless multiview RGB-D hand--object motion and embodiment-specific retargeting. & Proposed robot-view rendering and controlled expansion, assessed through stage and integration checks. \\
+\end{longtable}
+\endgroup
 
-\vspace{1mm}
-{\footnotesize \checkmark~= satisfied; $\sim$~= partially satisfied;
----~= not satisfied.}
-\end{table}
-
-No located system satisfies all six criteria simultaneously. HOWTransfer
-\cite{howtransfer} is closest in workflow, satisfying C1 and C6, but is
-hand-centric rather than object-centric, uses calibrated stereo RGB rather than
-metric RGB-D, and does not employ a single cost functional. Vi-RoIL
-\cite{viroil} is closest in representation, satisfying C3, but relies on a
-monocular view of a marker cube and is evaluated only in simulation. The
-intersection of the online joint-optimisation retargeting literature with the
-offline object-centric dataset-generation literature is therefore unoccupied,
-and it is that intersection which this work targets.
-
-Several of the systems listed are recent preprints
-\cite{howtransfer, robopaint, shadowing, dexcanvas} whose peer-review status
-could not be confirmed at the time of writing; their reported results are
-treated as provisional.
+RoboPaint already combines the broad components in the original motivation,
+while Tool-as-Interface and Real2Render2Real provide additional close precedents
+for human-source motion and visual augmentation. ViKi is therefore positioned
+as an investigation of a particular markerless multiview RGB-D route and its
+operating limits. The intended contribution is to implement and characterise
+that route across declared capture, embodiment, and rendering conditions,
+including failures at their interfaces. The camera setup and target robot set
+are experimental variables, rather than grounds for an unsupported claim of
+first integration.
 
 \section{Conclusion of the Review}
 \label{sec:lit-conclusion}
 
-The review supports the following methodological choices, which
-Chapter~\ref{ch:method} implements.
+The surveyed literature supports the proposed direction while making its
+assumptions and evidence requirements explicit. The following implications
+connect the review to the methodology:
 
 \begin{enumerate}[leftmargin=2em]
-  \item \emph{Hand representation.} A wrist pose in $\SE$ with a continuous
-        gripper opening is adopted, following \cite{opentv, bunny, ace}, and the wrist
-        target enters as a weighted soft task following the ablation evidence
-        of \cite{keyobj}. Parametric mesh reconstruction is rejected as
-        unnecessary for a parallel-jaw target and as an additional error source.
-  \item \emph{Retargeting.} A single weighted cost functional is adopted,
-        following \cite{anyteleop, dexflow}, with confidence weighting after
-        \cite{opentv} and Huber robustification after \cite{dexteleop0}. The
-        sequential smooth--IK--smooth pattern is rejected on the structural
-        grounds set out in Section~\ref{sec:lit-retarget}.
-  \item \emph{Solver.} Pink on Pinocchio \cite{pink} is adopted, since it
-        expresses the entire functional natively as a constrained quadratic
-        program and is the solver family used by the reference teleoperation
-        systems.
-  \item \emph{Task representation.} Object-relative trajectories are adopted
-        following \cite{orion, spot}, and stored alongside workspace-anchored
-        trajectories so that the choice is deferred downstream.
-  \item \emph{Sensing.} ChArUco workspace anchoring is adopted; centimetre-level
-        cross-camera agreement is assumed on the evidence of \cite{romeo};
-        camera placement preserves substantial view overlap on the evidence of
-        \cite{bulee}; depth is fused with distance, incidence-angle and sensor
-        confidence weights following \cite{fusionpatent, zeng}.
-  \item \emph{Synchronisation.} The two Azure Kinects support hardware
-        synchronisation, and the application uses a host-side monotonic
-        clock for cross-device frame pairing \cite{ridgerun}. Local timing
-        accuracy cannot be re-evaluated without the source recordings.
-  \item \emph{Curation.} Physical replay screening is a proposed validation
-        stage, motivated by \cite{demoscore} and \cite{howtransfer}; the
-        current implementation does not perform it.
+  \item \emph{Retain a reusable human representation.} Articulated hand
+        observations and hand--object relationships can support different
+        target abstractions. A wrist pose and scalar aperture are suitable
+        for some grippers, while dexterous hands require richer transfer.
+  \item \emph{Compare retargeting formulations under matched conditions.}
+        Evaluate hand-only and interaction-aware objectives using the same
+        recordings and robot placements. Report tracking error, motion
+        regularity, and constraint violations separately.
+  \item \emph{Treat geometry and appearance as connected representations.}
+        Specify the static background, dynamic objects, human removal, and
+        replacement robot, together with their metric alignment and visibility
+        handling. Photorealistic appearance does not establish contact validity.
+  \item \emph{Measure capture quality on the relevant setup.} Calibration,
+        depth validity, camera placement, and timing affect both perception
+        and novel-view synthesis. External reference data and local rig
+        measurements answer different questions.
+  \item \emph{Validate the interfaces between stages.} Alongside independent
+        stage metrics, check coordinate frames, time alignment, object state,
+        and agreement between rendered robot motion and exported actions.
+  \item \emph{Characterise accepted expansion rather than nominal size.}
+        Record configuration coverage, rejected cases, and preparation and
+        generation effort. Keep those findings distinct from physical task
+        success and policy-learning performance.
 \end{enumerate}
+
+These choices define the proposed dataset-generation study without presupposing
+its outcome. Chapter~\ref{ch:method} develops the relevant formulations, while
+implementation and experimental evidence determine which capabilities can
+ultimately be claimed.
