@@ -9,7 +9,7 @@ Two writers, for two different needs.
 | output | self-contained `.npz` bundle + manifest | LeRobot dataset |
 | dependencies | numpy only | optional `viki[export]` → `lerobot`, torch |
 | camera video | no | yes |
-| requires replay + screening | no | yes |
+| requires explicit offline dry-run + labels | no | yes |
 | intended for | replaying, inspecting, converting, shipping | policy training |
 
 ```bash
@@ -58,11 +58,11 @@ target transforms and must not become policy examples.
 
 ### What this version does not guarantee
 
-**Nothing is screened.** Replay is a stub, so trajectories are exported without
-being replayed, and an episode need not be labelled or rated. The manifest says
+**No simulation success is required.** The bundle contains geometric plans,
+and an episode need not have a dry-run, label or rating. The manifest says
 this in `screening`, and every episode's `meta.json` records what actually ran —
 `replay_run`, `replay_verdict`, `labelled`, `outcome_rated`. A consumer should
-not mistake a bundle for a vetted dataset.
+not mistake a dry-run for a manipulation success verdict.
 
 An episode qualifies when retarget has produced a readable `plan.h5`. One
 unreadable episode is skipped and listed in the manifest's `skipped`, never
@@ -70,7 +70,8 @@ fatal to the rest.
 
 ## LeRobot dataset
 
-Eligibility is the stricter one: `retarget` and `replay` have run, the replay
+Eligibility is the stricter one: `retarget` and the explicit offline dry-run
+(`viki replay <episode>`) have run, the dry-run
 verdict is not `reject`, `outcome` is not `bad`, and the task string is
 non-empty. Frame schema and stub status are unchanged from before:
 `annotation.object_relative` is a shape-correct placeholder until

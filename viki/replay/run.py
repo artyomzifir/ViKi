@@ -1,15 +1,10 @@
 """
 viki.replay.run
 ---------------
-Pipeline stage 5: plan.h5 -> replay.h5 (paper §3.8).
+Optional offline plan check: plan.h5 -> replay.h5.
 
-Execute the synthesised joint trajectory, log what the robot actually attained,
-screen for feasibility, and — on rejection — optionally re-solve retargeting
-with modified weights (bounded).
-
-STUB stage: with ``driver="dryrun"`` no hardware is touched and the verdict is
-``dry-run``. ``driver="ur3"`` raises unless ``ur-rtde`` and the robot are present.
-The re-solve loop is not implemented (``max_resolves`` is accepted but ignored).
+The dry-run copies planned values, checks numeric validity and available joint
+limits, and preserves the legacy archive schema for existing consumers.
 """
 
 from __future__ import annotations
@@ -32,9 +27,8 @@ def replay_episode(
     ep: Episode,
     *,
     driver: str = "dryrun",
-    max_resolves: int = 0,
 ) -> str:
-    """Run replay for one episode and write ``replay.h5``. Returns the path."""
+    """Check a plan offline and write the legacy ``replay.h5`` artifact."""
     if not ep.plan_h5.exists():
         raise FileNotFoundError(f"no plan.h5 for episode {ep.id}; run retarget first")
 
@@ -88,15 +82,12 @@ def replay_episode(
     gripper_attained = np.asarray(execution_log.gripper_attained)[approach_frames:]
     controller_residual = np.asarray(execution_log.controller_residual)[approach_frames:]
 
-    if max_resolves:
-        logger.warning("replay re-solve loop is not implemented (paper §3.8, Fig. 3.1)")
-
-    # Screen the complete executed motion, including the transition from home.
-    v = screen(execution_log.q_attained, execution_log.controller_residual, robot)
+    # Check the complete plan, including the transition from home.
+    v = screen(execution_log.q_attained, robot)
 
     archive = {
         # Keep replay.h5 aligned one-to-one with the demonstrated frames used by
-        # export. The approach was executed and screened above, but has no human
+        # export. The approach was checked above, but has no human
         # observation/annotation counterpart.
         "q_attained": q_attained,
         "gripper_attained": gripper_attained,

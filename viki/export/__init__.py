@@ -13,7 +13,7 @@ Two writers, because they answer different needs:
 ``export_dataset``
     LeRobot dataset for policy training, including camera video. Delegates to
     the optional ``lerobot`` package (``pip install 'viki[export]'``, which
-    pulls in torch) and requires episodes that have been replayed and screened.
+    pulls in torch) and requires labelled episodes with an offline dry-run.
 """
 
 from viki.export.run import export_dataset  # noqa: F401

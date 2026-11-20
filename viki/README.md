@@ -12,10 +12,11 @@ segment       perception/   raw/        ->  intermediates/segmentation/  instanc
 object        perception/   segmentation -> object_models.npz  rigid core/shell + pose/confidence
 retarget      retarget/     cln.npz     ->  plan.h5      pinch/palm target -> adapter -> gripper TCP -> robot joints
 object-rel    object_centric.py  object_models.npz + cln.npz + plan.h5 -> intermediates/object_relative.npz
-replay        replay/       plan.h5     ->  replay.h5    proprioception attained on hardware   [stub]
+replay        replay/       plan.h5     ->  replay.h5    optional offline dry-run, planned copies
 label         labeling.py   -> meta.json["labels"]       task string / phase segments / outcome
 export        export/       episodes/*  ->  datasets/<name>/   trajectory bundle; LeRobot  [partial]
 
+benchmark/    HO-Cap import and external-reference evaluation
 calibration/  intrinsics + extrinsics (board -> world), a side input to perception
 render/       depth colourise, MJPEG, 3-D matplotlib views — no FastAPI, no hardware
 server/       transport only: FastAPI over the offline stages + camera preview

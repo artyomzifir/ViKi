@@ -19,7 +19,6 @@ stream. Scenes are recorded, then extracted / prepared / retargeted offline.
 | `skeleton.py` | `POST /skeleton/capture_base/{id}` — static background depth for offline scene subtraction | — |
 | `recording.py` | `POST /record/start` → `SceneRecorder` in a background job | `cameras.record` |
 | `pipeline.py` | episode geometry/cloud/object-model diagnostics, batch `POST /pipeline/{perceive,retarget}`, retarget robot/plan scene APIs, and jobs | `perception`, `prepare`, `retarget`, `episode` |
-| `replay.py` | `POST /replay` job | `viki.replay` |
 | `label.py` | `GET/POST /label` | `viki.labeling` |
 | `export.py` | `POST /export` job | `viki.export` |
 | `system.py` | config get/set/reset, restart | `viki.config` |
@@ -27,8 +26,9 @@ stream. Scenes are recorded, then extracted / prepared / retargeted offline.
 ## Jobs
 
 `jobs.py` — a minimal in-process registry (`submit` / `get` / `all_jobs`). Not
-durable; fine for a single-user research tool. `pipeline` / `replay` / `export`
-return a `job_id`; poll `…/jobs/{job_id}`.
+durable: active jobs and logs are lost on restart; only queued jobs can be
+cancelled. Durable worker state is needed for long reconstruction runs.
+`pipeline` / `export` return a `job_id`; poll `…/jobs/{job_id}`.
 
 ## Frontend
 

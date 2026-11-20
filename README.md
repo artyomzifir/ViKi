@@ -1,251 +1,242 @@
 # ViKi — Video-to-Kinematics
 
-> Turn multi-view RGB-D video of a human doing a manipulation task into a
-> robot-ready demonstration dataset — no teleoperation rig required.
+> An offline research pipeline for turning human RGB-D demonstrations into
+> robot trajectories and, next, rendered synthetic datasets.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
-![Status](https://img.shields.io/badge/status-work%20in%20progress-orange.svg)
-![Milestone](https://img.shields.io/badge/milestone-v0.0.2%20scene%20geometry-informational.svg)
+![Status](https://img.shields.io/badge/status-research%20prototype-orange.svg)
 
-Human video is cheap and abundant, but naive retargeting from human to robot
-kinematics produces noisy, jerky trajectories. ViKi captures the demonstration
-from several calibrated RGB-D cameras, reconstructs the hand in 3D, and solves a
-whole-trajectory optimisation to land it on a real manipulator.
+ViKi records or imports calibrated multiview RGB-D demonstrations, reconstructs
+hand and rigid-object motion, and fits robot trajectories with whole-trajectory
+inverse kinematics. The current output is a versioned trajectory bundle with
+geometry, timing and provenance.
+
+The thesis develops this into a route for **synthetic robot dataset generation**:
+reuse one human demonstration across robot embodiments, camera viewpoints and
+appearance configurations through **3D Gaussian Splatting (3DGS)** reconstruction
+and robot compositing. Those rendering and generation stages are planned;
+the existing point-cloud Viewer does not implement them.
 
 ![Retarget viewer demo](materials/retarget_demo.gif)
 
-*The Retarget tab replays a recorded episode as a fused point cloud + hand
-skeleton next to the robot arm converging onto the retargeted trajectory.*
+*The current Retarget viewer shows recorded point clouds and hand motion beside
+the robot model following the retargeted trajectory.*
 
----
+## Research scope
 
-## 🚧 Project status — read this first
+The research question is how reliably reconstructed human hand–object motion
+can be reused across target robots and rendered observation conditions. The
+intended workflow is:
 
-**`dev-eval` recovery (October 2026):** The local workspace was deleted after
-`v0.0.2`. This branch restores the recoverable MuJoCo experiments,
-cube-aware retarget changes, HO-Cap importer/evaluator, tests, and thesis
-edits from Git history and task logs. The ignored recordings, calibrations,
-simulator model assets, checkpoints and generated metrics/figures were **not**
-in Git and are not restored. Historical numeric results in `paper/` and
-`docs/` must be regenerated before submission. See
-[`experiments/README.md`](experiments/README.md),
-[`viki/benchmark/README.md`](viki/benchmark/README.md), and
-[`paper/README.md`](paper/README.md). The pinned 28-sequence HO-Cap download
-plan is in `tools/hocap_pnp_plan.json`; the 48-GB download remains paused.
-
-**ViKi is research code under active development. It is not a finished product,
-and not everything advertised below is finished.**
-
-- The capture → skeleton → retarget → **trajectory export** path runs end to end.
-  `v0.0.2` also adds resolution-independent K4A geometry and a resumable
-  scene-perception branch that produces compact rigid-object models and a
-  separate post-IK object-relative trajectory sidecar. Cube-aware grasp is
-  now the default retarget method for the UR10/Robotiq setup, but requires a
-  tracked cube and has not been validated in simulation.
-- **Accuracy is still being tuned.** Triangulation gating, multi-camera sync and
-  the articulated hand-fit model are the subject of ongoing measurement — see
-  [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md).
-  There is **no ground-truth reference** in this setup, so all reported
-  millimetre figures are self-consistency and tracking-error measures, not
-  absolute accuracy.
-- **Replay on hardware is a stub.** Nothing exported here has been validated on a
-  physical robot. Do not run a ViKi trajectory on real hardware without your own
-  review and safety checks.
-- **Exported bundles are unscreened.** Because replay is a stub, episodes are
-  exported without a replay verdict. Every manifest says so explicitly.
-- **Interfaces, defaults and config keys are still moving** between commits.
-- **The repository ships code only.** Robot URDFs, model weights, calibration and
-  recordings are *not* included — see
-  [What you must supply yourself](#what-you-must-supply-yourself).
-
----
-
-## How it works
-
-```
-Multi-view RGB-D capture   ← RealSense D435i + Azure Kinect DK (HW-synced)
-        │
-        ▼
-3D hand skeleton           ← MediaPipe / RTMPose + multi-view triangulation + depth
-        │
-        ▼
-Smoothing & fusion         ← cross-camera fuse, Savitzky–Golay, articulated hand model
-        │
-        ▼
-Robot retargeting          ← whole-trajectory IK via PINK / Pinocchio
-        │
-        ▼
-Trajectory bundle          ← npz + JSON manifest        (works, numpy only)
-LeRobot dataset            ← ACT / Diffusion Policy      (needs optional deps)
+```text
+Human multiview RGB-D demonstration
+  → hand and object reconstruction                 implemented
+  → robot-specific kinematic retargeting           implemented, task-dependent
+  → 3DGS scene assets and robot compositing         planned
+  → embodiment × viewpoint × appearance variants   planned
+  → synchronised synthetic observations and actions
 ```
 
-Each stage writes a durable artifact into the episode directory, so any stage can
-be re-run, compared or audited on its own:
+Evaluation separates hand/object tracking error, retargeting feasibility,
+novel-view image/depth quality, compositing consistency and accepted dataset
+yield. M×K×P counts requested variant configurations; some may fail reach,
+visibility or consistency checks. It does not count independent human
+recordings or establish a benefit for policy learning.
 
-```
-raw/ → rec.npz → cln.npz → plan.h5 → (replay.h5) → dataset
+The current thesis scope covers reconstruction, retargeting, rendering and
+their interfaces. Policy training and task-success trials are separate work.
+MuJoCo scripts remain useful diagnostics; solver convergence, simulated contact
+and plausible images are distinct measurements.
+
+See the [thesis introduction](paper/thesis/chapters/chapter1.tex),
+[current architecture audit](docs/2026-11-20-architecture-and-3dgs-audit.md) and
+[roadmap](docs/roadmap.md) for the questions, interfaces and next experiments.
+
+## What works today
+
+| Area | Current state |
+|---|---|
+| Capture and calibration | RealSense/Azure Kinect recording, timestamps, saved camera geometry, ChArUco calibration and validation |
+| Hand perception | MediaPipe/RTMPose backends, multiview triangulation, preparation checkpoints and articulated hand fitting |
+| Scene perception | Explicit CUDA SAM 2.1 stage, semantic RGB-D lift, compact rigid core/shell models and pose/confidence tracks |
+| Robot trajectories | PINK/Pinocchio whole-trajectory IK, joint/velocity limits, floor and self-collision checks; additional scene constraints in explicit tracked-object mode |
+| Object-aware retargeting | Local UR10/Robotiq cube mode and a separate HO-Cap tracked-object pilot; prerequisites and unsupported cases fail explicitly |
+| External evaluation | HO-Cap import, hand/object metrics, pinned PnP cohort, numerical reports and source provenance |
+| Export | NPZ trajectory bundle and JSON manifest; optional object-model and object-relative sidecars |
+| Interfaces | CLI plus FastAPI and a plain-JS web UI with a shared Three.js Viewer |
+| Simulation experiments | Separate MuJoCo/Shadow/Tesollo and command-search scripts; outcomes and failures documented per experiment |
+
+**Remaining work:** 3DGS reconstruction, robot compositing, named plans for
+multiple embodiments, synthetic observation–action export and reliable web
+management of long reconstruction runs. LeRobot export is partial; its
+object-relative annotation is still a placeholder.
+
+HO-Cap supplies semi-automatic MANO/object reference annotations. Object results
+using oracle masks and first-frame reference alignment describe relative
+tracking under those inputs. Local rig consistency and IK tracking errors are
+not absolute accuracy measurements. Historical local results whose source
+artifacts were lost are retracted in [the evidence record](paper/README.md).
+
+## Pipeline and artifacts
+
+Each stage reads an episode directory and writes durable artifacts:
+
+```text
+raw/ → rec.npz → cln.npz → plan.h5 → trajectory bundle
+  ├→ cloud/                                    Viewer artifact
   └→ SAM masks → semantic cloud → object_models.npz
-                           + plan.h5 → object_relative.npz → dataset
+                      + cln.npz + plan.h5 → object_relative.npz
 ```
 
----
+`viki perceive` combines extract and prepare with a versioned profile. `viki
+scene` means SAM/object perception, not Gaussian reconstruction. The proposed
+GS branch will consume recorded RGB-D, calibration and masks, then combine its
+assets with object tracks and named robot plans.
 
-## Quick start
+The default trajectory bundle requires a completed plan, not a task-success
+verdict. Its manifest records what ran. The optional CLI `viki replay` performs
+an offline dry-run only: legacy `*_attained` fields contain copies of planned
+values. It is not part of `viki run` or the web UI.
 
-Everything runs in Docker. The app talks to hardware SDKs (`pyrealsense2`,
-`libk4a.so`) that live in the image, not on your host.
+Package contracts and frame conventions are described in
+[`viki/README.md`](viki/README.md) and [`docs/math.md`](docs/math.md).
+
+## Running ViKi
+
+Everything runs through Docker. Camera SDKs live in the image. The supplied
+Compose configuration requests NVIDIA GPU access; SAM requires CUDA, while
+hand processing and IK also contain CPU paths. Existing episodes can be
+processed without cameras attached.
 
 ```bash
-sudo ./scripts/host_setup.sh   # once per host: Docker, udev rules, groups
-docker compose up --build      # web UI + API on http://localhost:8000
+sudo ./scripts/host_setup.sh   # once on a capture host
+docker compose up --build     # UI + API at http://localhost:8000
 ```
 
-Read [SETUP_GUIDE.md](SETUP_GUIDE.md) **before** plugging in cameras — Azure
-Kinect needs a GRUB `usbfs` bump, `xhost +local:`, one independent USB host
-controller per Kinect, and a sync cable for multi-Kinect capture.
+For camera capture, read [SETUP_GUIDE.md](SETUP_GUIDE.md) first. Two Azure
+Kinects on the current rig require **independent PCI xHCI controllers** and a
+sync cable. Different sockets on one controller are insufficient. The verified
+layout uses Intel motherboard + Renesas PCIe controllers.
 
-> **Two Kinects require two independent USB host controllers on this rig.**
-> The old single-controller wiring hard-locked the host. The current setup puts
-> one camera on the motherboard Intel xHCI and one on the Renesas PCIe xHCI;
-> dual-camera capture and wired sync now work. Separate sockets or hubs on the
-> *same* controller are not sufficient. Check the PCI controller topology after
-> rewiring; see [SETUP_GUIDE.md](SETUP_GUIDE.md#5-usb-wiring-for-two-azure-kinects).
-> The historical failure is closed in [`docs/bugs.md`](docs/bugs.md) and
-> [`docs/camera_freeze_investigation.md`](docs/camera_freeze_investigation.md).
+The web tabs are Calibration, Record, Extract, Retarget, Export and Viewer.
+Capture is live; perception, retargeting and export operate on recorded episodes.
 
-### Requirements
+### Process an existing episode
 
-| | |
-|---|---|
-| OS | Linux (tested on Ubuntu) |
-| Runtime | Docker + Docker Compose |
-| GPU | optional for the hand/retarget path; NVIDIA CUDA is required by the scene-perception SAM 2.1 image |
-| Cameras | Intel RealSense D435i and/or Azure Kinect DK — one independent USB controller per Kinect |
-| Robot | a URDF from `robot_descriptions` — UR3/UR5/UR10/UR5e/UR10e, iiwa14 (default: `ur10`) |
+Replace the example episode path with an existing recording or imported episode:
 
-You can run the perception stages on pre-recorded episodes with no cameras
-attached.
+```bash
+EPISODE=data/episodes/your-episode
 
----
+docker compose run --rm cli perceive "$EPISODE" --profile stable-fused-hand-v4
+docker compose run --rm cli retarget "$EPISODE" --no-object-grasp
+docker compose run --rm cli export "$EPISODE" --out data/exports/your-dataset
+```
+
+This explicit hand-only path does not require object segmentation. The default
+UR10/Robotiq cube mode needs a supported transfer and a tracked object labelled
+`manipulated_object`; clicking Retarget does not run SAM automatically.
+With a reviewed prompt manifest, run the scene branch first:
+
+```bash
+docker compose run --rm sam2 scene "$EPISODE" --prompts data/prompts/scene.json
+docker compose run --rm cli retarget "$EPISODE" --object-grasp
+docker compose run --rm cli object-relative "$EPISODE"
+```
+
+See [scene perception](viki/perception/README.md#scene-perception) and
+[retargeting](viki/retarget/README.md) for prompt roles, supported geometry and
+the separate HO-Cap object-track mode. `viki run` orchestrates extract, prepare,
+optional scene perception, retarget and optional object-relative tracks;
+labelling and export are explicit steps.
+
+### HO-Cap data
+
+[`tools/hocap_pnp_plan.json`](tools/hocap_pnp_plan.json) pins 28 single-hand
+PnP sequences (24 right, 4 left), archive sizes, SHA-256 hashes and the source
+revision. [`tools/download_hocap_pnp.py`](tools/download_hocap_pnp.py) downloads
+that cohort with resume and hash verification. It downloads the entire plan,
+so reserve enough disk space; it does not start processing the recordings.
+
+Import and batch recipes are in the
+[benchmark README](viki/benchmark/README.md) and
+[pinned batch protocol](docs/2026-10-13-hocap-batch-protocol.md).
+The eight-view cohort and selected two-view controls use a ViKi-specific
+protocol, not the official HO-Cap leaderboard split.
+
+### Export format
+
+The default export is readable with NumPy and JSON, without a policy-training
+framework:
+
+```text
+<out>/dataset.json
+<out>/episodes/<id>/trajectory.npz
+<out>/episodes/<id>/meta.json
+<out>/episodes/<id>/object_models.npz      optional
+<out>/episodes/<id>/object_relative.npz    optional
+```
+
+It contains joint motion, target and FK-derived tool poses, gripper commands,
+source hand poses, evidence weights and provenance. It does not yet contain
+rendered robot-camera observations. Details and partial LeRobot eligibility
+are in the [export README](viki/export/README.md).
 
 ## What you must supply yourself
 
-**This repository contains source code only.** `data/` and `models/` are
-gitignored, and nothing below is distributed with ViKi. Most of it is fetched or
-produced on first use; some of it you have to go and get.
+Recordings, rig calibration, model weights and robot descriptions are not
+bundled. Tracked numerical evidence under `paper/results/` is separate from
+those external inputs.
 
-| What | Where it goes | How you get it |
-|---|---|---|
-| **Robot URDF descriptions** | `models/robot_descriptions/` | Downloaded at the **first retarget run** by the `robot_descriptions` package. Needs network access from inside the container. |
-| **Gripper URDFs** | `models/robot_descriptions/` | Same mechanism. Only **Robotiq 2F-85** is wired up; the other profiles refuse to load and state why (licence/packaging unverified). Supplying your own gripper is on you. |
-| **Hand-pose model weights** | `~/.cache/`, `models/` | MediaPipe HandLandmarker and RTMPose ONNX **auto-download** on first use. The `mmpose-heatmap` models (HRNetv2, Hourglass-52, SCNet-50, ResNet-50) are **not published as ONNX** — convert them yourself with `mmdeploy` or fetch from the OpenMMLab Deploee, then drop the `.onnx` into `models/`. |
-| **SAM 2.1 checkpoint** | `models/sam2/sam2.1_hiera_small.pt` | Optional, for the scene-perception branch. Download the official Meta checkpoint; ViKi verifies its SHA-256 before inference. SAM 2 code and checkpoints are Apache-2.0 licensed. |
-| **Camera calibration** | `data/` | Produced by you, per rig, with the Calibration tab — intrinsics, extrinsics, world anchor. Calibration is rig-specific and varies between recording sessions; none is shipped. |
-| **Recordings / episodes** | `data/episodes/`, `data/datasets/` | Yours. Record them with ViKi, or import an existing dataset. |
-| **Configuration** | `data/user_configuration.json` | Copied from `default_configuration.json` on first run, then edited by you (robot, base offset, adapter, profiles). |
-| **LeRobot export deps** | python env | `pip install viki[export]` — pulls `lerobot` and torch. The native trajectory bundle needs **none** of this. |
-| **Host prerequisites** | your machine | GRUB `usbcore.usbfs_memory_mb=1000`, udev rules, X11 access, USB hubs, sync cable — see [SETUP_GUIDE.md](SETUP_GUIDE.md). |
-
-> Third-party models, URDFs and SDKs carry **their own licences**, which are not
-> Apache-2.0 and are not granted by this repository. Review them before you
-> redistribute anything you build. Open items are tracked in
-> [`docs/licensing_todo.md`](docs/licensing_todo.md).
-
----
-
-## Pipeline stages
-
-| stage | package | status |
-|---|---|---|
-| record | [`viki/cameras`](viki/cameras/README.md) | works |
-| calibrate | [`viki/calibration`](viki/calibration/README.md) | works |
-| extract (skeleton) | [`viki/perception`](viki/perception/README.md) | works — accuracy tuning ongoing |
-| segment (instances + RGB-D lift) | [`viki/perception`](viki/perception/README.md#scene-perception) | works as an explicit CUDA stage; missing pixels remain unknown |
-| object-model (rigid core/shell) | [`viki/perception`](viki/perception/README.md#scene-perception) | required for default cube-aware retarget; built by the explicit CUDA scene stage |
-| object-relative (hand/TCP tracks) | [`viki/object_centric.py`](viki/object_centric.py) | post-IK diagnostic sidecar; cube-aware IK is a separate geometric pilot |
-| prepare (fuse + smooth) | [`viki/prepare`](viki/prepare/README.md) | works — accuracy tuning ongoing |
-| retarget (IK) | [`viki/retarget`](viki/retarget/README.md) | cube-aware default with readiness checks; geometric pilot only, no simulated grasp verdict |
-| replay (hardware validation) | [`viki/replay`](viki/replay/README.md) | **stub** — no hardware validation |
-| export → trajectory bundle | [`viki/export`](viki/export/README.md) | works (numpy only) |
-| export → LeRobot dataset | [`viki/export`](viki/export/README.md) | partial — needs optional deps; object-relative annotation is a placeholder |
-
-See [`viki/README.md`](viki/README.md) for the full package map and
-cross-cutting rules.
-
-### Trajectory export
-
-```bash
-docker compose run --rm cli export data/episodes/<id> --out data/datasets/pick
-```
-
-Produces a self-contained bundle — joint trajectory, commanded and achieved tool
-pose, gripper command, the human hand pose it came from, and the per-frame
-evidence weight — in plain `.npz` with a JSON manifest that names its units,
-frames and provenance. No torch, no parquet, no `lerobot`.
-
-```
-<out>/dataset.json                    manifest: schema, units, frames, provenance, index
-<out>/episodes/<id>/trajectory.npz    the arrays
-<out>/episodes/<id>/meta.json         that episode's provenance
-```
-
-The manifest's `screening` field states plainly that nothing was replayed or
-vetted. Details in [`viki/export/README.md`](viki/export/README.md).
-
----
-
-## Usage
-
-The web UI (`viki/server/static/`) is plain HTML/CSS/JS served by FastAPI — no
-build step. Tabs: Cameras, Calibration, Record, Extract, Viewer, Retarget,
-Export.
-
-The same stages are available headless:
-
-```bash
-docker compose run --rm cli record   ...   # capture a synced RGB-D scene
-docker compose run --rm cli extract  ...   # raw/  -> rec.npz
-docker compose run --rm sam2 segment ...   # optional masks + semantic 3-D cloud
-docker compose run --rm sam2 scene <ep> --objects 3  # complete scene branch
-docker compose run --rm cli prepare  ...   # rec.npz -> cln.npz
-docker compose run --rm cli retarget ...   # cln.npz -> plan.h5
-docker compose run --rm cli object-relative <ep>  # model + plan -> relative tracks
-docker compose run --rm cli export   ...   # plan.h5 -> dataset
-docker compose run --rm cli run      ...   # extract -> prepare -> retarget -> replay
-docker compose run --rm sam2 run <ep> --scene-prompts data/prompts/<scene>.json  # labelled scene + core
-```
-
----
-
-## Development
-
-```bash
-docker compose run --rm test                           # full test suite
-docker compose run --rm test tests/unit_tests/gripper   # a subset (args append to pytest)
-docker compose run --rm terminal                        # bash shell in the container
-```
-
-`viki/` is bind-mounted, so code edits apply on container restart — no rebuild
-unless `pyproject.toml` changes.
-
-### Documentation
-
-| | |
+| Input | How it is supplied |
 |---|---|
-| [`docs/math.md`](docs/math.md) | the full mathematical description of the pipeline |
-| [`docs/roadmap.md`](docs/roadmap.md) | current shipped, experimental and remaining work |
-| [`docs/releases/v0.0.2.md`](docs/releases/v0.0.2.md) | v0.0.2 release scope, measurements and limits |
-| [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md) | measurement protocols and results (E6–E14) |
-| [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why production object-driven retarget remains gated |
-| [`docs/paper_code_divergences.md`](docs/paper_code_divergences.md) | where the thesis text and the code disagree, and why |
-| [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | hardware bring-up, USB, sync wiring |
+| Episodes and camera calibration | Record/calibrate locally, or import an external dataset into `data/` |
+| Robot and gripper descriptions | `robot_descriptions` fetches URDFs on first use; the standard gripper is Robotiq 2F-85; other catalogue entries remain disabled pending assets/audits |
+| Hand-pose weights | MediaPipe and RTMPose download on first use; heatmap ONNX variants need user-supplied converted models |
+| SAM 2.1 checkpoint | Put the supported official checkpoint in `models/sam2/`; the scene stage verifies its hash |
+| Configuration | `data/user_configuration.json` is initialised from tracked defaults; changes require a restart |
+| Simulator assets | Restore the models and source episodes required by the chosen `experiments/` runner |
+| LeRobot dependencies | Optional `viki[export]`; the writer remains partial |
 
----
+`data/` and `models/` runtime contents are ignored by Git. Never commit local
+recordings, weights or an active rig configuration. Shadow/Tesollo diagnostic
+assets are separate from the standard gripper registry.
+
+## Development and profiling
+
+```bash
+docker compose run --rm test
+docker compose run --rm terminal
+```
+
+The source is bind-mounted; Python changes apply on container restart.
+Dependencies and Dockerfile changes require rebuilding the image. Check changed
+frontend modules with `node --check`; there is no frontend build step.
+
+[`scripts/profile_viki_stage.py`](scripts/profile_viki_stage.py) records wall/CPU
+time, process/thread counts and memory for one subprocess stage. Optional GPU
+samples describe the whole device and are not attributed to that process.
+The [compute audit](docs/2026-11-20-compute-and-parallelism-audit.md) maps existing
+CPU/GPU paths, worker budgets, historical measurements and the next profiling
+protocol. GS training/rendering is intended to use a separate CUDA image.
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [Architecture and 3DGS audit](docs/2026-11-20-architecture-and-3dgs-audit.md) | Package state, artifact boundaries, proposed reconstruction/synthesis APIs and CLI/web integration |
+| [Compute and parallelism audit](docs/2026-11-20-compute-and-parallelism-audit.md) | CPU/GPU execution, existing pools and measurement protocol |
+| [Roadmap](docs/roadmap.md) | Current next steps and dated historical plans |
+| [Thesis](paper/README.md) | Research text, build instructions and retained/retracted evidence |
+| [Mathematics](docs/math.md) | Pipeline models and coordinate conventions |
+| [Retarget experiments](docs/robust_retarget_experiments.md) | Measurement protocols and results |
+| [Experiment runners](experiments/README.md) | MuJoCo diagnostics and their required inputs |
+| [v0.0.2 release](docs/releases/v0.0.2.md) | Historical release scope and measurements |
+| [Capture setup](SETUP_GUIDE.md) | Hardware bring-up, USB topology and synchronisation |
 
 ## License
 
-ViKi's source code is licensed under [Apache-2.0](LICENSE). Third-party
-dependencies, hardware SDKs, model weights, and robot assets retain their own
-terms. See the open [license audit and remediation checklist](docs/licensing_todo.md)
-before distributing the application or its Docker image.
+ViKi source code is [Apache-2.0](LICENSE). Third-party SDKs, datasets, model
+weights and robot assets retain their own terms. Open asset/licence items are
+tracked in [docs/licensing_todo.md](docs/licensing_todo.md).

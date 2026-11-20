@@ -15,7 +15,7 @@ Artifact chain (see ``Episode``)::
         -> rec.npz          per-camera hand landmark trajectories  (perception.extract)
         -> cln.npz          fused + smoothed wrist trajectory + EE pose  (prepare.run)
         -> plan.h5          synthesised robot joint trajectory  (retarget.run)
-        -> replay.h5        proprioception attained on hardware  (replay.run)  [stub]
+        -> replay.h5        optional dry-run plan copies       (replay.run)
     datasets/<name>/        LeRobot dataset  (export.run)  [stub]
 """
 
@@ -619,8 +619,8 @@ def cln_pose_keys(files, source: str) -> tuple[str, str]:
     return "positions", "rotations"
 
 REPLAY_KEYS: tuple[str, ...] = (
-    "q_attained",  # (T, nq)
-    "gripper_attained",  # (T,)
+    "q_attained",  # (T, nq) — legacy name; dry-run copy of q
+    "gripper_attained",  # (T,) — legacy name; dry-run copy of opening
     "controller_residual",  # (T,)  NaN under dry-run
     "verdict",
     "rejection_cause",

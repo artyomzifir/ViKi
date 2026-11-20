@@ -1,10 +1,10 @@
 """
 viki.replay
 -----------
-Pipeline stage 5: plan.h5 -> replay.h5 (paper §3.8).
+Optional offline dry-run: plan.h5 -> replay.h5.
 
-Execute on the manipulator, log proprioception, screen feasibility. Stub stage —
-``driver="dryrun"`` runs no hardware; ``driver="ur3"`` needs ur-rtde + the robot.
+Copies planned values and checks available joint limits. Archive names remain
+compatible with existing files; no controller execution is implemented here.
 """
 
 from viki.replay.driver import DryRunDriver, RobotDriver, load_driver  # noqa: F401

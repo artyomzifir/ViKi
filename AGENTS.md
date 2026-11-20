@@ -17,7 +17,7 @@ The user-facing overview lives in [`README.md`](README.md); hardware bring-up in
 ## What this is
 
 ViKi turns multi-view RGB-D video of a human doing a manipulation task into a
-robot-ready demonstration dataset. One directory per arrow of the pipeline; each
+versioned robot trajectories for dataset research. One directory per arrow; each
 stage writes a durable artifact into an **episode directory**:
 
 ```
@@ -28,7 +28,7 @@ segment    perception/   raw/        ->  intermediates/segmentation/  masks + se
 object     perception/   segmentation -> object_models.npz  rigid core/shell + pose/confidence
 retarget   retarget/     cln.npz     ->  plan.h5     targets -> adapter -> TCP -> robot joints
 object-rel object_centric.py  object_models.npz + cln.npz + plan.h5 -> intermediates/object_relative.npz
-replay     replay/       plan.h5     ->  replay.h5   proprioception on hardware        [stub]
+dry-run    replay/       plan.h5     ->  replay.h5   optional offline plan copies
 label      labeling.py   ->  meta.json["labels"]     task / phase segments / outcome
 export     export/       episodes/*  ->  datasets/<name>/
 ```
@@ -76,10 +76,10 @@ viki record   ...                 # capture a synced RGB-D scene into a new epis
 viki extract  <episode>           # raw/ -> rec.npz
 viki prepare  <episode>           # rec.npz -> cln.npz
 viki retarget <episode>           # cln.npz -> plan.h5
-viki replay   <episode>           # plan.h5 -> replay.h5            [stub]
+viki replay   <episode>           # optional offline dry-run -> replay.h5
 viki label    <episode> ...       # get/set episode labels
 viki export   <episode>... --out <dir> [--format trajectory|lerobot]
-viki run      <episode>           # extract -> prepare -> [scene] -> retarget -> replay
+viki run      <episode>           # extract -> prepare -> [scene] -> retarget -> [object-relative]
 viki cloud    <episode>           # raw/ -> cloud/ (viewer artifact only)
 viki scene    <episode>           # auto-prompts -> SAM -> semantic 3-D -> object models
 viki object-relative <episode>    # models + cln.npz + plan.h5 -> relative tracks
@@ -95,7 +95,7 @@ torch) and stricter eligibility. See [`viki/export/README.md`](viki/export/READM
 
 Tabs: Cameras, Calibration, Record, Extract, Viewer, Retarget, Export. The Extract
 tab drives perception over one / several / a whole dataset of episodes through a
-background FIFO job queue (`viki/server/jobs.py`, one worker).
+background FIFO job queue (`viki/server/jobs.py`, one worker per lane).
 
 ## Configuration
 
@@ -123,7 +123,7 @@ the authoritative list.
 
 ## Package map
 
-Nine packages under `viki/`, **each with its own README — read those**, they carry
+Ten packages under `viki/`, **each with its own README — read those**, they carry
 hardware quirks and API tables not repeated here.
 
 | package | role |
@@ -133,7 +133,8 @@ hardware quirks and API tables not repeated here.
 | `perception/` | raw/ → rec.npz: detection, multi-view triangulation, backends, hand fit |
 | `prepare/` | rec.npz → cln.npz: interpolate, fuse, Savitzky–Golay, EE pose, gripper |
 | `retarget/` | cln.npz → plan.h5: PINK / Pinocchio whole-trajectory IK |
-| `replay/` | plan.h5 → replay.h5 — **stub**, contract-complete only |
+| `replay/` | optional offline dry-run; legacy replay.h5 stores planned copies |
+| `benchmark/` | HO-Cap import and external-reference evaluation |
 | `export/` | episodes → dataset: trajectory bundle (works) and LeRobot (partial) |
 | `render/` | pure pixel work — depth colourise, MJPEG, matplotlib. No FastAPI, no hardware |
 | `server/` | transport only: FastAPI over the offline stages + camera preview |
@@ -177,7 +178,7 @@ All mounted under `/api`. Router ↔ stage mapping, since it is easy to guess wr
 | `/api/skeleton` | live hand estimation (preview only — not a pipeline stage) |
 | `/api/pipeline` | the offline stages: extract → prepare, job queue, episode artifacts, cloud |
 | `/api/episodes`, `/api/datasets` | episode + dataset listing, retarget jobs and viz |
-| `/api/export`, `/api/label`, `/api/replay`, `/api/models` | export, labels, replay stub, model registry |
+| `/api/export`, `/api/label`, `/api/models` | export, labels, model registry |
 
 ## Adding a tunable
 
@@ -211,8 +212,8 @@ docker compose run --rm test tests/unit_tests/perception/test_x.py::t   # one
 ```
 
 `tests/unit_tests/e2e/test_pipeline_smoke.py` walks a synthetic episode
-rec.npz → prepare → plan.h5 → replay(dryrun) → label → export. PINK/Pinocchio
-ships in the image, so the retarget leg really runs in-container.
+rec.npz → prepare → plan.h5 → replay(dryrun) → label → export. The smoke uses a synthetic plan; actual IK is covered by retarget tests when
+its dependencies and model assets are available.
 
 Run the **full suite** after every change; it is fast and it is the only thing
 standing between a refactor and a silently broken stage. Check any touched JS with
@@ -238,6 +239,8 @@ standing between a refactor and a silently broken stage. Check any touched JS wi
 |---|---|
 | [`docs/bugs.md`](docs/bugs.md) | historical traps; verify their current status before debugging the rig |
 | [`docs/math.md`](docs/math.md) | the full mathematical description of the pipeline |
+| [`docs/2026-11-20-architecture-and-3dgs-audit.md`](docs/2026-11-20-architecture-and-3dgs-audit.md) | current architecture and proposed reconstruction/synthesis stages |
+| [`docs/2026-11-20-compute-and-parallelism-audit.md`](docs/2026-11-20-compute-and-parallelism-audit.md) | CPU/GPU paths, worker budgets and profiling protocol |
 | [`docs/robust_retarget_experiments.md`](docs/robust_retarget_experiments.md) | measurement protocols and results (E6–E14) |
 | [`docs/object_centric_decision.md`](docs/object_centric_decision.md) | why production object-driven retarget remains gated |
 | [`docs/paper_code_divergences.md`](docs/paper_code_divergences.md) | where the thesis text and the code disagree |

@@ -53,7 +53,7 @@ def test_run_passes_explicit_single_object_label_to_scene(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(
         "viki.replay.replay_episode",
-        lambda *args, **kwargs: calls.append("replay"),
+        lambda *args, **kwargs: pytest.fail("run must not perform an implicit dry-run"),
     )
 
     args = _build_parser().parse_args([
@@ -63,5 +63,11 @@ def test_run_passes_explicit_single_object_label_to_scene(tmp_path, monkeypatch)
     args.func(args)
     assert calls == [
         "extract", "prepare", ("scene", "manipulated_object"),
-        "retarget", "object_relative", "replay",
+        "retarget", "object_relative",
     ]
+
+
+@pytest.mark.parametrize("command", ["run", "replay"])
+def test_removed_driver_option_is_rejected(command):
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args([command, "episode", "--driver", "ur3"])

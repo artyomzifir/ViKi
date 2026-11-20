@@ -14,7 +14,6 @@ export const STAGES = [
   ['cln', 'CLN', 'cln.npz — fused + smoothed trajectory'],
   ['object_model', 'OBJ', 'object_models.npz — tracked scene objects'],
   ['plan', 'PLN', 'plan.h5 — retargeted robot joint plan'],
-  ['replay', 'RPL', 'replay.h5 — physical replay states'],
 ];
 
 export function esc(s) {

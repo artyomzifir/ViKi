@@ -64,8 +64,9 @@ trajectory-level inverse kinematics (IK), object-relative diagnostics, and
 trajectory export have code implementations. An experimental cube-specific
 grasp planner also exists. The 3DGS reconstruction and robot-compositing
 stages described below are proposed extensions; the existing point-cloud
-viewer and image utilities do not implement them. Physical robot replay
-remains a stub, and the optional LeRobot writer is partial.
+viewer and image utilities do not implement them. The optional LeRobot
+writer is partial. The current development scope excludes controller execution;
+the remaining CLI dry-run only checks and copies plan values.
 
 Stage outputs are stored separately so that a failed downstream stage does
 not require recapturing the demonstration. The principal current artifacts
@@ -788,7 +789,7 @@ include capture, calibration, scans, corrections, robot-model preparation,
 computation, and rejected outputs. Policy-training benefit is not inferred
 from appearance diversity or episode count.
 
-\section{Export, Provenance, and Replay Status}
+\section{Export, Provenance, and Offline Checks}
 \label{sec:export}
 
 The working default exporter writes a self-contained NumPy trajectory
@@ -819,17 +820,15 @@ acceptance decisions are additional provenance. Original human-camera
 videos cannot be relabelled as robot observations merely because a robot
 trajectory has been generated.
 
-\subsection{Physical replay}
+\subsection{Offline plan check}
 \label{sec:replay}
 
-The current dry-run replay path echoes a plan and does not measure robot
-tracking. The physical driver and several screening checks remain
-unimplemented. No physical-replay acceptance or achieved hardware state
-can therefore be inferred from a dry-run result. Hardware execution,
-contact simulation, and policy training lie outside the present
-reconstruction, retargeting, and rendering evaluation. They would supply
-additional evidence needed for claims about executable manipulation or
-learning effectiveness.
+The optional CLI dry-run checks and copies a geometric plan. Its legacy
+archive fields named \texttt{q\_attained} and
+\texttt{gripper\_attained} contain planned values, and the residual is
+unmeasured. An accepted check is labelled \texttt{dry-run}, not task success.
+Contact simulation and policy training require separate evaluation beyond
+the reconstruction, retargeting, and rendering scope.
 
 \section{Assumptions and Operating Limits}
 \label{sec:assumptions}

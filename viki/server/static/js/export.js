@@ -3,7 +3,7 @@
 // Two formats behind one button. The trajectory bundle is the default because
 // it is the one that completes here: the LeRobot writer needs optional
 // dependencies (lerobot, torch) that are not in the image, and it also demands
-// a replay verdict that no episode has while replay is a stub. The tab says so
+// an explicit offline dry-run and labels. The tab says so
 // rather than letting the user discover it from a failed job.
 import { api, log, sessionGet, sessionPatch } from './core.js';
 import { renderList } from './episodes.js';
@@ -86,8 +86,8 @@ function syncFormat() {
   const fmt = root.querySelector('[data-role="format"]').value;
   root.querySelector('[data-role="format-meta"]').innerHTML = fmt === 'lerobot'
     ? 'video + frames for policy training. Needs the <code>lerobot</code> package '
-      + 'and episodes that have been replayed and screened — neither is available yet, '
-      + 'so this will report a clean error.'
+      + 'and labelled episodes with an accepted CLI dry-run. This writer is partial; '
+      + 'object-relative annotations remain placeholders.'
     : 'joint trajectory, tool pose, gripper command and the hand pose it came from, '
       + 'as <code>.npz</code> plus a manifest. No optional dependencies. '
       + '<b>Nothing is screened</b> — the manifest records what actually ran per episode.';

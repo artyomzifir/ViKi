@@ -16,7 +16,7 @@ server calls — the CLI just parses args and prints results.
     viki prepare  <episode>
     viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
-    viki replay   <episode> [--driver dryrun|ur3]
+    viki replay   <episode>            # optional offline dry-run
     viki label    <episode> --task "..." --outcome good
     viki export   --out data/datasets/pick <episode>...
     viki run      <episode>            # core pipeline; --scene-objects adds scene branch
@@ -324,7 +324,7 @@ def _cmd_object_relative(a) -> None:
 def _cmd_replay(a) -> None:
     from viki.replay import replay_episode
 
-    print(replay_episode(_episode(a.episode), driver=a.driver, max_resolves=a.max_resolves))
+    print(replay_episode(_episode(a.episode)))
 
 
 def _cmd_label(a) -> None:
@@ -416,7 +416,6 @@ def _cmd_run(a) -> None:
     from viki.perception.extract import extract_episode
     from viki.perception.profiles import DEFAULT_PERCEPTION_PROFILE
     from viki.prepare.run import prepare_episode
-    from viki.replay import replay_episode
     from viki.retarget import config_from_options, retarget_episode
 
     ep = _episode(a.episode)
@@ -461,7 +460,6 @@ def _cmd_run(a) -> None:
         from viki.object_centric import build_object_relative_episode
 
         steps.append(("object_relative", lambda: build_object_relative_episode(ep)))
-    steps.append(("replay", lambda: replay_episode(ep, driver=a.driver)))
     for name, fn in steps:
         # The scene branch owns two resumable stages and validates their
         # artifacts internally; there is intentionally no synthetic `scene`
@@ -747,10 +745,8 @@ def _build_parser() -> argparse.ArgumentParser:
     por.add_argument("episode")
     por.set_defaults(func=_cmd_object_relative)
 
-    prp = sub.add_parser("replay", help="plan.h5 -> replay.h5 (stub stage)")
+    prp = sub.add_parser("replay", help="optional offline plan dry-run -> replay.h5")
     prp.add_argument("episode")
-    prp.add_argument("--driver", default="dryrun", choices=["dryrun", "ur3"])
-    prp.add_argument("--max-resolves", type=int, default=0)
     prp.set_defaults(func=_cmd_replay)
 
     pl = sub.add_parser("label", help="get/set episode labels")
@@ -767,7 +763,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--format", choices=["trajectory", "lerobot"], default="trajectory",
         help="trajectory: self-contained npz bundle, no optional deps (default). "
              "lerobot: policy-training dataset with video; needs viki[export] and "
-             "episodes that have been replayed and screened",
+             "labelled episodes with an accepted offline dry-run",
     )
     px.add_argument("--name", default=None, help="dataset name in the manifest")
     px.add_argument("--fps", type=int, default=15, help="lerobot format only")
@@ -804,13 +800,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     prn = sub.add_parser(
         "run",
-        help="extract -> prepare -> [scene perception] -> retarget -> replay",
+        help="extract -> prepare -> [scene perception] -> retarget -> [object-relative]",
     )
     prn.add_argument("episode")
     prn.add_argument("--robot", default=None)
     prn.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
     prn.add_argument("--backend", default=None)
-    prn.add_argument("--driver", default="dryrun", choices=["dryrun", "ur3"])
     prn.add_argument(
         "--scene-objects",
         type=int,
