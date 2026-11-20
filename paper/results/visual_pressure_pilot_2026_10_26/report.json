@@ -1,0 +1,151 @@
+{
+  "protocol": "PressureVision++ eight-view RGB pilot; HO-Cap GT crops/ROIs",
+  "code_revision": "3d8519838b40385e3db1de4de766b8a4f4338416",
+  "checkpoint_sha256": "565f4e766dc860454f620c9df867dd3d86e15377718bc137fd33dae083a9174c",
+  "cameras": [
+    "037522251142",
+    "043422252387",
+    "046122250168",
+    "105322251225",
+    "105322251564",
+    "108222250342",
+    "115422250549",
+    "117222250549"
+  ],
+  "frames": 190,
+  "device": "cuda",
+  "source_phase_frames": {
+    "pre": [
+      0,
+      20
+    ],
+    "carry": [
+      42,
+      126
+    ],
+    "post": [
+      160,
+      190
+    ]
+  },
+  "limits": [
+    "network uses RGB only; depth/geometry may be used by downstream polisher",
+    "digit ROIs are projected capsule approximations, not skin masks",
+    "top-two view fusion is a fixed heuristic, not a trained multiview model",
+    "pressure predictions and weak contact head are hints, not sensor truth",
+    "2D pixel averages are not integrated force in newtons"
+  ],
+  "phases": {
+    "pre": {
+      "pressure_proxy_kpa_median": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "digit_participation_median": [
+        0.25977275148034096,
+        0.3764735460281372,
+        0.2596984691917896,
+        0.26087452843785286,
+        0.1592517588287592
+      ],
+      "expected_pressure_proxy_kpa_median": [
+        0.6952736079692841,
+        0.638982355594635,
+        0.6469200253486633,
+        0.6561629921197891,
+        0.6586140990257263
+      ],
+      "nonzero_probability_median": [
+        0.37664690613746643,
+        0.3715379163622856,
+        0.3738424703478813,
+        0.3754255995154381,
+        0.37490078806877136
+      ],
+      "importance_median": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "carry": {
+      "pressure_proxy_kpa_median": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "digit_participation_median": [
+        0.574184276163578,
+        0.5800257101655006,
+        0.3239489644765854,
+        0.3432397022843361,
+        0.3109431639313698
+      ],
+      "expected_pressure_proxy_kpa_median": [
+        0.8597859591245651,
+        0.7211306989192963,
+        0.7487721294164658,
+        0.7064653038978577,
+        0.681933730840683
+      ],
+      "nonzero_probability_median": [
+        0.38545316457748413,
+        0.37742218375205994,
+        0.37935782968997955,
+        0.37847692519426346,
+        0.37675804644823074
+      ],
+      "importance_median": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "post": {
+      "pressure_proxy_kpa_median": [
+        0.0,
+        0.021763190627098083,
+        0.09916175156831741,
+        0.0,
+        0.0
+      ],
+      "digit_participation_median": [
+        0.1480925977230072,
+        0.3626564219594002,
+        0.4817722290754318,
+        0.16993367299437523,
+        0.07814777549356222
+      ],
+      "expected_pressure_proxy_kpa_median": [
+        0.8596189916133881,
+        0.7254975438117981,
+        1.0249752551317215,
+        0.6629878729581833,
+        0.7379379272460938
+      ],
+      "nonzero_probability_median": [
+        0.38970494270324707,
+        0.39020445197820663,
+        0.4373469799757004,
+        0.3806811198592186,
+        0.38895533978939056
+      ],
+      "importance_median": [
+        0.0,
+        0.008083202164264836,
+        0.04439875011736363,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}

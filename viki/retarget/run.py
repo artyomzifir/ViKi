@@ -37,6 +37,8 @@ from viki.retarget.grippers import (
     normalize_gripper,
 )
 from viki.retarget.object_grasp import plan_cube_grasp
+from viki.retarget.obstacles import SceneCollisionKinematics, load_object_boxes
+from viki.retarget.tracked_grasp import plan_tracked_grasp
 from viki.retarget.robots import RobotConfig, normalize_robot
 from viki.retarget.solver import (
     COLLISION_TOLERANCE_M,
@@ -59,6 +61,7 @@ class RetargetConfig:
     reference_policy: str
     base_position: tuple[float, float, float]
     base_rpy_deg: tuple[float, float, float]
+    table_plane_z_m: float
     hand_to_ee_translation: tuple[float, float, float]
     hand_to_ee_rpy_deg: tuple[float, float, float]
     gripper: str
@@ -67,7 +70,12 @@ class RetargetConfig:
     pose_source: str
     object_grasp: bool
     object_cube_side_mm: float
+    object_track_path: str | None
+    object_id: int | None
+    object_contact_overlap_mm: float
+    object_insertion_depth_mm: float
     approach_sec: float
+    velocity_limit_scale: float
     collision_pairs: int
     collision_min_distance_m: float
     sequential_baseline: bool
@@ -207,6 +215,9 @@ def config_from_options(
         reference_policy=reference_policy,
         base_position=tuple(float(x) for x in base),
         base_rpy_deg=tuple(float(x) for x in base_rpy),
+        table_plane_z_m=float(
+            _setting(values, "table_plane_z_m", "RETARGET_TABLE_PLANE_Z_M", 0.0)
+        ),
         hand_to_ee_translation=tuple(float(x) for x in hand_t),
         hand_to_ee_rpy_deg=tuple(float(x) for x in hand_rpy),
         gripper=physical_gripper.key,
@@ -217,9 +228,14 @@ def config_from_options(
         ),
         object_grasp=bool(_setting(values, "object_grasp", "RETARGET_OBJECT_GRASP_ENABLED", False)),
         object_cube_side_mm=float(_setting(values, "object_cube_side_mm", "RETARGET_OBJECT_CUBE_SIDE_MM", 40.0)),
+        object_track_path=str(values["object_track_path"]) if values.get("object_track_path") else None,
+        object_id=int(values["object_id"]) if values.get("object_id") is not None else None,
+        object_contact_overlap_mm=float(values.get("object_contact_overlap_mm", 6.0)),
+        object_insertion_depth_mm=float(values.get("object_insertion_depth_mm", 0.0)),
         approach_sec=float(
             _setting(values, "approach_sec", "RETARGET_APPROACH_SEC", 2.0)
         ),
+        velocity_limit_scale=float(values.get("velocity_limit_scale", 1.0)),
         collision_pairs=(
             int(_setting(values, "collision_pairs", "RETARGET_COLLISION_PAIRS", 8))
             if collision_enabled else 0
@@ -247,8 +263,28 @@ def config_from_options(
     out.solver.validate()
     if out.approach_sec < 0.0:
         raise ValueError("approach_sec must be non-negative")
+    if not np.isfinite(out.velocity_limit_scale) or not 1.0 <= out.velocity_limit_scale <= 5.0:
+        raise ValueError("velocity_limit_scale must be finite and in [1, 5]")
+    if not np.isfinite(out.table_plane_z_m):
+        raise ValueError("table_plane_z_m must be finite")
     if not np.isfinite(out.object_cube_side_mm) or out.object_cube_side_mm <= 0:
         raise ValueError("object_cube_side_mm must be positive")
+    if (out.object_track_path is None) != (out.object_id is None):
+        raise ValueError("object_track_path and object_id must be supplied together")
+    if out.object_track_path and not out.object_grasp:
+        raise ValueError("tracked grasp requires object_grasp enabled")
+    if out.object_track_path and not out.solver.collision_enabled:
+        raise ValueError("tracked grasp requires collision constraints")
+    if (not np.isfinite(out.object_contact_overlap_mm)
+            or not 0.0 <= out.object_contact_overlap_mm <= 12.0):
+        raise ValueError("object_contact_overlap_mm must be finite and in [0, 12]")
+    if out.object_track_path is None and out.object_contact_overlap_mm != 6.0:
+        raise ValueError("object_contact_overlap_mm requires an explicit object track")
+    if (not np.isfinite(out.object_insertion_depth_mm)
+            or not 0.0 <= out.object_insertion_depth_mm <= 15.0):
+        raise ValueError("object_insertion_depth_mm must be finite and in [0, 15]")
+    if out.object_track_path is None and out.object_insertion_depth_mm != 0.0:
+        raise ValueError("object_insertion_depth_mm requires an explicit object track")
     if out.collision_pairs < 0 or out.collision_min_distance_m < 0.0:
         raise ValueError("collision settings must be non-negative")
     normalize_robot(out.robot)
@@ -341,14 +377,20 @@ def _pinch_centers(
     return 0.5 * (thumb + index), finite, anchor_confidence
 
 
-def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
+def load_targets(
+    path: Path, cfg: RetargetConfig, *, source_frame: str = "rig"
+) -> RetargetTargets:
     """Read the canonical cln artifact and make finite batch-solver targets."""
     with np.load(path, allow_pickle=False) as data:
         required = {"timestamps", "positions", "rotations", "valid", "coordinate_frame"}
         missing = sorted(required.difference(data.files))
         if missing:
             raise KeyError(f"{path} is missing cln keys: {', '.join(missing)}")
-        require_rig_frame(data["coordinate_frame"])
+        if source_frame == "hocap_tag_1":
+            if str(np.asarray(data["coordinate_frame"]).item()) != source_frame:
+                raise ValueError("HO-Cap cln must be in hocap_tag_1 coordinates")
+        else:
+            require_rig_frame(data["coordinate_frame"])
         p_key, r_key = cln_pose_keys(data.files, cfg.pose_source)
         # The fallback in cln_pose_keys is deliberate - it keeps old episodes
         # readable - but it is the single field that defines the IK target, and
@@ -356,6 +398,11 @@ def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
         if str(cfg.pose_source).strip().lower() == "hand_fit" and not p_key.startswith(
             "hand_fit"
         ):
+            if source_frame == "hocap_tag_1":
+                raise ValueError(
+                    f"{path}: HO-Cap retarget requested hand_fit but the fitted "
+                    "pose is absent; rerun prepare with the current HO-Cap V4 profile"
+                )
             logger.warning(
                 "%s requests pose_source=hand_fit but carries no hand_fit_* arrays; "
                 "retargeting LANDMARK poses instead. Anything compared against a "
@@ -368,6 +415,11 @@ def load_targets(path: Path, cfg: RetargetConfig) -> RetargetTargets:
         valid = np.asarray(data["valid"], dtype=bool)
         anchor_confidence = np.ones(len(timestamps), dtype=np.float64)
         if cfg.target_position_anchor == "pinch_center":
+            if source_frame == "hocap_tag_1" and p_key.startswith("hand_fit"):
+                raise ValueError(
+                    "HO-Cap hand_fit with pinch_center would mix fitted orientation "
+                    "with landmark-derived position; select target_position_anchor=wrist"
+                )
             positions, anchor_valid, anchor_confidence = _pinch_centers(
                 data, len(timestamps)
             )
@@ -460,6 +512,8 @@ def _approach(
     trajectory: np.ndarray,
     seconds: float,
     dt: float,
+    *,
+    derivative_mode: str = "matched",
 ) -> np.ndarray:
     """Blend neutral into the first trajectory sample with matched derivatives.
 
@@ -475,15 +529,15 @@ def _approach(
     if q.ndim != 2 or q.shape[0] == 0 or q.shape[1:] != start.shape:
         raise ValueError("trajectory must have shape (T, len(reference)) with T > 0")
 
-    if len(q) >= 3:
+    if derivative_mode not in {"matched", "velocity", "rest"}:
+        raise ValueError(f"unsupported approach derivative mode {derivative_mode!r}")
+    end_velocity = np.zeros_like(start)
+    end_acceleration = np.zeros_like(start)
+    if derivative_mode == "matched" and len(q) >= 3:
         end_velocity = (-3.0 * q[0] + 4.0 * q[1] - q[2]) / (2.0 * dt)
         end_acceleration = (q[0] - 2.0 * q[1] + q[2]) / (dt * dt)
-    elif len(q) == 2:
+    elif derivative_mode != "rest" and len(q) >= 2:
         end_velocity = (q[1] - q[0]) / dt
-        end_acceleration = np.zeros_like(start)
-    else:
-        end_velocity = np.zeros_like(start)
-        end_acceleration = np.zeros_like(start)
 
     duration = count * dt
     displacement = q[0] - start
@@ -508,19 +562,44 @@ def _velocity_limited_approach(
     """Stretch the approach until every discrete joint velocity is feasible."""
     if minimum_seconds <= 0.0:
         return _approach(reference, trajectory, minimum_seconds, dt)
-    duration = float(minimum_seconds)
     limit = np.asarray(velocity_limit, dtype=np.float64)
     finite_limit = np.isfinite(limit) & (limit > 0.0)
-    for _attempt in range(8):
-        approach = _approach(reference, trajectory, duration, dt)
-        full = np.concatenate((approach, np.asarray(trajectory, dtype=np.float64)), axis=0)
-        if len(full) < 2 or not finite_limit.any():
-            return approach
-        speed = np.abs(np.diff(full, axis=0) / dt)
-        ratio = float(np.max(speed[:, finite_limit] / limit[finite_limit]))
-        if ratio <= 1.0 + 1e-9:
-            return approach
-        duration *= max(1.1, 1.02 * ratio)
+    track = np.asarray(trajectory, dtype=np.float64)
+    if len(track) > 1 and finite_limit.any():
+        track_speed = np.abs(np.diff(track, axis=0) / dt)
+        track_excess = float(
+            np.max(track_speed[:, finite_limit] - limit[finite_limit])
+        )
+        if track_excess > NUMERIC_TOLERANCE:
+            raise RuntimeError(
+                "retarget trajectory itself exceeds joint velocity limits "
+                f"by {track_excess:.12g} rad/s; extending the approach cannot fix it"
+            )
+    for derivative_mode in ("matched", "velocity", "rest"):
+        duration = float(minimum_seconds)
+        for _attempt in range(8):
+            approach = _approach(
+                reference, trajectory, duration, dt,
+                derivative_mode=derivative_mode,
+            )
+            full = np.concatenate((approach, track), axis=0)
+            if len(full) < 2 or not finite_limit.any():
+                return approach
+            speed = np.abs(np.diff(full, axis=0) / dt)
+            ratio = float(np.max(speed[:, finite_limit] / limit[finite_limit]))
+            excess = float(np.max(speed[:, finite_limit] - limit[finite_limit]))
+            if excess <= NUMERIC_TOLERANCE:
+                if derivative_mode != "matched":
+                    logger.warning(
+                        "approach uses %s endpoint derivatives to satisfy joint "
+                        "velocity limits; initial trajectory curvature is too high",
+                        derivative_mode,
+                    )
+                return approach
+            next_duration = min(30.0, duration * max(1.1, 1.02 * ratio))
+            if next_duration <= duration:
+                break
+            duration = next_duration
     raise RuntimeError(
         "could not construct an approach within the robot velocity limits"
     )
@@ -540,7 +619,30 @@ def retarget_prerequisite_errors(ep: Episode, cfg: RetargetConfig) -> list[str]:
     if not cfg.object_grasp:
         return errors
     if cfg.gripper != "robotiq_2f85":
-        errors.append("cube-aware grasp requires Robotiq 2F-85")
+        errors.append("object-aware grasp requires Robotiq 2F-85")
+    if cfg.object_track_path is not None:
+        if not Path(cfg.object_track_path).is_file():
+            errors.append("selected object track does not exist")
+        if errors:
+            return errors
+        try:
+            from viki.perception import OBJECT_MODEL_SCHEMA
+
+            with np.load(cfg.object_track_path, allow_pickle=False) as models:
+                if str(models["schema"]) != OBJECT_MODEL_SCHEMA:
+                    errors.append("object track uses an unsupported schema")
+                if np.count_nonzero(models["object_ids"] == cfg.object_id) != 1:
+                    errors.append("selected object ID is absent or ambiguous")
+                object_frames = len(models["translation_world"])
+            with np.load(ep.cln_npz, allow_pickle=False) as prepared:
+                hand_frames = len(prepared["timestamps"])
+                if str(prepared["coordinate_frame"]) != "hocap_tag_1":
+                    errors.append("tracked grasp pilot requires hocap_tag_1 input")
+            if object_frames != hand_frames:
+                errors.append(f"object and hand tracks have different lengths ({object_frames} vs {hand_frames})")
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f"cannot validate tracked grasp inputs: {exc}")
+        return errors
     if not (ep.raw_dir / "world_anchor.json").is_file():
         errors.append("raw/world_anchor.json is missing; calibrated cube grasp needs the scene anchor")
     if not ep.object_models_npz.is_file():
@@ -582,8 +684,18 @@ def retarget_episode(
     gripper_cfg = normalize_gripper(cfg.gripper)
     arm_model = _load_robot_description(robot_cfg.description)
     assembly = attach_gripper(arm_model, robot_cfg, gripper_cfg, cfg.adapter)
-    targets = load_targets(ep.cln_npz, cfg)
-    rig_to_calibration = load_rig_to_calibration(ep.raw_dir)
+    metadata = json.loads(ep.meta_path.read_text()) if ep.meta_path.is_file() else {}
+    is_hocap = metadata.get("source") == "hocap"
+    if is_hocap and metadata.get("hocap_world_frame") != "tag_1":
+        raise ValueError("HO-Cap retarget requires the tag_1 world frame")
+    plan_frame = "hocap_tag_1" if is_hocap else CALIBRATION_FRAME
+    targets = load_targets(
+        ep.cln_npz, cfg, source_frame="hocap_tag_1" if is_hocap else "rig"
+    )
+    rig_to_calibration = (
+        np.eye(4, dtype=np.float64)
+        if is_hocap else load_rig_to_calibration(ep.raw_dir)
+    )
     hand_calib_p, hand_calib_r = rig_pose_to_calibration(
         targets.position_rig,
         targets.rotation_rig,
@@ -598,19 +710,36 @@ def retarget_episode(
     object_grasp = None
     if cfg.object_grasp:
         if cfg.gripper != "robotiq_2f85":
-            raise ValueError("experimental cube-face grasp supports only Robotiq 2F-85")
-        object_grasp = plan_cube_grasp(
-            ep.object_models_npz,
-            target_calib_p,
-            target_calib_r,
-            targets.gripper_opening,
-            rig_to_calibration,
-            gripper_cfg.max_width_m,
-            cfg.object_cube_side_mm / 1000.0,
-            gripper_cfg.opening_for_contact_width(
-                assembly, (cfg.object_cube_side_mm - 2.0) / 1000.0
-            ),
-        )
+            raise ValueError("experimental grasp supports only Robotiq 2F-85")
+        if cfg.object_track_path is not None:
+            with np.load(ep.cln_npz, allow_pickle=False) as prepared:
+                landmark_ids = np.asarray(prepared["landmark_ids"], dtype=int)
+                tip_indices = []
+                for landmark in (LM.THUMB_TIP, LM.INDEX_TIP):
+                    matches = np.flatnonzero(landmark_ids == int(landmark))
+                    if len(matches) != 1:
+                        raise ValueError(f"prepared hand has no unique {landmark.name} landmark")
+                    tip_indices.append(int(matches[0]))
+                hand_points = np.mean(prepared["smoothed_points"][:, tip_indices], axis=1)
+            object_grasp = plan_tracked_grasp(
+                Path(cfg.object_track_path), cfg.object_id, target_calib_p,
+                target_calib_r, hand_points, gripper_cfg.max_width_m,
+                lambda width: gripper_cfg.opening_for_contact_width(assembly, width),
+                cfg.object_contact_overlap_mm, cfg.object_insertion_depth_mm,
+            )
+        else:
+            object_grasp = plan_cube_grasp(
+                ep.object_models_npz,
+                target_calib_p,
+                target_calib_r,
+                targets.gripper_opening,
+                rig_to_calibration,
+                gripper_cfg.max_width_m,
+                cfg.object_cube_side_mm / 1000.0,
+                gripper_cfg.opening_for_contact_width(
+                    assembly, (cfg.object_cube_side_mm - 2.0) / 1000.0
+                ),
+            )
         target_calib_p = object_grasp.positions
         target_calib_r = object_grasp.rotations
         if log is not None:
@@ -621,12 +750,13 @@ def retarget_episode(
     target_robot_r = calibration_rotation_to_robot(target_calib_r, cfg.base_rpy_deg)
     if log is not None:
         log(
-            f"{robot_cfg.description}: {len(target_robot_p)} frames in {CALIBRATION_FRAME}, "
+            f"{robot_cfg.description}: {len(target_robot_p)} frames in {plan_frame}, "
             f"target={targets.position_anchor}+palm, base={list(cfg.base_position)}, "
             f"base_rpy_deg={list(cfg.base_rpy_deg)}, "
             f"reference={cfg.reference_policy}, "
             f"tool_point={gripper_cfg.grasp_center_name}, "
-            f"adapter={cfg.adapter.length_m * 1000.0:.1f} mm, floor=z>=0"
+            f"adapter={cfg.adapter.length_m * 1000.0:.1f} mm, "
+            f"table plane=z>={cfg.table_plane_z_m:.4f} m"
         )
     dt = 1.0 / targets.fps
     gripper_opening = gripper_cfg.profile_opening(
@@ -654,10 +784,28 @@ def retarget_episode(
         position_points=assembly.position_points,
         # calibration z = e_z.T (R_calibration_robot p_robot + base_position).
         # Express the same plane in robot coordinates so tilted base poses keep
-        # the physical calibration floor as the hard constraint.
+        # the physical tabletop half-space as the hard constraint.
         floor_normal=base_rotation(cfg.base_rpy_deg).T @ np.array([0.0, 0.0, 1.0]),
-        floor_offset_m=-float(cfg.base_position[2]),
+        floor_offset_m=cfg.table_plane_z_m - float(cfg.base_position[2]),
     )
+    obstacles = ()
+    if cfg.object_track_path is not None:
+        selected, obstacles = load_object_boxes(
+            Path(cfg.object_track_path), cfg.object_id, len(target_robot_p),
+            cfg.base_position, cfg.base_rpy_deg,
+        )
+        attachment_possible = np.zeros(len(target_robot_p), dtype=bool)
+        attachment_possible[
+            object_grasp.diagnostics["grasp_start"]:
+            object_grasp.diagnostics["phase_bounds"][2]
+        ] = True
+        kinematics = SceneCollisionKinematics(
+            kinematics, selected, obstacles, attachment_possible,
+            np.isin(object_grasp.phases, (1, 2, 3)),
+            target_robot_p, target_robot_r,
+        )
+    urdf_velocity_limit = kinematics.velocity_limit.copy()
+    kinematics.velocity_limit *= cfg.velocity_limit_scale
     result = solve_trajectory(
         kinematics,
         target_robot_p,
@@ -775,18 +923,57 @@ def retarget_episode(
     )
     target_axis_z = target_calib_r[:, 2, 2]
     achieved_axis_z = achieved_calib_r[:, 2, 2]
+    object_min_margin = None
+    robot_object_min_margin = None
+    carried_object_min_margin = None
+    if cfg.object_track_path is not None:
+        object_min_margin = np.inf
+        robot_object_min_margin = np.inf
+        carried_object_min_margin = np.inf
+        for frame, configuration in enumerate(result.q):
+            kinematics.set_frame(frame)
+            margins = kinematics.object_margins(configuration)
+            carried_count = len(obstacles) if attachment_possible[frame] else 0
+            robot_margins = margins[:-carried_count] if carried_count else margins
+            robot_object_min_margin = min(
+                robot_object_min_margin, float(np.min(robot_margins))
+            )
+            if carried_count:
+                carried_object_min_margin = min(
+                    carried_object_min_margin, float(np.min(margins[-carried_count:]))
+                )
+        if not np.isfinite(carried_object_min_margin):
+            carried_object_min_margin = None
+        object_min_margin = min(
+            robot_object_min_margin,
+            carried_object_min_margin if carried_object_min_margin is not None else np.inf,
+        )
     metrics = {
         "object_grasp": object_grasp.diagnostics if object_grasp is not None else None,
+        "object_collision": (
+            {"model": "canonical_cloud_enclosing_boxes",
+             "obstacle_ids": [box.identifier for box in obstacles],
+             "clearance_m": 0.005, "min_margin_m": object_min_margin,
+             "min_robot_object_margin_m": robot_object_min_margin,
+             "min_carried_object_margin_m": carried_object_min_margin}
+            if cfg.object_track_path is not None else None
+        ),
         "object_grasp_carry_width_m": (
             float(np.median(gripper_contact_width[object_grasp.phases == 2]))
             if object_grasp is not None else None
         ),
         "position_rmse_mm": float(np.sqrt(np.mean(result.position_error_m ** 2)) * 1000.0),
         "position_p95_mm": float(np.percentile(result.position_error_m, 95) * 1000.0),
+        "velocity_repair_max_rad": result.velocity_repair_max_rad,
         "orientation_rmse_deg": float(
             np.rad2deg(np.sqrt(np.mean(result.orientation_error_rad ** 2)))
         ),
         "max_joint_velocity_rad_s": float(np.max(np.abs(full_velocity))),
+        "velocity_limit_scale": cfg.velocity_limit_scale,
+        "min_urdf_velocity_limit_margin_rad_s": (
+            float(np.min(urdf_velocity_limit - np.abs(np.diff(full_q, axis=0) / dt)))
+            if len(full_q) > 1 else None
+        ),
         "max_joint_acceleration_rad_s2": float(np.max(np.abs(full_acceleration))),
         "iterations": result.iterations,
         "converged": result.converged,
@@ -801,6 +988,8 @@ def retarget_episode(
             full_margins["floor"] * 1000.0
             if np.isfinite(full_margins["floor"]) else None
         ),
+        "table_plane_z_calibration_m": cfg.table_plane_z_m,
+        "table_plane_coordinate_frame": plan_frame,
         "min_joint_limit_margin_rad": (
             full_margins["joint"]
             if np.isfinite(full_margins["joint"]) else None
@@ -869,7 +1058,7 @@ def retarget_episode(
     metrics["sequential_baseline"] = sequential_metrics
     plan = {
         "schema_version": 9,
-        "coordinate_frame": CALIBRATION_FRAME,
+        "coordinate_frame": plan_frame,
         "timestamps": targets.timestamps,
         "fps": targets.fps,
         "dt": dt,
@@ -950,7 +1139,7 @@ def retarget_episode(
         "retarget",
         robot=robot_cfg.description,
         object_grasp=cfg.object_grasp,
-        coordinate_frame=CALIBRATION_FRAME,
+        coordinate_frame=plan_frame,
         target_position_anchor=targets.position_anchor,
         adapter_kind=cfg.adapter.kind,
         adapter_length_mm=cfg.adapter.length_m * 1000.0,

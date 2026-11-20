@@ -1,0 +1,87 @@
+{
+  "schema": "shadow_pressure_constrained_v1",
+  "parent_ablation": "shadow_pressure_hint_ablation_20261026",
+  "motivation": "Both frozen gap-only endpoints penetrate retained RF/LF pairs even at carry snapshots; impose original 1mm self clearance inside optimizer.",
+  "five_variables": [
+    "RF flexion",
+    "LF flexion",
+    "RFJ4",
+    "LFJ4",
+    "LFJ5"
+  ],
+  "source": "exact saved MF+.10 RF+.08 command and actual physics snapshots60/90/110",
+  "two_arms": [
+    "same geometry objective, RF/LF weights 1.5/1.5 for equal total contact weight",
+    "same geometry objective, frozen visual RF/LF weights"
+  ],
+  "optimizer": "SLSQP maxiter80, finite-difference eps1e-4; source feasible start; unchanged five-variable bounds and objective; project only out-of-bounds intermediate SLSQP callbacks for evaluation, final proposals screened without projection",
+  "constraints": "minimum original screened self margin and floor margin >=0 at frames25,27,28,29,30,31,60,90,110; final full-trajectory screen unchanged",
+  "backtrack_scales": [
+    1.0,
+    0.75,
+    0.5,
+    0.25
+  ],
+  "physics_budget": "first whole-trajectory feasible scale per arm, then one full190 and one static2s rollout; otherwise no physics",
+  "pressure_semantics": "uncalibrated visual proxy, not measured contact force or newtons",
+  "accepted_gate": "original target, full-scene, static-hold diagnostics unchanged",
+  "constraint_frames": [
+    25,
+    27,
+    28,
+    29,
+    30,
+    31,
+    60,
+    90,
+    110
+  ],
+  "parameter_bounds_rad": [
+    [
+      -0.08,
+      0.3
+    ],
+    [
+      -0.08,
+      0.32
+    ],
+    [
+      -0.03,
+      0.16
+    ],
+    [
+      -0.1,
+      0.16
+    ],
+    [
+      0.0,
+      0.18
+    ]
+  ],
+  "visual_product_median": [
+    0.5181058388778923,
+    0.43608171328987777,
+    0.24063272281323633,
+    0.24340575633782402,
+    0.2116680593113186
+  ],
+  "visual_weights_rf_lf": [
+    1.5348709329509906,
+    1.4651290670490094
+  ],
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    },
+    "palm_input": "e6f396cfc0cff06ccd5693159aac2adb68eb6dc3acc23a2e31ed522eb83c6e3e",
+    "source_command": "84a870d67441c9257fc995ed23b801e2bb5d84aec3160cb43e540ccdb4ec7fc7",
+    "pressure_hints": "944c785188f04473a9293bcad9a8242ffaccf7958af93cd2d17b9f287662df03",
+    "actual_trajectory": "56b97bf5be840ce2cd6e15bf5ff476a34b95dbedfea04a2e4287d1043dc74acc"
+  }
+}

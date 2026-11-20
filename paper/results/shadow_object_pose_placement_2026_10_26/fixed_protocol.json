@@ -1,0 +1,68 @@
+{
+  "protocol": {
+    "schema": "shadow_object_pose_placement_protocol_v1",
+    "scope": "single frozen 190-frame scene; offline MuJoCo-state oracle from source unforced rollout frame90; final command open-loop",
+    "source_grasp": "followup MF +0.10, RF +0.08 rad; source finger positions and timestamps bitwise fixed",
+    "object_target": "tracked final XY and rotation, center Z from official mesh lowest transformed vertex on original table top plus 0 or 5 mm clearance",
+    "grasp_transform": "actual simulated object pose and actual palm FK at frame90; fixed object-to-palm SE(3)",
+    "command_family": "C1 object-center position+orientation correction start frame90/100, full by125; orientation gain .75/1; support clearance0/5mm; corrected palm hold125..151; +50mm world-z retreat151..175",
+    "candidate_count": 8,
+    "no_physics_changes": true,
+    "placement_diagnostic_gate": {
+      "final_xy_error_mm": 30,
+      "final_z_error_mm": 20,
+      "final_orientation_error_deg": 15,
+      "final_upright_tilt_deg": 15,
+      "last_1s_table_support_fraction": 0.95,
+      "last_1s_hand_force_steps": 0,
+      "last_1s_robot_table_steps": 0,
+      "last_1s_max_speed_m_s": 0.03,
+      "last_1s_position_drift_mm": 5,
+      "last_1s_rotation_drift_deg": 5
+    },
+    "ranking": "placement gate first; then 1000 for each failed release/support/hand/table/settle check + XYmm + Zmm + 2*rotationdeg + 2*tiltdeg + 0.1*original full-rollout score",
+    "original_target_and_full_scene_gates": "retained exactly from hocap_shadow_polisher.rollout; pickup lag remains separate"
+  },
+  "settings": [
+    {
+      "start_frame": 90,
+      "rotation_gain": 0.75,
+      "support_clearance_m": 0.0
+    },
+    {
+      "start_frame": 90,
+      "rotation_gain": 0.75,
+      "support_clearance_m": 0.005
+    },
+    {
+      "start_frame": 90,
+      "rotation_gain": 1.0,
+      "support_clearance_m": 0.0
+    },
+    {
+      "start_frame": 90,
+      "rotation_gain": 1.0,
+      "support_clearance_m": 0.005
+    },
+    {
+      "start_frame": 100,
+      "rotation_gain": 0.75,
+      "support_clearance_m": 0.0
+    },
+    {
+      "start_frame": 100,
+      "rotation_gain": 0.75,
+      "support_clearance_m": 0.005
+    },
+    {
+      "start_frame": 100,
+      "rotation_gain": 1.0,
+      "support_clearance_m": 0.0
+    },
+    {
+      "start_frame": 100,
+      "rotation_gain": 1.0,
+      "support_clearance_m": 0.005
+    }
+  ]
+}

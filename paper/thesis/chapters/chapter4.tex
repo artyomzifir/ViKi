@@ -1,0 +1,39 @@
+\chapter{Implementation and Evaluation}
+\label{ch:impl}
+
+\section{Software and Experimental Setup}
+\label{sec:arch}
+
+The Python implementation separates capture, calibration, perception,
+preparation, retargeting and export. FastAPI serves offline jobs and the
+browser inspection interface; MuJoCo tools reside in a separate image.
+Each stage writes a durable episode artifact. The \texttt{rec.npz} hand
+extraction, \texttt{cln.npz} prepared motion,
+\texttt{object\_models.npz} scene model and \texttt{plan.h5} robot plan
+represent different stages and are not interchangeable evidence.
+Physical-robot replay is a stub and is not evaluated.
+
+The local apparatus has two Azure Kinect DK cameras on independent USB
+controllers. The intended tabletop task is to transfer a blue cube from
+a red support to a green target, using a simulated old-generation UR10
+with a Robotiq 2F-85 gripper. No physical UR10 is available for this
+study. The earlier local cube recordings and their derived artifacts
+are not available for verification, so no numerical result from that
+campaign is included in this manuscript. In particular, local
+capture-synchronisation, stage-yield, object-model, IK, contact-replay
+and learned-policy results are \emph{not} claimed. A new, preserved
+local cohort would be required to evaluate that end-to-end chain.
+
+\input{hocap_main_results}
+
+\section{Downstream Evidence Boundary}
+\label{sec:downstream-boundary}
+
+The archived HO-Cap experiment evaluates hand reconstruction and
+first-frame-aligned object tracking on a separate RealSense capture
+system. It does not establish the accuracy of the local Kinect rig or
+produce a validated robot demonstration. Retarget plans, simulator
+contacts, task success and policy learning require their own retained
+inputs, protocols and numerical artifacts before they can be reported
+as results. This chapter therefore ends at the external perception
+evaluation rather than extrapolating an end-to-end success rate.

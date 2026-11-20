@@ -1,13 +1,10 @@
 """
 viki.replay.driver
 ------------------
-Execution of a synthesised joint trajectory on the manipulator.
+Offline dry-run of a synthesised joint trajectory.
 
-``RobotDriver`` is the abstraction. ``UR3Driver`` is a STUB — real execution
-needs ``ur-rtde`` and the physical UR3 (paper §3.8). ``DryRunDriver`` runs no
-hardware: it reports the planned trajectory back as if it were attained, with a
-NaN controller residual, so the rest of the pipeline (screening, export) can be
-exercised end to end.
+The only driver echoes planned values with a NaN residual. Legacy archive
+field names are retained for compatibility with existing episode files.
 """
 
 from __future__ import annotations
@@ -20,7 +17,7 @@ import numpy as np
 
 @dataclass
 class ProprioLog:
-    """What the robot actually did during execution."""
+    """Dry-run values; ``*_attained`` are legacy names for copies of the plan."""
 
     q_attained: np.ndarray  # (T, nq)
     gripper_attained: np.ndarray  # (T,) float, normalised opening
@@ -36,11 +33,11 @@ class RobotDriver(ABC):
     ) -> ProprioLog: ...
 
     def close(self) -> None:
-        """Release the connection. Default: nothing to do."""
+        """Release local resources. Default: nothing to do."""
 
 
 class DryRunDriver(RobotDriver):
-    """No hardware. Echoes the plan; residual is NaN."""
+    """Echoes the plan; residual is NaN."""
 
     name = "dryrun"
 
@@ -58,22 +55,7 @@ class DryRunDriver(RobotDriver):
         )
 
 
-class UR3Driver(RobotDriver):
-    """STUB. Stream ``q_traj`` to a UR3 over ur-rtde and log proprioception."""
-
-    name = "ur3"
-
-    def __init__(self, host: str | None = None) -> None:
-        raise NotImplementedError(
-            "UR3Driver needs the `ur-rtde` package and a physical UR3 "
-            "(paper §3.8). Use driver='dryrun' for a hardware-free run."
-        )
-
-    def execute(self, q_traj: np.ndarray, gripper: np.ndarray, dt: float) -> ProprioLog:
-        raise NotImplementedError
-
-
-_DRIVERS: dict[str, type[RobotDriver]] = {"dryrun": DryRunDriver, "ur3": UR3Driver}
+_DRIVERS: dict[str, type[RobotDriver]] = {"dryrun": DryRunDriver}
 
 
 def load_driver(name: str = "dryrun", **kwargs) -> RobotDriver:

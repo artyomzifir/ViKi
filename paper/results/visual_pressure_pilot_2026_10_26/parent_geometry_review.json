@@ -1,0 +1,23 @@
+{
+  "command_sha256": "0255f95df6c017c9b8c32bf473b1edead753903d9e7d8a20010365e8bde21634",
+  "original_scene_sha256": "03d4cac1e9b2eaf33665f27418b83b0f8e3d2a82df17891114314b43a8d5a496",
+  "frames": 190,
+  "duration_s": 6.603945,
+  "settled_xy_error_mm": 68.50287685059703,
+  "settled_z_error_mm": 67.66816630966599,
+  "settled_rotation_error_deg": 92.48208221164687,
+  "settled_upright_tilt_deg": 95.51515049682607,
+  "last_1s_table_support_fraction": 1.0,
+  "last_1s_any_hand_force_steps": 0,
+  "last_1s_max_speed_m_s": 0.03124122812685123,
+  "robot_table_force_steps": 0,
+  "robot_neighbor_force_steps": 0,
+  "neighbor_peak_drift_mm": 22.413347590325497,
+  "minimum_target_contact_gap_mm": -9.933707205783739,
+  "post_anchor_touchdown_frame": 123,
+  "touchdown_speed_before_step_m_s": 0.18439797738651031,
+  "touchdown_speed_after_step_m_s": 0.18493271327582708,
+  "pre_touchdown_triad_fraction": 0.9976387249114522,
+  "pre_touchdown_max_triad_gap_s": 0.001,
+  "controlled_touchdown_pass": false
+}

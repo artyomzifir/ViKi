@@ -1,0 +1,28 @@
+{
+  "schema": "shadow_feedback_placement_protocol_v1",
+  "candidate_count": 2,
+  "source": "saved MF+.10 RF+.08 grasp; original commands/timestamps through frame110 bitwise fixed",
+  "oracle": "actual MuJoCo object and actual palm FK observed after each generated frame, only during offline generation",
+  "controller": "current object-to-palm SE3, object-centered \u22642/3mm and \u22641/1.5deg steps; acceleration-limited palm command from source frame109\u2192110 velocity",
+  "phases": "align while airborne near anchor Z and XY/reference upright; descend to official mesh support+3mm only after upright tilt<8deg, XY<10mm, reference rotation<10deg; hold frame110 fingers until positive table support\u226595% for9 frames, tilt<8deg and speed<.03m/s; then source finger release frames125..151, palm hold, 50mm rise over24frames, 15frame settle; max260 frames",
+  "settings": [
+    {
+      "name": "gentle",
+      "object_step_m": 0.002,
+      "object_turn_deg": 1.0,
+      "palm_accel_m": 0.001,
+      "palm_angular_accel_deg": 0.5
+    },
+    {
+      "name": "firm",
+      "object_step_m": 0.003,
+      "object_turn_deg": 1.5,
+      "palm_accel_m": 0.0015,
+      "palm_angular_accel_deg": 0.75
+    }
+  ],
+  "extra_settle_s": 2.0,
+  "no_physics_or_object_forcing": true,
+  "evaluation": "extended placement gate separate from original190-frame baseline gate; no reference phase remapping of generated frames",
+  "limits": "original joint position, per-segment command velocity, IK\u22641.5mm/1deg, candidate passive-finger floor/self screen; no clamp of joint commands"
+}

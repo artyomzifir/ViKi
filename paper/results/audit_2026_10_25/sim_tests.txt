@@ -1,0 +1,4 @@
+2026-10-25
+Command: docker compose -f docker-compose.experiments.yml run --rm -v /home/zifka/Personal/inno_study/ViKi/tests:/app/tests:ro -v /home/zifka/Personal/inno_study/ViKi/scripts:/app/scripts:ro sim -m pytest tests/unit_tests/experiments -q -rs
+Observed result: 68 passed, 1 warning in 0.93s.
+Warning: pytest cache directory not writable. No skipped tests.

@@ -22,7 +22,7 @@ function loadRobotMesh(url) {
   const ext = url.split('?')[0].split('.').pop().toLowerCase();
   return new Promise((resolve, reject) => {
     if (ext === 'stl') _stlLoader.load(url, g => resolve(new THREE.Mesh(g)), undefined, reject);
-    else if (ext === 'obj') _objLoader.load(url, resolve, undefined, reject);
+    else if (ext === 'obj' || url.includes('/object-mesh/')) _objLoader.load(url, resolve, undefined, reject);
     else if (ext === 'dae') _daeLoader.load(url, c => resolve(c.scene), undefined, reject);
     else reject(new Error('unsupported robot mesh: ' + url));
   });
@@ -113,7 +113,7 @@ const DEFAULT_LAYERS = {
   axes: true, grid: true,
   cloud: true, perCamera: false, fused: true, trajectory: true,
   palm: true, frusta: true, board: true, bbox: false, handFit: false,
-  objectCore: true, objectShell: true, objectPose: true,
+  objectMesh: true, objectCore: true, objectShell: true, objectPose: true,
   objectAccepted: false, objectRejected: true,
   objectReassigned: true, objectAmbiguous: true,
   robot: true, robotMesh: true, targetTrajectory: true, achievedTrajectory: true,
@@ -153,7 +153,8 @@ const LEGEND_GROUPS = [
   {
     title: 'Objects',
     rows: [
-      { key: 'objectCore', label: 'rigid core', swatch: 'objectKey', src: 'objectModel' },
+      { key: 'objectMesh', label: 'object meshes', swatch: 'objectKey', src: 'objectModel' },
+      { key: 'objectCore', label: 'rigid core points', swatch: 'objectKey', src: 'objectModel' },
       { key: 'objectShell', label: 'supported shell', swatch: '#c4b5fd', src: 'objectModel' },
       { key: 'objectPose', label: 'object frame', swatch: 'triad', src: 'objectModel' },
       { key: 'objectAccepted', label: 'accepted observations', swatch: '#4ade80', src: 'objectModel' },
@@ -187,6 +188,7 @@ export function create(canvasEl, {
   objectModels: enableObjectModels = false,
 }) {
   const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x111827, 1.7));
   scene.background = new THREE.Color(0x0b0d10);
 
   const camera = new THREE.PerspectiveCamera(55, 1, 0.005, 200);
@@ -450,6 +452,7 @@ export function create(canvasEl, {
   const objectModelGroup = new THREE.Group();
   worldGroup.add(objectModelGroup);
   let objectRecords = [];
+  let objectMeshToken = 0;
 
   // SAM-supported observations stay in the world frame. Four reusable point
   // buffers make filter decisions inspectable without allocating on every tick.
@@ -630,8 +633,9 @@ export function create(canvasEl, {
     handJoints.visible = layers.handFit;
     for (const record of objectRecords) {
       record.root.visible = !!record.root.userData.have
-        && (layers.objectCore || layers.objectShell || layers.objectPose);
+        && (layers.objectMesh || layers.objectCore || layers.objectShell || layers.objectPose);
       record.core.visible = layers.objectCore;
+      if (record.mesh) record.mesh.visible = layers.objectMesh;
       record.shell.visible = layers.objectShell;
       record.axes.visible = layers.objectPose;
     }
@@ -801,6 +805,7 @@ export function create(canvasEl, {
   }
 
   function buildObjectModels() {
+    const token = ++objectMeshToken;
     while (objectModelGroup.children.length) {
       disposeSubtree(objectModelGroup.children.pop());
     }
@@ -820,7 +825,22 @@ export function create(canvasEl, {
       const axes = fatAxes(0.06, 0.0025);
       root.add(core, shell, axes);
       objectModelGroup.add(root);
-      objectRecords.push({ root, core, shell, axes, model });
+      const record = { root, core, shell, axes, mesh: null, model };
+      objectRecords.push(record);
+      if (model.mesh_url) {
+        loadRobotMesh(model.mesh_url).then(mesh => {
+          if (token !== objectMeshToken) { disposeSubtree(mesh); return; }
+          const material = new THREE.MeshStandardMaterial({
+            color: baseColor, roughness: 0.7, metalness: 0.05,
+            transparent: false, opacity: 1, depthWrite: true,
+            side: THREE.DoubleSide,
+          });
+          mesh.traverse(node => { if (node.isMesh) node.material = material; });
+          root.add(mesh);
+          record.mesh = mesh;
+          applyLayerVisibility();
+        }).catch(error => log && log(`object mesh ${model.id}: ${error}`, 'warn'));
+      }
     }
   }
 
@@ -914,8 +934,8 @@ export function create(canvasEl, {
         }
         robotMeshGroup.add(node);
       };
-      if (v.mesh_path) {
-        const url = '/api/pipeline/retarget/mesh/'
+      if (v.mesh_path || v.mesh_url) {
+        const url = v.mesh_url || '/api/pipeline/retarget/mesh/'
           + v.mesh_path.split('/').map(encodeURIComponent).join('/');
         loadRobotMesh(url).then(attach)
           .catch(e => log && log('robot mesh ' + v.name + ': ' + e, 'warn'))
@@ -987,7 +1007,6 @@ export function create(canvasEl, {
       baseAxes.position.set(...retarget.base_position);
     }
     robotGroup.add(baseAxes);
-    robotGroup.add(new THREE.HemisphereLight(0xffffff, 0x111827, 1.7));
     loadRobotVisuals();
   }
 
@@ -1127,7 +1146,7 @@ export function create(canvasEl, {
   }
 
   function wantObjectDecisions() {
-    return OBJECT_DECISION_LAYERS.some(key => layers[key]);
+    return !!ometa?.has_decisions && OBJECT_DECISION_LAYERS.some(key => layers[key]);
   }
 
   function fetchObjectFrame(i) {

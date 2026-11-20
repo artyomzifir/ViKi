@@ -77,7 +77,7 @@ export function mount(view) {
         </select></div>
         <div class="cfg-row"><label>Position anchor</label><select data-role="target-anchor">
           <option value="pinch_center">thumb–index midpoint</option>
-          <option value="wrist">wrist (legacy)</option>
+          <option value="wrist">fitted wrist</option>
         </select></div>
         <div class="cfg-row"><label>Gripper</label><select data-role="gripper"></select></div>
         <div class="hint" data-role="gripper-meta">physical URDF · continuous opening</div>
@@ -128,6 +128,7 @@ export function mount(view) {
 
       <section class="calib-sec">
         <div class="calib-sec-title">Constraints & solve</div>
+        ${field('table-plane-z', 'table plane Z, m', S.tablePlaneZM ?? 0, 0.001)}
         <div class="cfg-row"><label>Self collision</label><input type="checkbox" data-role="collision"
           ${S.collisionEnabled !== false ? 'checked' : ''}></div>
         ${field('collision-pairs', 'closest pairs', S.collisionPairs ?? 8, 1, 0)}
@@ -138,7 +139,7 @@ export function mount(view) {
         <div class="cfg-row"><label>Sequential baseline</label><input type="checkbox"
           data-role="sequential-baseline" ${S.sequentialBaseline ? 'checked' : ''}></div>
         <div class="hint">Optional paper comparison: causal frame-wise IK, then Savitzky–Golay smoothing. It is measured, never replayed.</div>
-        <div class="hint">collision-geometry floor z ≥ 0 · joint limits · velocity limits · OSQP · sparse whole-trajectory QP</div>
+        <div class="hint">Hard infinite tabletop half-space for movable collision bodies and gripper contact points; not object or human collision avoidance.</div>
       </section>
 
     </aside>`;
@@ -161,7 +162,7 @@ export function mount(view) {
   });
   root.querySelector('[data-role="pose-source"]').value = S.poseSource || 'landmarks';
   root.querySelector('[data-role="reference-policy"]').value = S.referencePolicy || 'robot_home';
-  root.querySelector('[data-role="target-anchor"]').value = S.targetPositionAnchor || 'pinch_center';
+  root.querySelector('[data-role="target-anchor"]').value = S.targetPositionAnchor || 'wrist';
   ctl.onLayerChange(l => sessionSet('retargetLayers', l));
   root.addEventListener('click', onClick);
   root.addEventListener('change', onChange);
@@ -275,6 +276,7 @@ function options() {
     gripper: root.querySelector('[data-role="gripper"]').value,
     base_position: vector('base'),
     base_rpy_deg: vector('base-rpy'),
+    table_plane_z_m: number('table-plane-z'),
     adapter_translation_mm: vector('adapter'),
     adapter_rpy_deg: vector('adapter-rpy'),
     adapter_radius_mm: number('adapter-radius'),
@@ -304,7 +306,7 @@ function persist() {
     robot: o.robot, gripper: o.gripper, poseSource: o.pose_source,
     referencePolicy: o.reference_policy,
     targetPositionAnchor: o.target_position_anchor, basePosition: o.base_position,
-    baseRpyDeg: o.base_rpy_deg,
+    baseRpyDeg: o.base_rpy_deg, tablePlaneZM: o.table_plane_z_m,
     adapterTranslationMm: o.adapter_translation_mm, adapterRpyDeg: o.adapter_rpy_deg,
     adapterRadiusMm: o.adapter_radius_mm,
     handToEeTranslation: o.hand_to_ee_translation, handToEeRpyDeg: o.hand_to_ee_rpy_deg,

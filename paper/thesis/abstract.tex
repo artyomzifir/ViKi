@@ -1,0 +1,31 @@
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Collecting robot demonstrations across different embodiments and observation
+viewpoints requires substantial teleoperation effort. Human manipulation
+recordings offer a reusable source of natural task motion, but converting them
+into robot observation--action pairs requires accurate perception,
+embodiment-specific retargeting, and consistent visual scene representation.
+
+This thesis investigates \textbf{ViKi}, an offline pipeline combining multiview
+RGB-D human demonstration capture, morphology-aware motion retargeting, and 3D
+Gaussian Splatting (3DGS)-based scene rendering. The proposed workflow
+reconstructs hand and object motion from synchronized cameras, derives robot
+trajectories subject to kinematic and collision constraints, and renders
+candidate robot demonstrations from novel viewpoints with controlled appearance
+variations. The objective is to reuse one human demonstration across multiple
+robot embodiments, camera viewpoints, and scene variations without collecting
+separate teleoperated data for each configuration.
+
+The evaluation framework separates hand-tracking accuracy, object pose estimation
+error, cross-embodiment retargeting feasibility, novel-view rendering fidelity,
+and synthetic dataset diversity metrics. HO-Cap recordings with ground-truth MANO
+annotations provide external reference for perception assessment. This study
+focuses on dataset-generation pipeline design and validation; policy training,
+task success metrics, and real-robot deployment require subsequent work.
+
+\vspace{1em}
+\noindent
+\textbf{Keywords:} robot learning, 3D Gaussian Splatting, human demonstrations,
+RGB-D perception, motion retargeting, multi-embodiment, dataset generation
+

@@ -697,13 +697,51 @@ async def retarget_mesh(mesh_path: str):
     return FileResponse(target, headers={"Cache-Control": "public, max-age=86400"})
 
 
+@_ep.get("/retarget/shadow-mesh/{mesh_path:path}")
+async def shadow_mesh(mesh_path: str):
+    root = (Path(config.MODELS_DIR) / "shadow_hand").resolve()
+    target = (root / mesh_path).resolve()
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(404, "mesh not found")
+    if target.suffix.lower() not in {".obj", ".stl", ".dae"}:
+        raise HTTPException(415, "unsupported mesh type")
+    return FileResponse(target)
+
+
+@_ep.get("/retarget/tesollo-mesh/{mesh_path:path}")
+async def tesollo_mesh(mesh_path: str):
+    root = (Path(config.MODELS_DIR) / "tesollo_dg5f_mujoco").resolve()
+    target = (root / mesh_path).resolve()
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(404, "mesh not found")
+    if target.suffix.lower() not in {".obj", ".stl", ".dae"}:
+        raise HTTPException(415, "unsupported mesh type")
+    return FileResponse(target)
+
+
 @_ep.get("/episode/{ep_id}/retarget")
-async def retarget_scene(ep_id: str):
+async def retarget_scene(ep_id: str, artifact: str = "default"):
     """Return browser-ready robot and comparison trajectories from plan.h5."""
     from viki.retarget.archive import load_archive
     from viki.retarget.frames import base_transform
 
     ep = _episode(ep_id)
+    if artifact in {"shadow_object", "tesollo_object"}:
+        import hashlib
+        scene_path = ep.root / f"{artifact}_viewer.json"
+        plan_path = ep.root / f"{artifact}_plan.npz"
+        if not scene_path.is_file() or not plan_path.is_file():
+            return {"ready": False, "id": ep.id}
+        scene = json.loads(scene_path.read_text())
+        if scene.get("plan_sha256") != hashlib.sha256(plan_path.read_bytes()).hexdigest():
+            raise HTTPException(409, f"{artifact} viewer artifact is stale; regenerate it")
+        if artifact == "tesollo_object":
+            model_path = Path("data/_hocap_demo_source/ur10_tesollo.urdf")
+            if not model_path.is_file() or scene.get("model_sha256") != hashlib.sha256(model_path.read_bytes()).hexdigest():
+                raise HTTPException(409, "Tesollo viewer model changed; regenerate it")
+        return scene
+    if artifact != "default":
+        raise HTTPException(400, "unknown retarget artifact")
     if not ep.plan_h5.exists():
         return {"ready": False, "id": ep.id}
     try:
@@ -1127,7 +1165,18 @@ def _object_model_paths(
     root = ep.intermediates_dir / "segmentation" / profile
     artifact = root / "object_models.npz"
     semantic_cloud = root / "semantic_cloud"
-    if not artifact.is_file() or not semantic_cloud.is_dir():
+    if not artifact.is_file() and profile == "sam2.1_hiera_small":
+        metadata_path = ep.root / "meta.json"
+        try:
+            source = json.loads(metadata_path.read_text()).get("source")
+        except (OSError, ValueError):
+            source = None
+        if source == "hocap":
+            alternative = ep.intermediates_dir / "segmentation" / "hocap-oracle-v1"
+            if (alternative / "object_models.npz").is_file():
+                artifact = alternative / "object_models.npz"
+                semantic_cloud = alternative / "semantic_cloud"
+    if not artifact.is_file():
         raise HTTPException(404, f"no object model for profile {profile!r}")
     return artifact, semantic_cloud
 
@@ -1147,6 +1196,7 @@ async def object_model_meta(
 ):
     """Canonical core/shell surfaces and their complete lightweight tracks."""
     ep = _episode(ep_id)
+    artifact, semantic_cloud = _object_model_paths(ep, profile)
     d = _object_model_archive(ep, profile)
     try:
         object_ids = np.asarray(d["object_ids"], np.int32)
@@ -1190,13 +1240,33 @@ async def object_model_meta(
             "retained_fraction": _finite_nested(retained[:, column]),
             "rotation_information": _finite_nested(rotation_information[:, column]),
             "contact": contact[:, column].tolist(),
+            "mesh_url": (
+                f"/api/pipeline/episode/{ep.id}/object-mesh/{int(object_id)}"
+                f"?profile={artifact.parent.name}"
+                if (artifact.parent / "meshes" / f"object_{int(object_id)}.obj").is_file()
+                else None
+            ),
         })
     return {
         "schema": "viki_object_model_viewer_v1",
-        "profile": profile,
+        "profile": artifact.parent.name,
+        "has_decisions": semantic_cloud.is_dir() and any(semantic_cloud.glob("*.npz")),
         "n_frames": frame_count,
         "objects": objects,
     }
+
+
+@_ep.get("/episode/{ep_id}/object-mesh/{object_id}")
+async def object_model_mesh(ep_id: str, object_id: int, profile: str = "sam2.1_hiera_small"):
+    """Serve an episode-local OBJ aligned to the canonical object-track frame."""
+    if object_id < 0:
+        raise HTTPException(422, "invalid object id")
+    ep = _episode(ep_id)
+    artifact, _ = _object_model_paths(ep, profile)
+    mesh = artifact.parent / "meshes" / f"object_{object_id}.obj"
+    if not mesh.is_file():
+        raise HTTPException(404, f"no mesh for object {object_id}")
+    return FileResponse(mesh, media_type="model/obj")
 
 
 @_ep.get("/episode/{ep_id}/object-model/{frame}")
@@ -1211,6 +1281,8 @@ async def object_model_frame(
     """
     ep = _episode(ep_id)
     _, semantic_cloud = _object_model_paths(ep, profile)
+    if not semantic_cloud.is_dir():
+        raise HTTPException(404, "no semantic-cloud decisions for this object model")
     d = _object_model_archive(ep, profile)
     try:
         offsets = np.asarray(d["candidate_frame_offsets"], np.int64)

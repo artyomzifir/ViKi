@@ -1,0 +1,58 @@
+\chapter{Conclusion}
+\label{ch:concl}
+
+\section{Summary}
+\label{sec:summary}
+
+ViKi implements an offline route from multi-view RGB-D capture to
+separate hand, object and candidate robot-plan artifacts. This thesis
+reports the retained, reproducible HO-Cap perception evaluation, not
+an end-to-end robot-learning result. The earlier local cube recordings
+and their downstream artifacts are unavailable, so their numerical
+summaries and derived simulation or policy claims are excluded.
+
+\section{Answers to the Research Questions}
+\label{sec:answers}
+
+\textbf{RQ1: pipeline yield.} The external eight-view HO-Cap evaluation
+completed on 28 selected sequences and 29,706 frames. Its prepared hand
+tracks have 10.79~mm matched-joint-weighted MPJPE against the published
+semi-automatic reference, with 623,826/623,826 valid joints matched.
+For 112 named object tracks, macro-mean relative translation and rotation
+drift are 5.44~mm and 7.58 degrees after first-frame alignment and with
+published instance masks. Large orientation failures remain, including
+112.60 degrees mean error on one projector-remote track. These data
+quantify external perception, not the local Kinect-to-robot pipeline
+yield or absolute object pose accuracy.
+
+\textbf{RQ2: object-aware transfer.} No retained local demonstration
+and matched simulator evaluation supports a claim about physics-validated
+transfer to new cube placements. The question remains open.
+
+\textbf{RQ3: learning benefit.} No reproducible comparison against
+a matched no-ViKi learner is available. The benefit of ViKi-derived
+examples or their sample efficiency is not established.
+
+\textbf{RQ4: visual policy.} No evaluated image-conditioned robot policy
+is reported.
+
+\section{Claim Boundary and Next Validation}
+\label{sec:contrib-final}
+
+The current evidence supports a measurable HO-Cap hand-reconstruction
+result and a conditional, relative object-tracking result. It does
+not validate local camera calibration, complete cube-transfer
+demonstrations, collision-free grasping, physical simulator success,
+policy generalization or real-robot transfer. Re-recording a
+preserved local cohort with explicit calibration controls is necessary
+before testing those claims. Each subsequent retarget, physics and
+learning result must retain its input scenes, protocol and numerical
+outputs so it can be independently checked.
+
+\section{Concluding Remarks}
+\label{sec:remarks}
+
+The distinction between a reconstructed hand, a tracked object, a
+geometric robot plan and a successful manipulation is essential.
+Only the first two have quantitative external evidence in this
+manuscript; the latter stages remain work to evaluate.

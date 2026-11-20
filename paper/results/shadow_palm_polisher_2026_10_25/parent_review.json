@@ -1,0 +1,25 @@
+{
+  "reviewer": "parent agent independent review",
+  "verdict": "experimental implementation reproduced; hypothesis does not solve the task",
+  "code_review": "Object-basis translation and rotation about palm origin are correct; original dtype, finger commands, timestamps and outside-gate poses preserved. Fixed ranking is not an acceptance gate. No production integration. Output reuse protection and zero-candidate limits fixed during review.",
+  "results": {
+    "fixed_candidates": 48,
+    "IK_feasible": 30,
+    "nominal_target_task_successes": 0,
+    "selected_held_out_target_successes": 0,
+    "held_out_cases": 4
+  },
+  "evidence": [
+    "parent_invariants.json",
+    "parent_reproduction.json",
+    "parent_frame_check.json",
+    "parent_hold_probe.json",
+    "parent_selected_hold_probe.json"
+  ],
+  "limits": [
+    "Single frozen UR10 + Shadow episode; no general success rate estimate.",
+    "IK floor/self-collision screen operates at saved frames and retains existing adjacent/neutral-contact pair exclusions. Scene object contacts are evaluated in simulation.",
+    "Fixed palm-only offsets with original fingers failed; this does not rule out coordinated palm/finger optimization or feedback."
+  ],
+  "next_hypothesis": "Jointly optimize grasp palm/finger pose using a stationary hold test before optimizing transport and release; retain full-task acceptance."
+}

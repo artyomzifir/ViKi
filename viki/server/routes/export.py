@@ -19,7 +19,7 @@ class ExportRequest(BaseModel):
     episodes: list[str]
     out_dir: str
     # "trajectory" needs nothing beyond numpy; "lerobot" needs the optional
-    # extra and episodes that have been replayed and screened.
+    # extra and labelled episodes with an accepted offline dry-run.
     format: str = "trajectory"
     name: str | None = None
     fps: int = 15

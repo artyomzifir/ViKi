@@ -404,3 +404,35 @@ def test_sequential_baseline_holds_last_command_without_observation():
         smoothing_window=1,
     )
     np.testing.assert_allclose(result.q[1], result.q[0])
+
+class FrameAwareConstraint:
+    nq = 1
+    q_min = np.array([-1.0])
+    q_max = np.array([1.0])
+    velocity_limit = np.array([2.0])
+
+    def __init__(self):
+        self.frame = 0
+
+    def set_frame(self, frame):
+        self.frame = frame
+
+    def floor_margins(self, q):
+        return np.array([q[0] + self.frame * 0.01])
+
+    def collision_margins(self, q):
+        return np.array([0.5 - q[0] ** 2 - self.frame * 0.001])
+
+
+def test_parallel_constraint_margins_match_serial_with_passive_frame_indices():
+    from viki.retarget.solver import trajectory_constraint_margins
+
+    q = np.array([[-0.2], [0.1], [0.3], [-0.1], [0.4], [0.2]])
+    frames = np.array([5, 4, 3, 2, 1, 0])
+    serial = trajectory_constraint_margins(FrameAwareConstraint(), q, 0.1, frame_indices=frames)
+    parallel = trajectory_constraint_margins(
+        FrameAwareConstraint(), q, 0.1, frame_indices=frames, workers=2
+    )
+    assert parallel == serial
+    with pytest.raises(ValueError, match="workers"):
+        trajectory_constraint_margins(FrameAwareConstraint(), q, 0.1, workers=0)

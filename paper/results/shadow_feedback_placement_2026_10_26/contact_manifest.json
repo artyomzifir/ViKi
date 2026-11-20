@@ -1,0 +1,61 @@
+{
+  "schema": "shadow_feedback_placement_pilot_v1",
+  "protocol": {
+    "schema": "shadow_contact_feedback_placement_protocol_v1",
+    "source": "same saved three-digit command and firm arm-feedback law as preceding pilot; prefix0..110 fixed",
+    "family": "two measured frame110 TH/FF/MF force-maintenance integral settings only, 80% of each measured force as target",
+    "settings": [
+      {
+        "name": "firm",
+        "object_step_m": 0.003,
+        "object_turn_deg": 1.5,
+        "palm_accel_m": 0.0015,
+        "palm_angular_accel_deg": 0.75,
+        "contact_name": "gentle_force",
+        "force_gain_rad_per_n_frame": 0.003,
+        "force_caps_rad": [
+          0.06,
+          0.12,
+          0.12
+        ]
+      },
+      {
+        "name": "firm",
+        "object_step_m": 0.003,
+        "object_turn_deg": 1.5,
+        "palm_accel_m": 0.0015,
+        "palm_angular_accel_deg": 0.75,
+        "contact_name": "firm_force",
+        "force_gain_rad_per_n_frame": 0.006,
+        "force_caps_rad": [
+          0.08,
+          0.18,
+          0.12
+        ]
+      }
+    ],
+    "synergies": "THJ4 and FF/MF J1/J2/J3 weights1/.7/.35; declared per-digit residual caps, no URDF clipping",
+    "support_handling": "freeze closure after 3 consecutive frames with >=95% positive table support; release after original 9-frame support/upright/slow gate; fade residual smoothly over exact original 125..151 opening intervals",
+    "controlled_touchdown_diagnostic": "TH+two distinct digits >.05N in >=90% pre-support physics steps, no gap>.05s, first table-contact speed<.1m/s; added after preceding upright-but-dropped result; no threshold tuning on these two variants",
+    "scope": "offline simulator-state oracle; independent exported open-loop replay; unchanged model, collisions and original source prefix",
+    "max_frames": 260
+  },
+  "source_hashes": {
+    "plan": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130",
+    "track": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191",
+    "urdf": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917",
+    "meshes": {
+      "1": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514",
+      "2": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608",
+      "3": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4",
+      "4": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    },
+    "input": "84a870d67441c9257fc995ed23b801e2bb5d84aec3160cb43e540ccdb4ec7fc7"
+  },
+  "physics": "unchanged make_scene",
+  "accepted": false,
+  "selected_index": 0,
+  "selected_command_sha256": "19f4ef3571666e6c50b054ebc86fd11a38d539b02987e61f19d36942d3e4d548",
+  "total_wall_s": 34.90878275000432,
+  "evaluated_count": 2
+}

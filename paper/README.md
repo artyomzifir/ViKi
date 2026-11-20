@@ -1,77 +1,43 @@
-# ViKi — черновик ВКР (LaTeX)
+# ViKi thesis and research proposal
 
-Материалы восстановлены из переписки от 24 августа 2026 (чат «Механики
-ретаргетинга и калибровки стереокамер») — тогда контейнер с исходными файлами
-уже закрылся, поэтому весь LaTeX-код был вытащен из истории диалога и заново
-скомпилирован. Постранично совпадает с тем, что было тогда: `thesis.pdf` —
-50 стр., `annotation_ru.pdf` — 18 стр.
+The editable thesis is in `paper/thesis/`; the English/Russian abstracts are
+in `paper/thesis/thesis.tex`. The separate Real2Sim2Real proposal is
+`paper/research_proposal_real2sim2real.md` and its submission copy is the
+adjacent `.docx` file. Build the thesis with `make -C paper/thesis` (XeLaTeX).
 
-## Новый research proposal
+## Evidence in the manuscript
 
-`research_proposal_real2sim2real.docx` — отдельный документ для отправки;
-`research_proposal_real2sim2real.md` — его редактируемый текстовый источник.
-Существующие `thesis/` и `annotation-ru/` отражают прежнюю тему и пока не
-синхронизированы с этим предложением.
+- The full 28-episode HO-Cap pre-retarget numerical JSON snapshot is in
+  `paper/results/hocap/pre_retarget/`, with SHA-256 hashes and source-path
+  mapping. It is separate from the retarget plans and original dataset.
+  Chapter 4 now reports eight-view hand and object tracking for this cohort,
+  including named object outliers; Appendix B contains all 28 hand and 112
+  object rows and the official object-ID catalog. Regenerate the appendix with
+  `python3 scripts/build_hocap_paper_tables.py` and verify it with
+  `python3 scripts/build_hocap_paper_tables.py --check`. Object names follow
+  the authors' [HO-Cap toolkit catalog](https://github.com/IRVLUTD/HO-Cap/blob/main/config/hocap_info.yaml).
 
-## Раскладка
+- The separate HO-Cap retarget numerical status and complete diary are in
+  `paper/results/hocap/retarget/`. These are 28 hand-only geometric plans,
+  not physically executed demonstrations or object-aware grasps.
 
-Один самостоятельный документ на подпапку; общий преамбул — в `common/`.
+- Earlier local cube-transfer claims, including downstream retargeting,
+  MuJoCo execution, and policy-learning figures, are withdrawn from this
+  manuscript. The source recordings, calibration, and derived artifacts are
+  unavailable, so these figures must not be cited as results. The withdrawal
+  is documented in docs/2026-10-14-local-78-retraction.md.
+- The earlier HO-Cap two-sequence selected-pair pilot is retained only as
+  historical in-sample development evidence. The full eight-view cohort is
+  reproducible from the archived numerical JSON; its MANO/object references
+  are still semi-automatic labels, not metrological ground truth for the
+  local Kinect rig. See `docs/2026-10-13-hocap-real-sample-pilot.md`.
+- Simulated robot execution is not a real-robot or sim-to-real validation.
+  No RL training or deployed visual policy is claimed.
 
-| Папка | Документ | Что это |
-|---|---|---|
-| `thesis/` | `thesis.pdf` | основной текст ВКР на английском (50 стр.), abstract EN + RU |
-| `annotation-ru/` | `annotation_ru.pdf` | аннотация на русском (18 стр.), самостоятельный документ |
-| `demo/` | `demo.pdf` | демо-документ (RU), самостоятельный |
-| `common/` | — | `preamble.tex` (шрифты, геометрия, макросы, нотация) + `latex.mk` |
+The old local-result generator is not part of the current manuscript build;
+do not restore its figures or tables without preserved source episodes and a
+new verification protocol. The thesis PDF can be rebuilt from the retained
+HO-Cap evidence and current text.
 
-## Сборка
-
-Требуется **XeLaTeX** (кириллица через polyglossia + fontspec, шрифт FreeSerif).
-Каждая подпапка — свой `Makefile`, двойной прогон (оглавление + перекрёстные
-ссылки) уже внутри цели:
-
-```bash
-make                # все документы
-make thesis         # только thesis/thesis.pdf
-make -C annotation-ru
-make clean          # убрать промежуточные файлы (.aux/.log/…), PDF остаются
-make distclean      # убрать и PDF
-```
-
-`common/latex.mk` подставляет `TEXINPUTS=../common:` — поэтому `\input{preamble}`
-в исходниках трогать не нужно. Источники — ручной `thebibliography`, biber/bibtex
-не запускается.
-
-## Структура `thesis/`
-
-| Файл | Содержание |
-|---|---|
-| `thesis.tex` | титул, abstract EN/RU, благодарности, оглавление, `\input` глав |
-| `ch1_introduction.tex` | введение, research questions, гипотезы H1–H3, FINER |
-| `ch2_literature.tex` | обзор литературы (Preamble / Body / Conclusion по гайду) |
-| `ch3_methodology.tex` | архитектура, калибровка, синхронизация, fusion, cost functional |
-| `ch4_implementation.tex` | реализация, протокол оценки, таблицы результатов (заглушки) |
-| `ch5_discussion.tex` | интерпретация, error budget, ограничения, threats to validity |
-| `ch6_conclusion.tex` | выводы, ответы на RQ, future work |
-| `references.tex` | список источников в стиле IEEE (`thebibliography`) |
-| `appendix.tex` | нотация, схема датасета, конфигурация солвера |
-
-## Заглушки
-
-Все незаполненные значения обёрнуты в макрос `\ph{...}` и отрисованы тёмно-красным.
-Найти все разом:
-
-```bash
-grep -rn '\\ph{' thesis/
-grep -rn '\\TODO{' thesis/
-```
-
-`\TODO{...}` — методологические указания о том, какой вывод корректно сделать
-при каком исходе эксперимента, а не просто «вставить число».
-
-## Что не вошло
-
-Обзор литературы отдельным .docx (`ViKi_LR_obzor_literatury.docx`, 12 стр.) в
-этот архив не включён — просили именно tex/pdf, а не docx. Его содержание
-практически целиком вошло во вторую главу `thesis.pdf`. Скажи, если нужен и он —
-могу восстановить и его тем же способом.
+The degree/regulation audit is in `paper/REGULATORY_AUDIT.md`; verify its
+conclusions against the applicable DSAI 2023 intake rules before filing.

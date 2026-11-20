@@ -3,6 +3,7 @@ k4a calibration blob, and falls back to identity (with a warning) when it does
 not."""
 
 import logging
+from types import SimpleNamespace
 
 from viki.perception import extract as ex
 
@@ -31,13 +32,19 @@ def test_load_projector_swallows_errors(tmp_path, monkeypatch):
     assert ex._load_projector(tmp_path, "kinect_0", {}) is None
 
 
-def test_extract_warns_on_identity_fallback(tmp_path, caplog):
+def test_extract_warns_on_identity_fallback(tmp_path, caplog, monkeypatch):
     import json
 
     import cv2
     import numpy as np
 
     from viki.episode import new_episode
+
+    # Projector selection must be testable without downloading detector weights.
+    monkeypatch.setattr(
+        ex, "load_backend",
+        lambda *args, **kwargs: SimpleNamespace(detect=lambda *args: None, close=lambda: None),
+    )
 
     ep = new_episode(tmp_path)
     raw = ep.raw_dir

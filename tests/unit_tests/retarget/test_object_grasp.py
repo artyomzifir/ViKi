@@ -53,7 +53,20 @@ def test_cube_grasp_holds_width_and_follows_object(tmp_path):
     assert carry_start < release_start < open_end
     np.testing.assert_allclose(result.opening[carry_start:release_start], 0.35)
     np.testing.assert_allclose(result.positions[carry_start:release_start, 1], positions[carry_start, 1])
-    np.testing.assert_allclose(result.opening[open_end:], 0.9)
+    np.testing.assert_allclose(result.opening[open_end:], 1.0)
+    np.testing.assert_allclose(
+        result.positions[release_start:open_end + 1, :2],
+        np.broadcast_to(result.positions[release_start, :2],
+                        (open_end - release_start + 1, 2)),
+    )
+    assert result.positions[open_end, 2] - result.positions[release_start, 2] == pytest.approx(0.06)
+    assert np.all(np.diff(result.positions[release_start:open_end + 1, 2]) > 0)
+    grasp_start = result.diagnostics["grasp_start"]
+    close_complete = result.diagnostics["close_complete"]
+    np.testing.assert_allclose(result.opening[:grasp_start], 1.0)
+    np.testing.assert_allclose(result.opening[close_complete:release_start], 0.35)
+    np.testing.assert_allclose(result.rotations[close_start:carry_start, 2, 1], 0, atol=1e-8)
+    assert result.diagnostics["prealign_start"] < close_start <= grasp_start < close_complete < carry_start
     assert np.all(result.phases[carry_start:release_start] == 2)
     np.testing.assert_allclose(result.rotations[carry_start:release_start, 2, 1], 0, atol=1e-8)
     np.testing.assert_allclose(result.rotations[carry_start:release_start, 2, 2], -1, atol=1e-8)
@@ -74,3 +87,21 @@ def test_cube_grasp_rejects_missing_transfer(tmp_path):
     np.savez_compressed(path, **arrays)
     with pytest.raises(ValueError, match="substantial cube transfer"):
         plan_cube_grasp(path, positions, rotations, opening, np.eye(4), 0.085, 0.04, 0.35)
+
+
+def test_cube_grasp_rejects_closing_far_from_object(tmp_path):
+    path, positions, rotations, opening = _episode_inputs(tmp_path)
+    positions[:35, 1] += 0.05
+    with pytest.raises(ValueError, match="does not approach the cube"):
+        plan_cube_grasp(path, positions, rotations, opening, np.eye(4), 0.085, 0.04, 0.35)
+
+
+def test_cube_grasp_can_start_with_observed_contact(tmp_path):
+    path, positions, rotations, opening = _episode_inputs(tmp_path)
+    with np.load(path) as model:
+        arrays = {key: model[key] for key in model.files}
+    arrays["contact"][:20] = True
+    np.savez_compressed(path, **arrays)
+    result = plan_cube_grasp(path, positions, rotations, opening, np.eye(4), 0.085, 0.04, 0.35)
+    assert result.diagnostics["prealign_start"] == 0
+    np.testing.assert_allclose(result.rotations[0, 2, 1], 0, atol=1e-8)

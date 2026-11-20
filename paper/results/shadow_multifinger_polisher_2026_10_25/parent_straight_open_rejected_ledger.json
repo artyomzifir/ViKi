@@ -1,0 +1,53 @@
+[
+  {
+    "index": 0,
+    "schedule": {
+      "anchor": 125,
+      "open_end": 145,
+      "retreat_start": 145,
+      "retreat_end": 170
+    },
+    "position_margin_rad": 0.0,
+    "velocity_margin_rad_s": 0.03922222487304561,
+    "max_ik_position_mm": 0.6751096952110086,
+    "max_ik_orientation_deg": 6.830189170123216e-06,
+    "floor_margin_m": 0.002846520810167265,
+    "self_collision_margin_m": -0.00019766016300719086,
+    "status": "rejected_geometry",
+    "frame": 132
+  },
+  {
+    "index": 1,
+    "schedule": {
+      "anchor": 130,
+      "open_end": 150,
+      "retreat_start": 150,
+      "retreat_end": 175
+    },
+    "position_margin_rad": 0.0,
+    "velocity_margin_rad_s": 0.03922222487304561,
+    "max_ik_position_mm": 0.6751430758905775,
+    "max_ik_orientation_deg": 7.277636184014613e-06,
+    "floor_margin_m": 0.002846520810167265,
+    "self_collision_margin_m": -7.767911459156181e-05,
+    "status": "rejected_geometry",
+    "frame": 137
+  },
+  {
+    "index": 2,
+    "schedule": {
+      "anchor": 125,
+      "open_end": 145,
+      "retreat_start": 125,
+      "retreat_end": 150
+    },
+    "position_margin_rad": 0.0,
+    "velocity_margin_rad_s": 0.03922222487304561,
+    "max_ik_position_mm": 0.6751096952110086,
+    "max_ik_orientation_deg": 6.830189170123216e-06,
+    "floor_margin_m": 0.002846520810167265,
+    "self_collision_margin_m": -0.00019766016300717178,
+    "status": "rejected_geometry",
+    "frame": 132
+  }
+]

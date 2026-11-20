@@ -4,7 +4,7 @@
 import { api, log, sessionGet, sessionSet, sessionPatch } from './core.js';
 import * as scene3d from './scene3d.js';
 
-let root = null, ctl = null, episodes = [], variants = [];
+let root = null, ctl = null, episodes = [], variants = [], planRequest = 0;
 
 export function mount(view) {
   const vs = sessionGet('viewer', { color: 'rgb', stride: 1 });
@@ -18,6 +18,9 @@ export function mount(view) {
       </label>
       <label class="viewer-field">Stage variant
         <select data-role="variant"><option value="active">active</option></select>
+      </label>
+      <label class="viewer-field">Robot plan
+        <select data-role="plan"><option value="default">Default plan</option><option value="tesollo_object">Tesollo DG5F · object plan</option><option value="shadow_object">Shadow Hand · object plan</option></select>
       </label>
       <div class="viewer-status" data-role="status">pick an episode</div>
       <div class="viewer-object-status" data-role="object-status" hidden></div>
@@ -109,6 +112,7 @@ async function openVariant(id, variant) {
   const build = root.querySelector('[data-role="build"]');
   status.textContent = 'loading variant…';
   const r = await ctl.loadEpisode(id, episodes, variant);
+  await loadPlan(id);
   setPlayIcon(false);
   build.hidden = r.hasCloud;
   const g = r.geo || {};
@@ -121,6 +125,22 @@ async function openVariant(id, variant) {
     : (g.n_frames
       ? `${g.n_frames} traj frames · no point cloud${sourceLabel}${objectLabel}`
       : (r.hasObjectModel ? `object model ${r.ometa.objects.length} · no point cloud` : 'not processed yet — run perception'));
+}
+
+async function loadPlan(id) {
+  const request = ++planRequest;
+  const artifact = root.querySelector('[data-role="plan"]').value;
+  ctl.setRetargetData(null);
+  const plan = await api('GET', `/api/pipeline/episode/${encodeURIComponent(id)}/retarget?artifact=${artifact}`);
+  if (request !== planRequest || !ctl) return;
+  if (artifact === 'tesollo_object') {
+    const option = root.querySelector('[data-role="plan"] option[value="tesollo_object"]');
+    option.textContent = plan?.solver_status === 'framewise_ik_whole_trajectory_validated'
+      ? `Tesollo DG5F · geometry passed · grasp ${plan.physical_status === 'failed' ? 'failed' : plan.physical_status === 'passed' ? 'passed' : 'unverified'}`
+      : 'Tesollo DG5F · diagnostic object plan';
+  }
+  if (plan?.ready) ctl.setRetargetData(plan);
+  else log(`Viewer: ${artifact} plan is unavailable for ${id}`, 'error');
 }
 
 function renderObjectStatus(summary) {
@@ -196,6 +216,10 @@ function onChange(e) {
   else if (el.dataset.role === 'variant') {
     const id = root.querySelector('[data-role="picker"]').value;
     if (id) openVariant(id, el.value);
+  }
+  else if (el.dataset.role === 'plan') {
+    const id = root.querySelector('[data-role="picker"]').value;
+    if (id) loadPlan(id).catch(e => log(String(e), 'error'));
   }
   else if (el.dataset.role === 'color') {
     ctl.setColorMode(el.value); sessionPatch('viewer', { color: el.value });

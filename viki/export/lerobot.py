@@ -1,15 +1,15 @@
 """
 viki.export.lerobot
 -------------------
-Write a LeRobot dataset from screened, labelled episodes (paper §3.9).
+Write a partial LeRobot dataset from labelled plans with an offline dry-run.
 
 Delegates to the ``lerobot`` package (``LeRobotDataset.create`` / ``add_frame`` /
 ``save_episode`` / ``finalize``). ``lerobot`` is an optional dependency
 (``pip install viki[export]``) because it pulls in torch.
 
 STUB status: the frame dict below is assembled from what ViKi actually has —
-replay-attained joint+gripper states, both wrist-trajectory forms, ω_t, the
-controller residual, and the phase label. Fields marked ``# placeholder`` are
+dry-run joint+gripper copies, both wrist-trajectory forms, ω_t, the
+unmeasured residual, and the phase label. Fields marked ``# placeholder`` are
 shape-correct but not yet meaningful; ``info.json`` is stamped
 ``viki_export_status="partial"``.
 """

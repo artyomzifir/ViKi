@@ -1,0 +1,182 @@
+{
+  "sequence_id": "subject_9-20231027_125315",
+  "view": "eight",
+  "source_archive": "subject_9-20231027_125315.tar",
+  "source_revision": "2b24836d5e51ad39e56ed4db3fc0c166e755332e",
+  "model": "mediapipe",
+  "inference_device": "cpu",
+  "profile": "hocap-mediapipe-triangulated-v1",
+  "reused_eight_view_detections": false,
+  "elapsed_seconds": 341.901,
+  "quality": "pass",
+  "depth_consistency": {
+    "105322251564": {
+      "serial": "105322251564",
+      "frames_used": 1136,
+      "all_joints": {
+        "n": 23856,
+        "median_mm": 10.821759700775146,
+        "p95_mm": 80.60586452484131
+      },
+      "wrist": {
+        "n": 1136,
+        "median_mm": 17.106622457504272,
+        "p95_mm": 29.976695775985718
+      },
+      "fingertips": {
+        "n": 5680,
+        "median_mm": 20.317256450653076,
+        "p95_mm": 90.81825613975526
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": true
+    },
+    "043422252387": {
+      "serial": "043422252387",
+      "frames_used": 1136,
+      "all_joints": {
+        "n": 23856,
+        "median_mm": 9.606897830963135,
+        "p95_mm": 54.53449487686157
+      },
+      "wrist": {
+        "n": 1136,
+        "median_mm": 12.934088706970215,
+        "p95_mm": 23.005500435829163
+      },
+      "fingertips": {
+        "n": 5680,
+        "median_mm": 19.285917282104492,
+        "p95_mm": 69.86160576343538
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": true
+    },
+    "037522251142": {
+      "serial": "037522251142",
+      "frames_used": 1064,
+      "all_joints": {
+        "n": 17253,
+        "median_mm": 30.121982097625732,
+        "p95_mm": 95.8268046379088
+      },
+      "wrist": {
+        "n": 1061,
+        "median_mm": 58.6966872215271,
+        "p95_mm": 121.53995037078857
+      },
+      "fingertips": {
+        "n": 3438,
+        "median_mm": 16.58269762992859,
+        "p95_mm": 72.15335965156547
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "105322251225": {
+      "serial": "105322251225",
+      "frames_used": 1136,
+      "all_joints": {
+        "n": 23856,
+        "median_mm": 8.381426334381104,
+        "p95_mm": 83.56399834156036
+      },
+      "wrist": {
+        "n": 1136,
+        "median_mm": 26.385843753814697,
+        "p95_mm": 200.5883753299713
+      },
+      "fingertips": {
+        "n": 5680,
+        "median_mm": 13.083100318908691,
+        "p95_mm": 86.10251545906077
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": true
+    },
+    "108222250342": {
+      "serial": "108222250342",
+      "frames_used": 1136,
+      "all_joints": {
+        "n": 23856,
+        "median_mm": 27.23035216331482,
+        "p95_mm": 87.7823680639267
+      },
+      "wrist": {
+        "n": 1136,
+        "median_mm": 28.16721796989441,
+        "p95_mm": 38.641780614852905
+      },
+      "fingertips": {
+        "n": 5680,
+        "median_mm": 34.16815400123596,
+        "p95_mm": 98.18652272224426
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "117222250549": {
+      "serial": "117222250549",
+      "frames_used": 1136,
+      "all_joints": {
+        "n": 23737,
+        "median_mm": 26.346683502197266,
+        "p95_mm": 98.06548357009889
+      },
+      "wrist": {
+        "n": 1136,
+        "median_mm": 30.74401617050171,
+        "p95_mm": 52.06359922885895
+      },
+      "fingertips": {
+        "n": 5619,
+        "median_mm": 53.72810363769531,
+        "p95_mm": 106.33424520492547
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "046122250168": {
+      "serial": "046122250168",
+      "frames_used": 1136,
+      "all_joints": {
+        "n": 23856,
+        "median_mm": 18.479853868484497,
+        "p95_mm": 102.24154591560364
+      },
+      "wrist": {
+        "n": 1136,
+        "median_mm": 35.97903251647949,
+        "p95_mm": 59.01089310646057
+      },
+      "fingertips": {
+        "n": 5680,
+        "median_mm": 21.492034196853638,
+        "p95_mm": 93.57412457466125
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    },
+    "115422250549": {
+      "serial": "115422250549",
+      "frames_used": 1029,
+      "all_joints": {
+        "n": 16203,
+        "median_mm": 29.094457626342773,
+        "p95_mm": 334.50289666652674
+      },
+      "wrist": {
+        "n": 1022,
+        "median_mm": 82.45515823364258,
+        "p95_mm": 381.45607858896255
+      },
+      "fingertips": {
+        "n": 3215,
+        "median_mm": 13.889014720916748,
+        "p95_mm": 298.58537018299097
+      },
+      "pass_threshold_mm": 15.0,
+      "passed": false
+    }
+  }
+}

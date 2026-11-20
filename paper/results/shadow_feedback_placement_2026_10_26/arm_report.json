@@ -1,0 +1,128 @@
+{
+  "schema": "shadow_feedback_placement_report_v1",
+  "selected_index": 1,
+  "selected": {
+    "index": 1,
+    "setting": {
+      "name": "firm",
+      "object_step_m": 0.003,
+      "object_turn_deg": 1.5,
+      "palm_accel_m": 0.0015,
+      "palm_angular_accel_deg": 0.75
+    },
+    "generation": {
+      "setting": {
+        "name": "firm",
+        "object_step_m": 0.003,
+        "object_turn_deg": 1.5,
+        "palm_accel_m": 0.0015,
+        "palm_angular_accel_deg": 0.75
+      },
+      "stage_at_end": "post",
+      "release_start_frame": 159,
+      "frames": 226,
+      "duration_s": 7.797579,
+      "align_height_m": 0.11929568078138851,
+      "anchor_observed_object": {
+        "position_m": [
+          0.09913017481305521,
+          0.06836727655071603,
+          0.306626444192999
+        ],
+        "rotation_matrix": [
+          [
+            0.91466270282197,
+            0.38608823270992254,
+            0.11969969352232755
+          ],
+          [
+            -0.403858186503696,
+            0.885352097870205,
+            0.23032635105600652
+          ],
+          [
+            -0.01705008094867451,
+            -0.259012623938984,
+            0.9657234362797082
+          ]
+        ]
+      },
+      "aborted": null,
+      "initial_palm_command_step_m": [
+        0.0008442946130946261,
+        0.0017751986342897652,
+        -0.0065368501830905534
+      ],
+      "command_margins": [
+        9.956153984580496e-08,
+        0.013624491037147912
+      ]
+    },
+    "command_sha256": "e3cf5fa0d2fb3a797ec2d791fffb92b3f3751b9a05fbeb8c27a7f06424a5b219",
+    "settle": {
+      "final_xy_error_mm": 8.394451980997774,
+      "final_z_error_mm": 1.523313740582205,
+      "final_orientation_error_deg": 13.30941318367508,
+      "final_upright_tilt_deg": 1.7667967611776347,
+      "last_1s_table_support_fraction": 1.0,
+      "last_1s_hand_force_steps": 0,
+      "last_1s_robot_table_steps": 0,
+      "last_1s_max_speed_m_s": 0.002846349283355646,
+      "last_1s_peak_position_drift_mm": 0.3717290142455305,
+      "last_1s_peak_rotation_drift_deg": 0.23644324639376724,
+      "placement_diagnostic_pass": true
+    },
+    "released": true,
+    "extended_placement_pass": true
+  },
+  "source_control": {
+    "score": 69.74211996495357,
+    "target_task_success": false,
+    "full_scene_success": false,
+    "frames": 190,
+    "object_position_mean_mm": 30.010631397025445,
+    "object_position_median_mm": 14.75812140538639,
+    "object_position_p95_mm": 100.70739031825968,
+    "final_object_error_mm": 100.57820872831472,
+    "max_lift_mm": 247.81824572743065,
+    "carry_object_error_p95_mm": 51.333197457438374,
+    "thumb_contact_frames": 115,
+    "finger_contact_frames": 114,
+    "opposing_contact_frames": 114,
+    "carry_opposing_contact_fraction": 1.0,
+    "simultaneous_positive_force_carry_fraction": 1.0,
+    "longest_carry_opposing_contact_gap_s": 0.0,
+    "carry_height_deficit_step_fraction": 0.08351101634683725,
+    "carry_drop_step_fraction": 0.08351101634683725,
+    "robot_table_contact_steps": 0,
+    "robot_other_object_contact_steps": 0,
+    "target_table_contact_steps": 7644,
+    "max_neighbor_displacement_mm": 17.261833996446132,
+    "final_neighbor_displacement_mm": 17.257399655829982,
+    "final_target_speed_m_s": 0.005130880881785247,
+    "release_no_hand_contact_last_15_frames": true,
+    "terminal_supported_last_15_frames": true,
+    "terminal_settled_last_15_frames": false,
+    "terminal_max_step_speed_m_s": 0.037572157802622776,
+    "wrist_relative_object_slip_60_to_98_mm": 8.905620305781335,
+    "max_thumb_normal_force_n": 10.793476248275978,
+    "max_finger_normal_force_n": 11.325034320843233,
+    "min_target_contact_distance_mm": -9.920925148626896,
+    "any_actuator_effort_saturation_steps": 0,
+    "arm_tracking_median_rad": 0.010398900333861982,
+    "hand_tracking_median_rad": 0.0021920158407632284
+  },
+  "original_task_gate_only_for_original_190_frame_source": false,
+  "accepted": false,
+  "selected_command_sha256": "e3cf5fa0d2fb3a797ec2d791fffb92b3f3751b9a05fbeb8c27a7f06424a5b219",
+  "review_correction": {
+    "reason": "initial extended settle pass allowed unsupported free fall before touchdown",
+    "first_support_speed_m_s": 0.7238830785709591,
+    "pre_support_triad_step_fraction": 0.6020583190394511,
+    "pre_support_longest_no_triad_gap_s": 0.464
+  },
+  "extended_placement_diagnostic_pass": true,
+  "controlled_touchdown_diagnostic_pass": false,
+  "full_scene_5mm_gate_pass": false,
+  "acceptance_note": "Object lands upright after loss of grip and high-speed impact; controlled touchdown and strict full-scene gates fail. Original190 phase-based task gate is not directly comparable."
+}

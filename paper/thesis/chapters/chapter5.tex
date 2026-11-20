@@ -1,0 +1,83 @@
+\chapter{Analysis and Discussion}
+\label{ch:disc}
+
+\section{What the Results Establish}
+\label{sec:interpretation}
+
+The retained eight-view HO-Cap evaluation covers 28 selected
+pick-and-place sequences from nine subjects. Prepared 21-joint hand
+predictions match all 623,826 valid reference joint slots, with
+10.79~mm matched-joint-weighted MPJPE against the dataset's published
+semi-automatic MANO fits. This is an external-system perception
+measurement, not evidence that the local Azure Kinect rig has the
+same accuracy. The object evaluation covers 112 named tracks, but it
+uses published instance masks and a reference-assisted first-frame
+SE(3) alignment. Its 5.44~mm translation and 7.58-degree rotation
+macro-means describe relative tracking drift conditional on those
+inputs, not absolute object localization or autonomous segmentation.
+
+\section{Error Sources and Reference Frames}
+\label{sec:errbudget}
+
+The hand and object numbers cannot be added into an end-to-end geometric
+error budget. The hand score is an absolute comparison in the HO-Cap
+world frame; the object score removes a per-object initial gauge
+difference. Both refer to semi-automatic annotations rather than an
+independent metrology system. The object tracker also receives masks
+generated outside ViKi, and static intervals are included alongside
+manipulation. Thus a small average object drift need not imply a
+sufficiently accurate grasp pose during contact.
+
+The outliers make this distinction operational. The projector remote
+\texttt{G18\_2} has 112.60-degree mean rotation error in one sequence
+at 98.63\% coverage, but only 6.97 degrees in another. The dandelion
+tea and toothpaste box have additional large orientation errors.
+The sauce bottle combines 2.82~mm mean translation error with
+56.57-degree mean orientation error. These tracks remain in the
+aggregate rather than being removed as failures. Symmetry-aware
+orientation scoring was not used; the visual review of the remote
+did not uniquely diagnose the failure. Conversely, the electric
+screwdriver is tracked for only 48.80\% of valid reference frames,
+so its conditional error does not describe the missing half.
+
+For the local two-Kinect system, camera geometry, RGB--depth alignment,
+exposure timing and table-height registration remain unquantified in
+this manuscript. The former local numerical summaries cannot be
+rechecked because their source recordings and derived artifacts are
+unavailable. Code paths and visually plausible clouds are not
+substitutes for a preserved evaluation protocol.
+
+\section{Statistical Validity and Attribution}
+\label{sec:validity}
+
+The HO-Cap selection is a single-hand pick-and-place subset, not the
+official held-out benchmark split. Subjects and hands are unevenly
+represented: 24 right-hand and four left-hand sequences. Joint slots
+within the same frames and object frames within the same sequence
+are correlated, so their large counts do not imply that many
+independent trials. The two-sequence camera-pair pilot was selected
+on the same development frames and cannot be interpreted as held-out
+evidence. The main eight-view aggregate is descriptive for this
+selected cohort; no causal claim about the benefit of camera count,
+training data or robot embodiment follows from it.
+
+No surviving local cube dataset supports the previous downstream
+figures. In particular, there is no verifiable local stage yield,
+simulated stacking rate, policy comparison or contact-safety result.
+The current manuscript therefore does not claim an end-to-end
+camera-to-simulation proof of concept or Real-to-Sim-to-Real transfer.
+
+\section{Scope and Implications}
+\label{sec:implications}
+
+The supported contribution is a reproducible external perception
+assessment, with explicit object identities, coverage, outliers and
+metric limitations, alongside an implemented offline software
+pipeline. The intended cube-transfer experiment remains a research
+question rather than a completed result. A new preserved local
+cohort should include measurement-only controls: known geometry at
+table and carry heights, a marked asymmetric object for orientation,
+and disjoint human trials. Retained simulator rollouts and matched
+no-demonstration baselines would then be needed before reporting
+physical task success or learning benefit. No physical UR10
+evaluation is part of the current evidence.

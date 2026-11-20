@@ -2,6 +2,7 @@
 nested {"color":..,"depth":..} form and broke _depth_K which expected flat)."""
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -31,13 +32,19 @@ def test_depth_K_empty_or_missing():
     assert _depth_K({"color": {"width": 1280}}) is None  # no fx
 
 
-def test_extract_episode_reads_nested_intrinsics(tmp_path):
+def test_extract_episode_reads_nested_intrinsics(tmp_path, monkeypatch):
     """End-to-end past the intrinsics read: synthetic raw/ with the nested form,
     two black frames -> no hand -> 0 records, but no KeyError and a rec.npz."""
     import cv2
 
     from viki.episode import new_episode, stage_done
     from viki.perception.extract import extract_episode
+
+    # This regression concerns image/calibration I/O, not model inference.
+    monkeypatch.setattr(
+        "viki.perception.extract.load_backend",
+        lambda *args, **kwargs: SimpleNamespace(detect=lambda *args: None, close=lambda: None),
+    )
 
     ep = new_episode(tmp_path)
     raw = ep.raw_dir

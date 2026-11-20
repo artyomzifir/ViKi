@@ -1,12 +1,10 @@
 """
 viki.replay.screen
 ------------------
-Feasibility screening of a replayed trajectory (paper §3.8).
+Numeric and joint-limit checks for an offline plan copy.
 
-Working: joint-limit violation from the robot model. STUB: singularity
-proximity, collision, and controller tracking-fault classification — these need
-the FK/Jacobian and a collision model, so for now they are not checked and the
-verdict falls through to ``pass`` (or ``dry-run`` when the residual is unmeasured).
+An accepted input receives ``dry-run``. Collision and task-level evaluation
+belong to the retarget solver and separate simulator experiments.
 """
 
 from __future__ import annotations
@@ -21,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Verdict:
-    verdict: str  # pass | reject | dry-run
-    cause: str  # "" | joint_limit | singularity | collision | tracking_fault
+    verdict: str  # reject | dry-run
+    cause: str  # "" | joint_limit
 
 
 def _joint_limits(robot_description: str):
@@ -55,24 +53,16 @@ def _joint_limits(robot_description: str):
 
 
 def screen(
-    q_attained: np.ndarray,
-    controller_residual: np.ndarray,
+    q_plan: np.ndarray,
     robot_description: str,
-    *,
-    residual_threshold: float = 0.05,
 ) -> Verdict:
-    q = np.asarray(q_attained, dtype=np.float64)
+    q = np.asarray(q_plan, dtype=np.float64)
+    if q.ndim != 2 or not q.size or not np.isfinite(q).all():
+        raise ValueError("plan must be a finite, non-empty (T, nq) trajectory")
 
     q_min, q_max = _joint_limits(robot_description)
     if q_min is not None and q.shape[1] == q_min.shape[0]:
         if np.any(q < q_min - 1e-6) or np.any(q > q_max + 1e-6):
             return Verdict("reject", "joint_limit")
 
-    resid = np.asarray(controller_residual, dtype=np.float64)
-    if not np.isfinite(resid).any():
-        return Verdict("dry-run", "")
-    if np.nanmax(resid) > residual_threshold:
-        return Verdict("reject", "tracking_fault")
-
-    # singularity / collision checks: not implemented (paper §3.8)
-    return Verdict("pass", "")
+    return Verdict("dry-run", "")

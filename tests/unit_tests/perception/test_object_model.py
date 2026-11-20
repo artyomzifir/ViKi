@@ -13,8 +13,11 @@ from viki.perception.object_model import (
     _Frame,
     _Model,
     _Track,
+    _camera_motion_seed,
     _classify_points,
+    _multiview_reacquisition_seed,
     _radius_components,
+    _track_model,
     build_object_models,
 )
 
@@ -71,6 +74,64 @@ def test_radius_components_separate_detached_clusters():
     components = _radius_components(points, 0.011)
 
     assert [len(part) for part in components] == [5, 3]
+
+
+def test_camera_motion_seed_accepts_only_consistent_fast_two_view_motion():
+    cfg = ObjectModelConfig(min_component_points=10)
+    offsets = {0: np.array([0.0, 0.0, 0.0]),
+               1: np.array([0.0, 0.01, 0.0])}
+    previous = {camera: offset.copy() for camera, offset in offsets.items()}
+    points = np.vstack([
+        np.tile(offset + np.array([step, 0.0, 0.0]), (30, 1))
+        for offset, step in ((offsets[0], 0.045), (offsets[1], 0.047))
+    ])
+    cameras = np.repeat([0, 1], 30)
+    predicted, centers = _camera_motion_seed(
+        points, cameras, np.zeros(3), previous, cfg)
+    np.testing.assert_allclose(predicted, [0.046, 0, 0], atol=1e-8)
+    assert set(centers) == {0, 1}
+
+    points[30:, 0] = 0.065
+    predicted, _ = _camera_motion_seed(points, cameras, np.zeros(3), previous, cfg)
+    np.testing.assert_allclose(predicted, [0, 0, 0], atol=1e-8)
+    predicted, _ = _camera_motion_seed(
+        points[:30], cameras[:30], np.zeros(3), previous, cfg)
+    np.testing.assert_allclose(predicted, [0, 0, 0], atol=1e-8)
+
+
+def test_multiview_reacquisition_requires_agreeing_cameras():
+    cfg = ObjectModelConfig()
+    offsets = {0: np.array([0.0, -0.01, 0.0]),
+               1: np.array([0.0, 0.01, 0.0])}
+    centers = {camera: offset + np.array([0.10, 0.0, 0.0])
+               for camera, offset in offsets.items()}
+    seed = _multiview_reacquisition_seed(centers, offsets, np.zeros(3), cfg)
+    np.testing.assert_allclose(seed, [0.10, 0, 0])
+
+    centers[1] += np.array([0.2, 0, 0])
+    assert _multiview_reacquisition_seed(centers, offsets, np.zeros(3), cfg) is None
+    assert _multiview_reacquisition_seed({0: centers[0]}, offsets, np.zeros(3), cfg) is None
+
+
+def test_object_track_reacquires_consistent_two_view_jump():
+    surface = _surface([0.0, 0.0, 0.0]).astype(np.float32)
+    camera = np.arange(len(surface), dtype=np.uint8) % 2
+    frames = []
+    for frame_index in range(20):
+        translation = np.array([0.10 if frame_index >= 10 else 0.0, 0.0, 0.5])
+        frames.append(_Frame(
+            xyz=(surface + translation).astype(np.float32),
+            initial_id=np.full(len(surface), 2, np.int32),
+            point_index=np.arange(len(surface), dtype=np.int32),
+            source_camera=camera,
+            operator_xyz=np.empty((0, 3), np.float32),
+        ))
+    track = _track_model(
+        frames, 2, surface, np.array([0.0, 0.0, 0.5]),
+        ObjectModelConfig(min_component_points=10), None, "test",
+    )
+    assert np.min(track.confidence[10:]) > 0.5
+    np.testing.assert_allclose(track.translation[-1], [0.10, 0.0, 0.5], atol=0.005)
 
 
 def test_object_model_rejects_persistent_detached_leak_and_tracks_motion(tmp_path):

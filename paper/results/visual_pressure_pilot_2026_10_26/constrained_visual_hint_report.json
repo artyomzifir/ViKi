@@ -1,0 +1,211 @@
+{
+  "mode": "visual_hint",
+  "status": "evaluated",
+  "scale": 0.25,
+  "residual": [
+    0.1,
+    0.09257304056987292,
+    0.04586786493731488,
+    0.0,
+    0.0003329828625090345,
+    0.0023713783534879333,
+    0.008592909556176876,
+    0.0
+  ],
+  "optimization": {
+    "mode": "visual_hint",
+    "weights": [
+      1.5348709329509906,
+      1.4651290670490094
+    ],
+    "x0": [
+      0.08,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "x_opt": [
+      0.13029216227949167,
+      0.18347145974925952,
+      0.001331931450036138,
+      0.009485513413951733,
+      0.034371638224707506
+    ],
+    "source_score": 997.6034342563992,
+    "optimized_score": 0.542428793035263,
+    "optimizer_success": true,
+    "optimizer_message": "Optimization terminated successfully",
+    "iterations": 35,
+    "evaluations": {
+      "objective": 243,
+      "constraint": 279
+    },
+    "source_constraint_min_m": 0.0013613620816721721,
+    "endpoint_constraints_m": [
+      0.0342564047661745,
+      0.0025911129855786755,
+      0.030718747834898835,
+      0.0029884463181762315,
+      0.028816484652969238,
+      0.0029586478149481532,
+      0.02655485472729785,
+      0.0026896464412168183,
+      0.02405306044916375,
+      0.002223929173815153,
+      0.020819405034372185,
+      0.0008521483261094912,
+      0.038294127392768856,
+      -1.348923277621865e-07,
+      0.038294127392768856,
+      -1.3489232780555457e-07,
+      0.038294127392768856,
+      -1.3489232773768352e-07
+    ],
+    "endpoint_local_gaps_mm": [
+      [
+        0.038957001691571416,
+        0.9703982829892966
+      ],
+      [
+        0.11211529883414094,
+        -0.04424772854032856
+      ],
+      [
+        1.0023318600011388,
+        1.074175114242712
+      ]
+    ]
+  },
+  "screen": {
+    "mode": "visual_hint",
+    "scale": 0.25,
+    "five_parameters_rad": [
+      0.09257304056987292,
+      0.04586786493731488,
+      0.0003329828625090345,
+      0.0023713783534879333,
+      0.008592909556176876
+    ],
+    "total_residual_rad": [
+      0.1,
+      0.09257304056987292,
+      0.04586786493731488,
+      0.0,
+      0.0003329828625090345,
+      0.0023713783534879333,
+      0.008592909556176876,
+      0.0
+    ],
+    "position_margin_rad": 9.006836276803654e-08,
+    "command_velocity_margin_rad_s": 0.013624491037147912,
+    "floor_margin_m": 0.0028861727479619903,
+    "screened_self_margin_m": 0.00022931083225965457,
+    "bad_frame": null,
+    "status": "feasible"
+  },
+  "metrics": {
+    "score": 69.65077347855454,
+    "target_task_success": false,
+    "full_scene_success": false,
+    "frames": 190,
+    "object_position_mean_mm": 29.94855063159257,
+    "object_position_median_mm": 14.308168419637136,
+    "object_position_p95_mm": 95.5927912791302,
+    "final_object_error_mm": 95.59915161526415,
+    "max_lift_mm": 248.02920714375009,
+    "carry_object_error_p95_mm": 51.66868347694283,
+    "thumb_contact_frames": 115,
+    "finger_contact_frames": 114,
+    "opposing_contact_frames": 114,
+    "carry_opposing_contact_fraction": 1.0,
+    "simultaneous_positive_force_carry_fraction": 1.0,
+    "longest_carry_opposing_contact_gap_s": 0.0,
+    "carry_height_deficit_step_fraction": 0.08422174840085288,
+    "carry_drop_step_fraction": 0.08422174840085288,
+    "robot_table_contact_steps": 0,
+    "robot_other_object_contact_steps": 0,
+    "target_table_contact_steps": 7631,
+    "max_neighbor_displacement_mm": 17.261833996446143,
+    "final_neighbor_displacement_mm": 17.25739965582999,
+    "final_target_speed_m_s": 0.00578951333147251,
+    "release_no_hand_contact_last_15_frames": true,
+    "terminal_supported_last_15_frames": true,
+    "terminal_settled_last_15_frames": false,
+    "terminal_max_step_speed_m_s": 0.0400423176637203,
+    "wrist_relative_object_slip_60_to_98_mm": 8.741288673167794,
+    "max_thumb_normal_force_n": 11.148982413509827,
+    "max_finger_normal_force_n": 11.846678205717435,
+    "min_target_contact_distance_mm": -9.845429824103356,
+    "any_actuator_effort_saturation_steps": 0,
+    "arm_tracking_median_rad": 0.01039862746345721,
+    "hand_tracking_median_rad": 0.0022495942462169745
+  },
+  "digits": {
+    "carry_digit_active_fraction": [
+      1.0,
+      0.9996446339729922,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "carry_digit_mean_force_n": [
+      4.839162632562946,
+      2.8390646050968735,
+      2.2746713615121577,
+      0.0,
+      0.0
+    ],
+    "carry_thumb_plus_two_fraction": 0.9996446339729922,
+    "release_digit_active_fraction": [
+      0.8438242280285035,
+      0.8461995249406176,
+      0.04453681710213777,
+      0.0,
+      0.0
+    ],
+    "release_thumb_plus_two_fraction": 0.04453681710213777,
+    "terminal_digit_active_fraction": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "static_hold": {
+    "lift_from_settled_mm": 238.57980677588907,
+    "slip_2s_mm": 14.399427805399148,
+    "peak_slip_2s_mm": 14.399427805399148,
+    "z_drop_2s_mm": 18.161791821996232,
+    "peak_z_drop_2s_mm": 18.161791821996232,
+    "last_1s_drift_mm": 9.478298945174025,
+    "peak_last_1s_drift_mm": 9.478298945174025,
+    "relative_rotation_2s_deg": 21.284241106858104,
+    "peak_relative_rotation_2s_deg": 21.284241106858104,
+    "target_support_step_fraction_2s": 0.0,
+    "target_support_step_fraction_last_1s": 0.0,
+    "robot_table_contact_steps_2s": 0,
+    "airborne_unpinned": true,
+    "triad_last_1s_fraction": 1.0,
+    "digit_active_last_1s_fraction": [
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    "mean_force_last_1s_n": [
+      3.809624182891739,
+      2.152472153191501,
+      1.7563328803360299,
+      0.0,
+      0.0
+    ],
+    "static_score": 63.32375967942751,
+    "static_pass": false
+  },
+  "sampled_actual_velocity_margin_rad_s": 0.024064585278538386,
+  "command_sha256": "b31c9011edc4151c66c6310a0a4927ce44f1f0def507cb61ca3d3e7b3cde3036",
+  "accepted": false
+}

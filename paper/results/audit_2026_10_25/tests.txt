@@ -1,0 +1,29 @@
+ Container viki-test-run-5a0c02792fdc Creating 
+ Container viki-test-run-5a0c02792fdc Created 
+........................................................................ [ 13%]
+........................................................................ [ 27%]
+........................................................................ [ 40%]
+........................................................................ [ 54%]
+........................................................................ [ 67%]
+........................................................................ [ 81%]
+....................................................................s..s [ 95%]
+ss........................                                               [100%]
+=============================== warnings summary ===============================
+tests/unit_tests/retarget/test_batch_solver.py: 37 warnings
+  /usr/local/lib/python3.10/dist-packages/osqp/interface.py:405: PendingDeprecationWarning: The default value of raise_error will change to True in the future.
+    warnings.warn(
+
+tests/unit_tests/retarget/test_obstacles.py::test_object_barrier_jacobian_and_contact_exemption
+  /usr/local/lib/python3.10/dist-packages/xacro/__init__.py:115: DeprecationWarning: private variables, such as '_ConstructUnits__ConstructUnitsValue', will be normal attributes in 3.11
+    __ConstructUnitsValue = collections.namedtuple('__ConstructUnitsValue', ['tag', 'conversion_constant'])
+
+tests/unit_tests/retarget/test_obstacles.py::test_object_barrier_jacobian_and_contact_exemption
+  /usr/local/lib/python3.10/dist-packages/cmeel.prefix/lib/python3.10/site-packages/hppfcl/__init__.py:3: DeprecationWarning: Please update your 'hppfcl' imports to 'coal'
+    warnings.warn(
+
+../usr/local/lib/python3.10/dist-packages/_pytest/cacheprovider.py:469
+  /usr/local/lib/python3.10/dist-packages/_pytest/cacheprovider.py:469: PytestCacheWarning: could not create cache path /app/.pytest_cache/v/cache/nodeids: [Errno 13] Permission denied: '/app/pytest-cache-files-hseofqwm'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+526 passed, 10 skipped, 40 warnings in 28.17s

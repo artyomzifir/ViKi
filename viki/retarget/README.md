@@ -3,7 +3,11 @@
 The PoC consumes the hand landmarks and palm orientation in `cln.npz` and writes one self-contained
 `plan.h5`. The frame boundary is explicit:
 
-- `cln.npz` has `coordinate_frame == "rig"` (reference-camera rig);
+- Local `cln.npz` has `coordinate_frame == "rig"` (reference-camera rig);
+- HO-Cap episodes explicitly retain `coordinate_frame == "hocap_tag_1"`; the retarget input is already in the published tag_1 world frame, so its input-to-plan transform is identity and the plan keeps `hocap_tag_1`. This path is selected only when episode metadata has `source: hocap` and `hocap_world_frame: tag_1`. It does not relabel HO-Cap as a local rig or reuse a local Kinect anchor;
+- For the offline HO-Cap trajectory benchmark, pass `--approach-sec 0`: the synthetic path from robot home to the first human pose is not part of the recorded demonstration and its safety is not established by the benchmark. The recorded trajectory still undergoes joint, velocity, tabletop and self-collision checks;
+- `--velocity-limit-scale 2` is an offline diagnostic override: it doubles the URDF joint-speed bounds inside IK and archives both the scale and the margin against the unscaled URDF. Plans with a scale above 1 are not UR10 hardware-ready and must not be counted as physical-feasibility results;
+- `--hand-to-ee-rpy-deg R P Y` overrides the fixed palm-to-TCP rotation for a named experiment; the HO-Cap left-hand clips require checking this mapping rather than applying the right-hand calibration blindly;
 - protected V1 artifacts labelled `robot_base` are recognised as the historical
   metadata bug they are; their arrays still take this same rig-frame path;
 - the episode's `raw/world_anchor.json:T_world_display` maps rig coordinates to
@@ -17,7 +21,52 @@ The PoC consumes the hand landmarks and palm orientation in `cln.npz` and writes
   or by clearing the Retarget-tab checkbox. After retarget,
   `viki object-relative <episode>` writes a diagnostic relative trajectory.
 
+## Parallel offline constraint checking
+
+`trajectory_constraint_margins(..., workers=N)` keeps the exact joint, velocity, floor and mesh-collision checks. For `N>1` it partitions independent frames across forked CPU processes, each with private mutable Pinocchio data; `workers=1` retains the original serial path. This is for offline Unix/Linux callers, not a threaded web worker. The Tesollo 190-frame experiment defaults to up to 8 processes and accepts `--constraint-workers N`; use `1` for a serial reference. CUDA is not used for these exact hpp-fcl mesh distances.
+
 ## Experimental object-aware cube grasp
+
+### HO-Cap single-object side-grasp pilot
+
+An explicit `--object-grasp --object-track-path <object_models.npz> --object-id N`
+selects an experimental, non-default rigid-track planner instead of the local
+40-mm-cube planner. It accepts only an aligned `hocap_tag_1` prepared trajectory
+and a selected object with a complete, confident track. It infers approach,
+lift, placement and withdrawal from the hand/object tracks, estimates the
+object's cross-section at the human grasp height, chooses the side or top jaw
+orientation closest to the observed tool pose, holds a constant
+URDF-calibrated pad separation during carry, and follows an object-fixed
+grasp point. Ambiguous transfers and objects wider than the gripper fail
+closed. No local `world_anchor.json` is used or relabelled for this mode.
+
+`--object-contact-overlap-mm N` (0–12, default 6) is an opt-in tuning
+parameter for this explicit-track mode only. It subtracts `N` millimetres
+from the observed object cross-section when inverting the URDF pad-centre
+opening; it does not specify a contact force or guarantee a physical overlap.
+The one-scene MuJoCo sensitivity check found that 4 mm raised peak lift
+slightly but all tested gaps still lost the object. See the dated pilot report.
+
+The mode is a one-scene geometric pilot, not a generic object-grasp policy.
+The HO-Cap object models currently use supplied oracle instance masks and a
+first-frame reference-pose alignment; they do not provide independent absolute
+object pose. For explicit tracked-object mode, IK treats every tracked object
+as an oriented box enclosing its canonical point cloud. The robot collision
+bodies avoid all boxes except that Robotiq geometry may contact the selected
+object during close/carry/release. From the start of closing through the start
+of release, a box rigidly attached to the TCP also avoids all *other* tracked
+boxes. These are hard, per-frame signed-distance QP barriers with a 5 mm
+model clearance. Missing or low-confidence tracks fail
+closed, and an infeasible path produces no plan. The boxes are cloud-derived
+proxies, not official meshes: incomplete clouds, registration error, between-frame
+motion, unmodelled humans and real contact remain outside the guarantee. The
+solver does not invent a new path around an obstacle; if the recorded object
+path itself collides, it must deviate from the target or reject it. Independent
+IK clips stitched later are **not** jointly collision-checked at the seams.
+The local cube mode still uses its older object-grasp heuristic, not these
+tracked-scene barriers. Grasp force and simulator contact are not modelled;
+a converged IK plan alone does not demonstrate a physical grasp. See
+`docs/2026-10-14-hocap-object-grasp-pilot.md` for the controlled A/B protocol.
 
 `viki retarget <episode>` (cube-aware by default) requires prepared
 `cln.npz`, `raw/world_anchor.json`, and a current `object_models.npz` with
@@ -30,17 +79,29 @@ perpendicular side planes in the static canonical cloud. Missing or ambiguous
 evidence raises an error; it never silently falls back to hand-only IK.
 
 The planner infers approach, close, carry, release and retreat intervals from
-the object translation and proximity-contact track. It ramps the opening to
-the specified cube edge minus 2 mm, holds that commanded width throughout
-carry, then opens after placement. The target TCP position during carry follows
+the object translation and proximity-contact track. In the v3 grasp mode it
+pre-aligns the jaws to the selected cube faces, keeps them fully open during
+approach, and starts closing only after the task point is close to the cube.
+If it cannot reach the cube early enough to close before lift, it rejects the
+episode instead of executing an edge-first pickup. It commands a pad-centre
+separation of the cube edge minus 2 mm during carry, then opens fully after
+placement. The target TCP position during carry follows
 the observed object translation with a fixed pickup offset; the local Robotiq
 jaw axis is aligned horizontally to one supported side-plane normal and its
 tool axis points downward. The closest of the two face pairs to the observed
-human approach is used. Orientation is held during carry rather than following
-the known-unreliable per-frame object rotation. Both pose and opening blend
-into and out of the phase; ordinary joint, floor and self-collision constraints
-still apply. Phase bounds and the selected plane normals are saved in the plan
-metrics and displayed in the Retarget tab.
+human approach is used. Orientation is held from first contact through carry
+rather than following the known-unreliable per-frame object rotation. Ordinary
+joint, floor and self-collision constraints still apply. Phase bounds, the
+pre-alignment/closing frames, and the selected plane normals are saved in the
+plan metrics and displayed in the Retarget tab.
+On release the target holds its horizontal position and rises 60 mm while the
+jaws open, then stays above the target cube until it has moved laterally clear.
+This avoids sweeping the right distal phalanx through the green support in the
+five-scene MuJoCo pilot; it is a cube-specific heuristic, not an object
+collision constraint. The batch driver rejects plans exceeding 20 mm overall
+position RMSE, 15 mm pickup-to-release RMSE or 20 mm pickup-to-release p95,
+even if numerical optimisation says "converged". A large error confined to
+the later retreat is reported but is not mistaken for a failed grasp.
 
 The opening command is inverted through the attached gripper's URDF
 contact-panel geometry. For Robotiq 2F-85, a naive normalised "38 mm" command
@@ -52,11 +113,15 @@ linear nominal command width). Export schema v4 carries it unchanged.
 This is an **offline geometric experiment**, not a force/contact controller.
 The width is a position command, not measured clamp force; the model may be
 larger than the nominal cube, the phase/contact detection is heuristic, and
-neither object collision nor simulation success is checked. The mode is
+neither object collision nor simulation success is checked. The tabletop
+half-space does not avoid collisions with objects or people. The mode is
 enabled by default for the current cube-transfer setup and supports only
 Robotiq 2F-85 for now. Other tasks must explicitly opt out until their object
 models and grasp policy are supported. See
-`docs/2026-10-06-cube-object-grasp.md` for the measured pilot.
+`docs/2026-10-06-cube-object-grasp.md` for the earlier geometric pilot and
+`experiments/2026-10-09-status.md` for the separate MuJoCo contact pilot. The
+simulator's phase-limited pressure offset is not encoded in `plan.h5` and does
+not establish a calibrated physical grasp force.
 
 For the default two-finger semantics, target position is
 `(thumb_tip + index_tip) / 2`, target orientation is the stable palm frame, and
@@ -82,10 +147,18 @@ editable until it is replaced by a physical hand-to-tool calibration.
 The batch trajectory is initialised and regularised around the selected robot's
 registered `home_q` by default (`reference_policy=robot_home`).  This biases the
 solve toward the upper-workspace IK branch and selected that branch throughout
-some, but not all, measured UR10 scenes.  `zero` remains available for legacy
-comparisons.  Every plan records the policy and reference vector, plus
+some, but not all, measured UR10 scenes.  `zero` remains available for
+explicit experiments. Every plan records the policy and reference vector, plus
 wrist-above-target and tool-axis-hemisphere diagnostics; the later approach
 still starts from the robot's registered hardware home in either policy.
+
+For the HO-Cap hand-only batch, `--reference-policy zero` is explicit and the
+synthetic home approach is disabled. On two complete episodes this avoided a
+bad joint branch that produced hundreds of millimetres of error with the
+`robot_home` reference; it does not change the local-capture default or
+establish safe motion from hardware home. The HO-Cap batch also selects an
+explicit palm-to-TCP rotation from single-hand episode metadata (left/right).
+See `docs/2026-10-14-hocap-retarget-full-smoke.md` for measured A/B results.
 
 ## Interchangeable grippers
 
@@ -152,14 +225,15 @@ Gauss–Newton iteration builds one sparse QP with:
 - fixed Tikhonov damping of each Gauss–Newton QP (the retained configuration
   key is `RETARGET_LM_DAMPING`; this is not adaptive Levenberg–Marquardt);
 - hard joint and velocity limits;
-- a hard calibration-floor half-space (`z >= 0`) for the lowest support point
+- a hard tabletop half-space (`z >= RETARGET_TABLE_PLANE_Z_M`, default `0 m` in the calibration frame) for the lowest support point
   of every movable URDF collision body (arm, adapter and gripper), plus both
   gripper contact centres. Mesh support vertices and primitive dimensions are
   evaluated at the current rotation, with a feasibility-preserving backtracking
   check after every non-linear step. The fixed pedestal is excluded because it
   defines the mounting plane and cannot be changed by IK. The plane is
-  transformed into robot coordinates, so it remains the physical floor even
-  when the base rotates;
+  transformed into robot coordinates, so the configured plane stays fixed even
+  when the base rotates. This is an infinite horizontal plane, not a finite
+  tabletop mesh; set its height from the episode geometry before retargeting;
 - linearised Pink self-collision barriers from URDF collision geometry.
 
 UR continuous joints are optimised as physical joint angles (`nv`), not as

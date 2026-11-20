@@ -16,7 +16,7 @@ server calls — the CLI just parses args and prints results.
     viki prepare  <episode>
     viki geometry-fit <episode>        # clean cln -> anatomical A/B variants
     viki retarget <episode> --robot ur3
-    viki replay   <episode> [--driver dryrun|ur3]
+    viki replay   <episode>            # optional offline dry-run
     viki label    <episode> --task "..." --outcome good
     viki export   --out data/datasets/pick <episode>...
     viki run      <episode>            # core pipeline; --scene-objects adds scene branch
@@ -291,14 +291,24 @@ def _cmd_retarget(a) -> None:
         for key, value in {
             "gripper": a.gripper,
             "target_position_anchor": a.target_anchor,
+            "pose_source": a.pose_source,
             "base_position": a.base_position,
             "base_rpy_deg": a.base_rpy_deg,
+            "reference_policy": a.reference_policy,
+            "table_plane_z_m": a.table_plane_z_m,
+            "approach_sec": a.approach_sec,
+            "velocity_limit_scale": a.velocity_limit_scale,
+            "hand_to_ee_rpy_deg": a.hand_to_ee_rpy_deg,
             "adapter_translation_mm": a.adapter_offset_mm,
             "adapter_rpy_deg": a.adapter_rpy_deg,
             "adapter_radius_mm": a.adapter_radius_mm,
             "sequential_baseline": a.sequential_baseline,
             "object_grasp": a.object_grasp,
             "object_cube_side_mm": a.object_cube_side_mm,
+            "object_track_path": a.object_track_path,
+            "object_id": a.object_id,
+            "object_contact_overlap_mm": a.object_contact_overlap_mm,
+            "object_insertion_depth_mm": a.object_insertion_depth_mm,
         }.items()
         if value is not None
     }
@@ -314,7 +324,7 @@ def _cmd_object_relative(a) -> None:
 def _cmd_replay(a) -> None:
     from viki.replay import replay_episode
 
-    print(replay_episode(_episode(a.episode), driver=a.driver, max_resolves=a.max_resolves))
+    print(replay_episode(_episode(a.episode)))
 
 
 def _cmd_label(a) -> None:
@@ -354,12 +364,58 @@ def _cmd_viz(a) -> None:
     print(out)
 
 
+def _cmd_hocap_import(a) -> None:
+    from viki.benchmark.hocap import import_sequence, render_report
+
+    result = import_sequence(
+        a.hocap_root,
+        a.subject,
+        a.sequence,
+        out_root=a.out,
+        cameras=a.cameras,
+        fps=a.fps,
+        max_frames=a.max_frames,
+        overwrite=a.force,
+        viki_episode_dir=a.viki_ref,
+        run_backend_check=a.backend_check,
+        run_pipeline_check=a.pipeline_check,
+        depth_frame=a.depth_frame,
+    )
+    if result.skipped and not result.acceptance:
+        print(f"SKIPPED {a.subject}/{a.sequence}: {result.skipped[0]['reason']}")
+        return
+    print(result.summary())
+    report_path = result.episode_dir / "hocap_import.md"
+    render_report([result], out_path=report_path)
+    print(f"report: {report_path}")
+    if a.report:
+        print(f"report: {render_report([result], out_path=a.report)}")
+
+
+def _cmd_hocap_evaluate(a) -> None:
+    import json
+
+    from viki import benchmark
+
+    from viki.perception.profiles import HOCAP_STABLE_FUSED_HAND_V4
+
+    result = benchmark.evaluate_episode(
+        a.episode,
+        expected_profile=None if a.allow_legacy_landmarks else HOCAP_STABLE_FUSED_HAND_V4,
+    )
+    payload = json.dumps(result, indent=2)
+    if a.out:
+        output = Path(a.out)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(payload + "\n")
+    print(payload)
+
+
 def _cmd_run(a) -> None:
     from viki.episode import stage_done
     from viki.perception.extract import extract_episode
     from viki.perception.profiles import DEFAULT_PERCEPTION_PROFILE
     from viki.prepare.run import prepare_episode
-    from viki.replay import replay_episode
     from viki.retarget import config_from_options, retarget_episode
 
     ep = _episode(a.episode)
@@ -404,7 +460,6 @@ def _cmd_run(a) -> None:
         from viki.object_centric import build_object_relative_episode
 
         steps.append(("object_relative", lambda: build_object_relative_episode(ep)))
-    steps.append(("replay", lambda: replay_episode(ep, driver=a.driver)))
     for name, fn in steps:
         # The scene branch owns two resumable stages and validates their
         # artifacts internally; there is intentionally no synthetic `scene`
@@ -650,6 +705,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pt.add_argument("episode")
     pt.add_argument("--robot", default=None)
     pt.add_argument("--gripper", default=None)
+    pt.add_argument("--pose-source", choices=["landmarks", "hand_fit"], default=None)
     pt.add_argument(
         "--target-anchor",
         choices=["pinch_center", "wrist"],
@@ -657,11 +713,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     pt.add_argument("--base-position", nargs=3, type=float, default=None)
     pt.add_argument("--base-rpy-deg", nargs=3, type=float, default=None)
+    pt.add_argument("--reference-policy", choices=["robot_home", "zero"], default=None)
+    pt.add_argument("--table-plane-z-m", type=float, default=None)
+    pt.add_argument("--approach-sec", type=float, default=None)
+    pt.add_argument(
+        "--velocity-limit-scale", type=float, default=None,
+        help="offline diagnostic multiplier for URDF joint-speed limits (1–5; >1 is not hardware-ready)",
+    )
     pt.add_argument("--adapter-offset-mm", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-rpy-deg", nargs=3, type=float, default=None)
+    pt.add_argument("--hand-to-ee-rpy-deg", nargs=3, type=float, default=None)
     pt.add_argument("--adapter-radius-mm", type=float, default=None)
     pt.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
     pt.add_argument("--object-cube-side-mm", type=float, default=None)
+    pt.add_argument("--object-track-path", default=None)
+    pt.add_argument("--object-id", type=int, default=None)
+    pt.add_argument("--object-contact-overlap-mm", type=float, default=None)
+    pt.add_argument("--object-insertion-depth-mm", type=float, default=None)
     pt.add_argument(
         "--sequential-baseline",
         action="store_true",
@@ -677,10 +745,8 @@ def _build_parser() -> argparse.ArgumentParser:
     por.add_argument("episode")
     por.set_defaults(func=_cmd_object_relative)
 
-    prp = sub.add_parser("replay", help="plan.h5 -> replay.h5 (stub stage)")
+    prp = sub.add_parser("replay", help="optional offline plan dry-run -> replay.h5")
     prp.add_argument("episode")
-    prp.add_argument("--driver", default="dryrun", choices=["dryrun", "ur3"])
-    prp.add_argument("--max-resolves", type=int, default=0)
     prp.set_defaults(func=_cmd_replay)
 
     pl = sub.add_parser("label", help="get/set episode labels")
@@ -697,7 +763,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--format", choices=["trajectory", "lerobot"], default="trajectory",
         help="trajectory: self-contained npz bundle, no optional deps (default). "
              "lerobot: policy-training dataset with video; needs viki[export] and "
-             "episodes that have been replayed and screened",
+             "labelled episodes with an accepted offline dry-run",
     )
     px.add_argument("--name", default=None, help="dataset name in the manifest")
     px.add_argument("--fps", type=int, default=15, help="lerobot format only")
@@ -709,15 +775,37 @@ def _build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--out", default=None, help="PNG path (default: <episode>/viz-<stage>.png)")
     pv.set_defaults(func=_cmd_viz)
 
+    phc = sub.add_parser("hocap-import", help="import a multi-view HO-Cap sequence")
+    phc.add_argument("hocap_root")
+    phc.add_argument("--subject", required=True)
+    phc.add_argument("--sequence", required=True)
+    phc.add_argument("--cameras", nargs="+", metavar="CAM")
+    phc.add_argument("--out", default="data/datasets/hocap")
+    phc.add_argument("--fps", type=float, default=None)
+    phc.add_argument("--max-frames", type=int, default=None)
+    phc.add_argument("--force", action="store_true")
+    phc.add_argument("--viki-ref", default=None)
+    phc.add_argument("--report", default=None)
+    phc.add_argument("--backend-check", action="store_true")
+    phc.add_argument("--pipeline-check", action="store_true")
+    phc.add_argument("--depth-frame", choices=["color", "sensor"], default="color")
+    phc.set_defaults(func=_cmd_hocap_import)
+
+    phe = sub.add_parser("hocap-evaluate", help="score an imported HO-Cap episode")
+    phe.add_argument("episode")
+    phe.add_argument("--out", default=None)
+    phe.add_argument("--allow-legacy-landmarks", action="store_true",
+                     help="explicitly score an archived landmark-only HO-Cap episode")
+    phe.set_defaults(func=_cmd_hocap_evaluate)
+
     prn = sub.add_parser(
         "run",
-        help="extract -> prepare -> [scene perception] -> retarget -> replay",
+        help="extract -> prepare -> [scene perception] -> retarget -> [object-relative]",
     )
     prn.add_argument("episode")
     prn.add_argument("--robot", default=None)
     prn.add_argument("--object-grasp", action=argparse.BooleanOptionalAction, default=None)
     prn.add_argument("--backend", default=None)
-    prn.add_argument("--driver", default="dryrun", choices=["dryrun", "ur3"])
     prn.add_argument(
         "--scene-objects",
         type=int,

@@ -146,7 +146,7 @@ def test_default_target_is_thumb_index_midpoint_with_palm_orientation(tmp_path):
         landmark_confidence=landmark_confidence,
         coordinate_frame="rig",
     )
-    targets = load_targets(path, config_from_options("ur10"))
+    targets = load_targets(path, config_from_options("ur10", {"target_position_anchor": "pinch_center"}))
     np.testing.assert_allclose(
         targets.position_rig,
         [[0.25, 0.10, 0.40], [0.27, 0.10, 0.40], [0.29, 0.10, 0.40]],
@@ -168,8 +168,9 @@ def test_default_retarget_config_tracks_orientation_with_explicit_offset():
 
     cfg = config_from_options("ur10")
     assert cfg.weights.orientation == pytest.approx(0.01)
+    assert cfg.velocity_limit_scale == pytest.approx(1.0)
     assert cfg.reference_policy == "robot_home"
-    assert cfg.target_position_anchor == "pinch_center"
+    assert cfg.target_position_anchor == "wrist"
     np.testing.assert_allclose(cfg.base_rpy_deg, [0.0, 0.0, 0.0])
     assert cfg.adapter.kind == "user_cylinder"
     assert cfg.adapter.length_m == pytest.approx(0.011)
@@ -198,9 +199,13 @@ def test_base_pose_options_are_preserved():
     cfg = config_from_options("ur10", {
         "base_position": [0.7, -0.1, 0.2],
         "base_rpy_deg": [5.0, -10.0, 180.0],
+        "table_plane_z_m": 0.03,
     })
     np.testing.assert_allclose(cfg.base_position, [0.7, -0.1, 0.2])
     np.testing.assert_allclose(cfg.base_rpy_deg, [5.0, -10.0, 180.0])
+    assert cfg.table_plane_z_m == pytest.approx(0.03)
+    with pytest.raises(ValueError, match="table_plane_z_m"):
+        config_from_options("ur10", {"table_plane_z_m": float("nan")})
 
 
 def test_invalid_target_anchor_and_adapter_are_rejected():
@@ -212,6 +217,24 @@ def test_invalid_target_anchor_and_adapter_are_rejected():
         config_from_options("ur10", {"adapter_radius_mm": 0.0})
     with pytest.raises(ValueError, match="reference_policy"):
         config_from_options("ur10", {"reference_policy": "guess"})
+    with pytest.raises(ValueError, match="velocity_limit_scale"):
+        config_from_options("ur10", {"velocity_limit_scale": float("nan")})
+    with pytest.raises(ValueError, match="velocity_limit_scale"):
+        config_from_options("ur10", {"velocity_limit_scale": 6.0})
+    assert config_from_options("ur10", {"velocity_limit_scale": 2.0}).velocity_limit_scale == 2.0
+
+
+def test_cli_accepts_retarget_diagnostic_controls():
+    from viki.cli import _build_parser
+
+    args = _build_parser().parse_args([
+        "retarget", "episode", "--velocity-limit-scale", "2",
+        "--hand-to-ee-rpy-deg", "-175.675", "15.45", "-47.922",
+        "--reference-policy", "zero",
+    ])
+    assert args.velocity_limit_scale == 2.0
+    assert args.hand_to_ee_rpy_deg == [-175.675, 15.45, -47.922]
+    assert args.reference_policy == "zero"
 
 
 def test_zero_reference_policy_remains_available_for_legacy_comparisons():

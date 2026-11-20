@@ -1,0 +1,425 @@
+{
+  "git_head": "a380173aef1883541779f2fa1d48c2ff9fac2a89",
+  "date": "2026-10-25",
+  "preexisting_dirty_file": "docs/2026-10-15-contact-aware-retarget-literature.md",
+  "inputs": {
+    "data/_hocap_demo_source/ur10_shadow.urdf": {
+      "exists": true,
+      "sha256": "c4c29482ca8e91908c0790275861c26182c0c9d2cc9682882939f4981c1be917"
+    },
+    "data/_hocap_demo_source/ur10_tesollo.urdf": {
+      "exists": true,
+      "sha256": "f6264775a191e70fd55298f25a2c47d5497454a6393707ae286151670dcb79d5"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/cln.npz": {
+      "exists": true,
+      "sha256": "4a1d43035ae52729e4f3e6568ef09445ac2f6501feb78397d7a68891a571c19f"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_1.obj": {
+      "exists": true,
+      "sha256": "e1b1f5a8848b8b9fbeec33789891d2b6d72cf12fc2ed3511170f31285e42b514"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_2.obj": {
+      "exists": true,
+      "sha256": "28c92f9ab34e5dacd8545dd69b607043cc4d8f1d21e2b3fb255162d99cc8c608"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_3.obj": {
+      "exists": true,
+      "sha256": "28c5e8533972fc39cdc515d16456e0d1c7df2b16fc329a970be7cf996cb81eb4"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/meshes/object_4.obj": {
+      "exists": true,
+      "sha256": "ec349fd148bbe6c6072c7c26e0ebea18d40b53798a68f9b71861163e2a3cdfff"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/intermediates/segmentation/hocap-oracle-v1/object_models.npz": {
+      "exists": true,
+      "sha256": "537c5725a4cc19a5e219b6dc56de9e182c1103f59571c417fb9e4f4a56543191"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/shadow_object_plan.npz": {
+      "exists": true,
+      "sha256": "7ee2961b4c7f3550e0b905ce2e9432cdcbbdd984ba62cb8f3777d2a116e82130"
+    },
+    "data/datasets/hocap_demo_object_v4/g10_object2_190/tesollo_object_plan.npz": {
+      "exists": true,
+      "sha256": "6ea6141341d160f2a5f31dcaa23a0b1bd3b695dd3b1a52c27ab745a4311d3069"
+    },
+    "experiments/hocap_shadow_replay.py": {
+      "exists": true,
+      "sha256": "a22833d5d1df685c0a93b8fc862dff3d3d0f8528e41dfd3d7878ffd3165dd4c4"
+    },
+    "experiments/hocap_tesollo_replay.py": {
+      "exists": true,
+      "sha256": "40309b5a2437ec270416050efe6981d913064fd3b408ec04a93d90a2c9e2b18e"
+    },
+    "models/robot_descriptions/ur_description/meshes/ur10/collision/base.stl": {
+      "exists": true,
+      "sha256": "c2049e55f6ddbd827d89342c5e3d277b62493db681d28f44ca555db1a288e2cf"
+    },
+    "models/robot_descriptions/ur_description/meshes/ur10/collision/forearm.stl": {
+      "exists": true,
+      "sha256": "dc90009a4863cbdb350f2a40e40ca25db0ddba1eb6811e0e0d3c914293f365d0"
+    },
+    "models/robot_descriptions/ur_description/meshes/ur10/collision/shoulder.stl": {
+      "exists": true,
+      "sha256": "8f2b5085694ffb5208da1099bd9c5b381155a82c5fec1bc72bb050f3c30c0ece"
+    },
+    "models/robot_descriptions/ur_description/meshes/ur10/collision/upperarm.stl": {
+      "exists": true,
+      "sha256": "c84a410a76cf8d25e1d830d9033a4e501fb16baeb2bf0116367a0cdb98c75fbb"
+    },
+    "models/robot_descriptions/ur_description/meshes/ur10/collision/wrist1.stl": {
+      "exists": true,
+      "sha256": "c33737b72a82d61a9d4b1c3abb75eab8349e935c60340f59b7d1ed004ac16142"
+    },
+    "models/robot_descriptions/ur_description/meshes/ur10/collision/wrist2.stl": {
+      "exists": true,
+      "sha256": "8070916b9042dce67c85fccaa94fa60308722945405a58abc6070c1bb8de9bb9"
+    },
+    "models/robot_descriptions/ur_description/meshes/ur10/collision/wrist3.stl": {
+      "exists": true,
+      "sha256": "07401ab0442bb02772aca606889146ff5fc0b30c8f037e4b2878cfefb1b7c443"
+    },
+    "models/shadow_hand/converted/f_distal_pst.obj": {
+      "exists": true,
+      "sha256": "2d34d79b9235081de9e1c7e26a46e2cadea7b6e453930596db782fa67ce0f1b1"
+    },
+    "models/shadow_hand/converted/f_knuckle_E3M5.obj": {
+      "exists": true,
+      "sha256": "c1e50e3eace06193d41a1919711403d12f2e207c2c9a1566937059488c8ee00e"
+    },
+    "models/shadow_hand/converted/f_middle_E3M5.obj": {
+      "exists": true,
+      "sha256": "86c1c901ae48399629101509052e0bc7c69176ac671c8137cceb15e08c6c1329"
+    },
+    "models/shadow_hand/converted/f_proximal_E3M5.obj": {
+      "exists": true,
+      "sha256": "4586df3a314a709085d1df0e7be3543a3541f50016bf90bf2e6c98652dd5439b"
+    },
+    "models/shadow_hand/converted/lf_metacarpal_E3M5.obj": {
+      "exists": true,
+      "sha256": "3a7397f66c81bf5c6b7d326d2accf401c0cfba883e5d9f22b6bfbcd43640a75b"
+    },
+    "models/shadow_hand/converted/palm_E3M5.obj": {
+      "exists": true,
+      "sha256": "f4e0ea11e8cc0b64a86e4a3f7afa5ebdd9b1c698f6253d306f61c26a158ab0fd"
+    },
+    "models/shadow_hand/converted/th_distal_pst.obj": {
+      "exists": true,
+      "sha256": "19a33a8ffa7e7a1c3778982df04ed9fb256640634f73338f1e109cb44cee62fa"
+    },
+    "models/shadow_hand/converted/th_middle_E3M5.obj": {
+      "exists": true,
+      "sha256": "f3b765f48a2ab53bc0007badc4fc16a8047d4502854f7e82e0c4513920dd1088"
+    },
+    "models/shadow_hand/converted/th_proximal_E3M5.obj": {
+      "exists": true,
+      "sha256": "4dad83b1fe5cf0be5521cb3871237755c506fc8e990f762cae61ad24cce2e9bb"
+    },
+    "models/shadow_hand/converted/ur10_base.obj": {
+      "exists": true,
+      "sha256": "4fd6f6e72adc1ad6b876eba1864fc0afcf94eb153a3742fad9066a8c0950af1d"
+    },
+    "models/shadow_hand/converted/ur10_forearm.obj": {
+      "exists": true,
+      "sha256": "9c4395c9bce3e6efb1bc1e96a545e104ee02e634efb9b45c486af7b233bc601b"
+    },
+    "models/shadow_hand/converted/ur10_shoulder.obj": {
+      "exists": true,
+      "sha256": "9b1828baeb11bad60d737282ed274e22b69e1d5dd4126f946c7ecfca765ae81b"
+    },
+    "models/shadow_hand/converted/ur10_upperarm.obj": {
+      "exists": true,
+      "sha256": "4716bb52aa66acd68a67d2433551eafc8124989d7a49acf4558b5820a6fef9d0"
+    },
+    "models/shadow_hand/converted/ur10_wrist1.obj": {
+      "exists": true,
+      "sha256": "7bdf91dbc48609ec61c815ac6705c5602bae24bb77ca76b91c945323cf005b48"
+    },
+    "models/shadow_hand/converted/ur10_wrist2.obj": {
+      "exists": true,
+      "sha256": "be6236a5ae17e109c93cf36bccf4b6d1a8c5741fc18af94a79cf372428f75f09"
+    },
+    "models/shadow_hand/converted/ur10_wrist3.obj": {
+      "exists": true,
+      "sha256": "f7368f83da9dd5c483583bd09ccebe50ddc24e0abc355f23d1bddc26064b3735"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_1_1.obj": {
+      "exists": true,
+      "sha256": "3f24c92c58e9df61b36cd54aa16f1f19d13cab79d06fbde810ef4981e46f4771"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_1_2.obj": {
+      "exists": true,
+      "sha256": "7f900f3f0345d2ecb828310145eb47f972e831c123b01d4284fb6e486df0ec39"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_1_3.obj": {
+      "exists": true,
+      "sha256": "b348555aaf51bda2f43b90c57511d6f4905ffd3fcd819c6c535295514994fed6"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_1_4.obj": {
+      "exists": true,
+      "sha256": "e57520105efd8b317115fd485ca2188fddaa5e081fc16601e63d25df76b76ddf"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_1_tip.obj": {
+      "exists": true,
+      "sha256": "54c0c14ce1793513bba002f5153c1526ee762182afa5d62c3237c90b2dd71fe8"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_2_1.obj": {
+      "exists": true,
+      "sha256": "7f8e535bb0322bed9d4ac557a93401a4fd1d6d98636c15b7d8f773a0c6775afc"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_2_2.obj": {
+      "exists": true,
+      "sha256": "0adabcadcf1e1d3d2d4100c4d347aa8f18c8f18635802900e92ebfba701b4aba"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_2_3.obj": {
+      "exists": true,
+      "sha256": "fb38bfa9d363d7ebb1327caf8d335be4bd878dab110ec4ff5ee1be2b5b820d1a"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_2_4.obj": {
+      "exists": true,
+      "sha256": "eb00fa26a907df308630acdcd279c5e8703bbf244a60f3c4b81d770d269594d0"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_2_tip.obj": {
+      "exists": true,
+      "sha256": "4c7a8443c2a02011fcf8406c1874d3e7a537fe208b201fe263b70f993dadf579"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_3_1.obj": {
+      "exists": true,
+      "sha256": "69f28ca7b2d4440d12a220fe5977d82e778bee1aed3267a44b73307c03242f1f"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_3_2.obj": {
+      "exists": true,
+      "sha256": "0adabcadcf1e1d3d2d4100c4d347aa8f18c8f18635802900e92ebfba701b4aba"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_3_3.obj": {
+      "exists": true,
+      "sha256": "fb38bfa9d363d7ebb1327caf8d335be4bd878dab110ec4ff5ee1be2b5b820d1a"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_3_4.obj": {
+      "exists": true,
+      "sha256": "eb00fa26a907df308630acdcd279c5e8703bbf244a60f3c4b81d770d269594d0"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_3_tip.obj": {
+      "exists": true,
+      "sha256": "4c7a8443c2a02011fcf8406c1874d3e7a537fe208b201fe263b70f993dadf579"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_4_1.obj": {
+      "exists": true,
+      "sha256": "55c8a945f881fbe0f6566f87de0f77539d9f2a173ea8e315c25a9bcdabba9fd9"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_4_2.obj": {
+      "exists": true,
+      "sha256": "0adabcadcf1e1d3d2d4100c4d347aa8f18c8f18635802900e92ebfba701b4aba"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_4_3.obj": {
+      "exists": true,
+      "sha256": "fb38bfa9d363d7ebb1327caf8d335be4bd878dab110ec4ff5ee1be2b5b820d1a"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_4_4.obj": {
+      "exists": true,
+      "sha256": "eb00fa26a907df308630acdcd279c5e8703bbf244a60f3c4b81d770d269594d0"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_4_tip.obj": {
+      "exists": true,
+      "sha256": "4c7a8443c2a02011fcf8406c1874d3e7a537fe208b201fe263b70f993dadf579"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_5_1.obj": {
+      "exists": true,
+      "sha256": "87398cbf2f088af6c6638a336cd13007ffd49a508bb4aaebb52320a5b37110ef"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_5_2.obj": {
+      "exists": true,
+      "sha256": "ac6d3b910f30bcd73a95516c928348f8f81ab31b27fc141cba1faa037f3dab2f"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_5_3.obj": {
+      "exists": true,
+      "sha256": "e1c6a69d54ffd1cfeb60a5d20a7735c1fb7fc288fda8a606b8d2382dbbd6e3f7"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_5_4.obj": {
+      "exists": true,
+      "sha256": "b795fc0e9b177426a3ffed2ba12ebca3ef3c485aff7d0b39899b1d222145014c"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_5_tip.obj": {
+      "exists": true,
+      "sha256": "4c7a8443c2a02011fcf8406c1874d3e7a537fe208b201fe263b70f993dadf579"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_base.obj": {
+      "exists": true,
+      "sha256": "384f64ff654b3d82d14da7746af47cbc1356c116eeec4ebc18fed0aadaeb9744"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_mount.obj": {
+      "exists": true,
+      "sha256": "a8be87b5c836828acaf032a3deb1e43155f7c2b593a6bfbf81a35118f33b7ef9"
+    },
+    "models/tesollo_dg5f_mujoco/converted/rl_dg_palm.obj": {
+      "exists": true,
+      "sha256": "730ab2879ed3e61c1643fd939654db9c192954b06a31dee89fa82cdfe575f693"
+    },
+    "models/tesollo_dg5f_mujoco/converted/ur10_base.obj": {
+      "exists": true,
+      "sha256": "4fd6f6e72adc1ad6b876eba1864fc0afcf94eb153a3742fad9066a8c0950af1d"
+    },
+    "models/tesollo_dg5f_mujoco/converted/ur10_forearm.obj": {
+      "exists": true,
+      "sha256": "9c4395c9bce3e6efb1bc1e96a545e104ee02e634efb9b45c486af7b233bc601b"
+    },
+    "models/tesollo_dg5f_mujoco/converted/ur10_shoulder.obj": {
+      "exists": true,
+      "sha256": "9b1828baeb11bad60d737282ed274e22b69e1d5dd4126f946c7ecfca765ae81b"
+    },
+    "models/tesollo_dg5f_mujoco/converted/ur10_upperarm.obj": {
+      "exists": true,
+      "sha256": "4716bb52aa66acd68a67d2433551eafc8124989d7a49acf4558b5820a6fef9d0"
+    },
+    "models/tesollo_dg5f_mujoco/converted/ur10_wrist1.obj": {
+      "exists": true,
+      "sha256": "7bdf91dbc48609ec61c815ac6705c5602bae24bb77ca76b91c945323cf005b48"
+    },
+    "models/tesollo_dg5f_mujoco/converted/ur10_wrist2.obj": {
+      "exists": true,
+      "sha256": "be6236a5ae17e109c93cf36bccf4b6d1a8c5741fc18af94a79cf372428f75f09"
+    },
+    "models/tesollo_dg5f_mujoco/converted/ur10_wrist3.obj": {
+      "exists": true,
+      "sha256": "f7368f83da9dd5c483583bd09ccebe50ddc24e0abc355f23d1bddc26064b3735"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_1_1_c.STL": {
+      "exists": true,
+      "sha256": "ee505c6add3c9174becfad421b8fa96805dfdfd9ed04969197df7f0694995b63"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_1_2_c.STL": {
+      "exists": true,
+      "sha256": "50d6a49c60cc061f7028b2b93a070c5256f61ce0d2b6309533461259a32ba5a4"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_1_3_c.STL": {
+      "exists": true,
+      "sha256": "23f7774746d0c9342f696b28eb749e6a05d80a4659b64c2e5bc011eecbdb4b41"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_1_4_c.STL": {
+      "exists": true,
+      "sha256": "b09a43be0d26a8473bdc7c3cb8f9d8788cbcc0e4b86148100563fbbc872c96a1"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_1_tip_c.STL": {
+      "exists": true,
+      "sha256": "69b759da2f7b01729c27d22c018002bc7599b86dbb47a8c079a0a9333558653c"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_2_1_c.STL": {
+      "exists": true,
+      "sha256": "7280d1184e34a7274600ad51c565ed3cac98864a09992e174d1d22d2a8930d84"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_2_2_c.STL": {
+      "exists": true,
+      "sha256": "ca672248bbbd45374ca228ad023f5dd8577b8855e84200d4e5a25198e68d54dd"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_2_3_c.STL": {
+      "exists": true,
+      "sha256": "b14a5b504d86ccddf6b133907de09f268c9d1d6652b6bff94375a5a069ecbef7"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_2_4_c.STL": {
+      "exists": true,
+      "sha256": "8b5bc49eeaf70058f74df4a4f4966e0270ed45cce9742b052b74f855f95bb72c"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_2_tip_c.STL": {
+      "exists": true,
+      "sha256": "758d8ac434b68d3caaf30941f76196e5dfd6516a87cdaa049d78bfb52e9d9176"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_3_1_c.STL": {
+      "exists": true,
+      "sha256": "68daa87bd56b72e9e9672af90c434aabb54c51ebd4a07f554b8728ae383e1147"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_3_2_c.STL": {
+      "exists": true,
+      "sha256": "ca672248bbbd45374ca228ad023f5dd8577b8855e84200d4e5a25198e68d54dd"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_3_3_c.STL": {
+      "exists": true,
+      "sha256": "b14a5b504d86ccddf6b133907de09f268c9d1d6652b6bff94375a5a069ecbef7"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_3_4_c.STL": {
+      "exists": true,
+      "sha256": "8b5bc49eeaf70058f74df4a4f4966e0270ed45cce9742b052b74f855f95bb72c"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_3_tip_c.STL": {
+      "exists": true,
+      "sha256": "758d8ac434b68d3caaf30941f76196e5dfd6516a87cdaa049d78bfb52e9d9176"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_4_1_c.STL": {
+      "exists": true,
+      "sha256": "f19f9eda71dde1ccfbc40d2b8c0f74fc4f7a52fa48278371e4704955ff7f0c1f"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_4_2_c.STL": {
+      "exists": true,
+      "sha256": "ca672248bbbd45374ca228ad023f5dd8577b8855e84200d4e5a25198e68d54dd"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_4_3_c.STL": {
+      "exists": true,
+      "sha256": "b14a5b504d86ccddf6b133907de09f268c9d1d6652b6bff94375a5a069ecbef7"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_4_4_c.STL": {
+      "exists": true,
+      "sha256": "8b5bc49eeaf70058f74df4a4f4966e0270ed45cce9742b052b74f855f95bb72c"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_4_tip_c.STL": {
+      "exists": true,
+      "sha256": "758d8ac434b68d3caaf30941f76196e5dfd6516a87cdaa049d78bfb52e9d9176"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_5_1_c.STL": {
+      "exists": true,
+      "sha256": "2f1c4aba4df54ce32406c94c52102fa69c7c8cf98310b90f72ea72a2cac72cbf"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_5_2_c.STL": {
+      "exists": true,
+      "sha256": "7f8af92be95e3dd37132149cbf386078e15f8ddf6baf001d9b8e9b865c1d975c"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_5_3_c.STL": {
+      "exists": true,
+      "sha256": "416a03ab0e0458af8b17bd9a76b6e80aa064e3613c54f7d771ec875422e74002"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_5_4_c.STL": {
+      "exists": true,
+      "sha256": "678bba523c444b84e8147308d4f94378a6a0826b3dae92aec0ecbbf1cfae30f6"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_5_tip_c.STL": {
+      "exists": true,
+      "sha256": "758d8ac434b68d3caaf30941f76196e5dfd6516a87cdaa049d78bfb52e9d9176"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_base_c.STL": {
+      "exists": true,
+      "sha256": "0079a733da843c4addbc5535f3c45ca7a0ab13377791aa80a5f9b6ca4615d6b4"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_mount_c.STL": {
+      "exists": true,
+      "sha256": "ede5b2172226b8ff44989a246fbb8dc6d0b3e25927819106368188fa0fd8d5cf"
+    },
+    "models/tesollo_dg5f_mujoco/robot/assets/dg5f_right/collision/rl_dg_palm_c.STL": {
+      "exists": true,
+      "sha256": "d68094d28715f9310e49ccb137443b12adec058fa52ce31eea3bab1c65f4dc89"
+    }
+  },
+  "replay_comparisons": {
+    "shadow": {
+      "old_report": "data/experiments/hocap-rl/shadow_friction_table10_robot12/report.json",
+      "new_report": "data/experiments/hocap-rl/audit_20261025_shadow/report.json",
+      "changed_fields": {
+        "gui_enabled": [
+          true,
+          false
+        ]
+      }
+    },
+    "tesollo": {
+      "old_report": "data/experiments/hocap-rl/tesollo_parallel_gui/report.json",
+      "new_report": "data/experiments/hocap-rl/audit_20261025_tesollo/report.json",
+      "changed_fields": {
+        "gui_enabled": [
+          true,
+          false
+        ]
+      }
+    }
+  },
+  "docker_image_ids": {
+    "viki": "sha256:2e828bd4e0b6c090398c4a3a3c1b6ad2cb5fcc727594148526016207b3dd3fc7",
+    "viki-experiments": "sha256:07a0a632c8cb96dfa3c98af114f919a9af697c6a07f9edc6f6b8c4a897d4b48a"
+  }
+}

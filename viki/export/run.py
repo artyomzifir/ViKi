@@ -1,9 +1,9 @@
 """
 viki.export.run
 ---------------
-Pipeline stage 6: labelled + screened episodes -> one LeRobot dataset.
+Partial LeRobot writer for labelled plans with an offline dry-run.
 
-An episode is eligible when: retarget + replay have run, its replay verdict is
+An episode is eligible when: retarget + dry-run have run, its dry-run verdict is
 not ``reject``, its label ``outcome`` is not ``bad``, and it has a non-empty
 task string. Camera video is read from ``raw/`` and decimated to ``fps``.
 """
@@ -27,7 +27,7 @@ def _eligible(ep: Episode) -> tuple[bool, str]:
     if not stage_done(ep, "retarget"):
         return False, "retarget not run"
     if not stage_done(ep, "replay"):
-        return False, "replay not run"
+        return False, "offline dry-run not run"
     verdict = read_status(ep).get("stages", {}).get("replay", {}).get("verdict")
     if verdict == "reject":
         return False, "replay verdict = reject"

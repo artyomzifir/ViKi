@@ -1,0 +1,135 @@
+\section{External HO-Cap Hand and Object Evaluation}
+\label{sec:hocap-results}
+
+The full external experiment covers 28 single-hand HO-Cap pick-and-place
+sequences from nine subjects: 24 right-hand and four left-hand, with 29,706
+frames from eight calibrated RealSense views. These are not the local Kinect
+cube recordings. The source revision and all 114 numerical JSON files are preserved in
+the paper's pre-retarget results snapshot with SHA-256 hashes. Capture
+and object protocols are documented in the accompanying dated logs.
+Both processing queues completed 28/28 scenes. This is a selected task cohort, not an evaluation
+on the official HO-Cap held-out split \cite{hocap}.
+
+\subsection{Hand-Joint Accuracy}
+
+Every one of the 623,826 valid reference joint slots has a finite prepared
+prediction. Matched-joint-weighted MPJPE is 10.79~mm and PCK@20/50~mm is
+92.77/99.85\%. The per-sequence MPJPE range is 9.26--12.85~mm; the
+per-sequence P95 range is 17.72--31.90~mm. No pooled P95 is inferred from
+these 28 quantiles. The four left-hand scenes have weighted MPJPE
+11.60~mm, versus 10.65~mm for 24 right-hand scenes; handedness and subject
+are confounded here, so this is descriptive rather than a controlled
+difference. The fused-observed stage, before final temporal smoothing,
+matches 623,799/623,826 slots (99.996\%) with weighted MPJPE 11.16~mm.
+The all-finite smoothed score includes 27 filled slots and should not be
+mistaken for direct observation coverage. Table~\ref{tab:hocap-hand-summary}
+summarizes the cohort; all 28 episode rows, including P95 and PCK, appear
+in Table~\ref{tab:hocap-hand-detail}.
+
+\begin{table}[htbp]
+\caption{Eight-view HO-Cap 21-joint accuracy against published MANO fits}
+\label{tab:hocap-hand-summary}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+Subset and stage & Scenes & Matched / GT & MPJPE (mm) & PCK@20 (\%) \\
+\midrule
+All, fused observed & 28 & 623,799/623,826 & 11.16 & 91.68 \\
+All, smoothed all & 28 & 623,826/623,826 & 10.79 & 92.77 \\
+Left, smoothed all & 4 & 86,667/86,667 & 11.60 & 87.56 \\
+Right, smoothed all & 24 & 537,159/537,159 & 10.65 & 93.61 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Named Object Tracks and Outliers}
+
+Each scene contains four annotated objects, giving 112 object--sequence
+tracks across 15 object groups. The official HO-Cap object descriptors
+\cite{hocap-catalog} are keyed by IDs in Table~\ref{tab:hocap-object-catalog};
+for example, \texttt{G18\_2} is a projector remote, not an anonymous
+object. All four instances in the \texttt{G18} scenes are the green tea
+latte mix, projector remote, right shoe and left shoe. This identity
+mapping comes from the authors' \texttt{hocap\_info.yaml}, rather than
+appearance-based naming.
+
+The tracker covers 117,916 of 118,824 valid reference object frames
+(99.24\%); 97/112 tracks have complete coverage. Across the 112
+\emph{track means}, the median and arithmetic mean relative translation
+errors are 4.74 and 5.44~mm; the corresponding rotation values are
+3.47 and 7.58 degrees. Frame-count-weighted averages of the track means
+are 5.60~mm and 7.55 degrees. These are not pooled frame-level P95
+values. The median of the 112 track P95s is 10.60~mm translation and
+9.25 degrees rotation. First-frame alignment is fitted using the
+reference pose, so the numbers measure subsequent relative drift rather
+than absolute object-frame accuracy. The supplied instance masks
+remove segmentation errors from this test; static intervals remain mixed
+with manipulated intervals.
+
+\begin{table}[htbp]
+\caption{Selected HO-Cap object failures; mean and P95 are within-track errors}
+\label{tab:hocap-object-outliers}
+\centering\scriptsize
+\begin{tabular}{llrrrrr}
+\toprule
+Sequence & Object and official descriptor & Cov. (\%) & T mean & T P95 & R mean & R P95 \\
+\midrule
+S7/162803 & \texttt{G18\_2} projector remote & 98.63 & 12.38 & 20.44 & 112.60 & 175.26 \\
+S5/112303 & \texttt{G15\_2} dandelion tea & 100.00 & 17.24 & 21.81 & 109.65 & 128.43 \\
+S2/202617 & \texttt{G09\_3} toothpaste box & 100.00 & 5.77 & 13.50 & 74.03 & 132.88 \\
+S7/193506 & \texttt{G02\_4} sauce bottle & 99.65 & 2.82 & 10.67 & 56.57 & 169.89 \\
+S2/163929 & \texttt{G19\_1} electric screwdriver & 48.80 & 5.75 & 15.41 & 10.55 & 50.95 \\
+S2/201942 & \texttt{G06\_1} DVD & 100.00 & 19.39 & 25.24 & 1.90 & 5.63 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The worst rotation case is the projector remote in
+\texttt{subject\_7/162803}: mean 112.60 degrees and P95 175.26 degrees
+despite 98.63\% tracked coverage and 12.38~mm mean translation error.
+In another \texttt{G18} scene (\texttt{subject\_1/165502}), the same
+object ID has 6.97-degree mean rotation error, and the other three
+objects in the failing scene have 1.10--1.34-degree means. Thus the
+anomaly is sequence/object-specific rather than a global frame rotation.
+A visual review showed plausible late object placement under an alternate
+orientation, but did not establish a unique root cause; the outlier remains
+in all aggregates. The dandelion tea (109.65 degrees) and toothpaste box
+(74.03 degrees in one scene, versus 13.82 and 6.89 degrees in two others)
+show that this is not a single isolated failure. A low translation error
+also does not certify orientation, as the sauce bottle demonstrates.
+Conversely, the DVD has the highest mean translation error, 19.39~mm,
+with only 1.90-degree mean rotation error. The electric screwdriver is a
+coverage failure at 48.80\%, so its conditional error on visible frames
+must not stand in for whole-sequence accuracy. Tables
+\ref{tab:hocap-object-detail} and \ref{tab:hocap-object-catalog} retain
+all 112 object scores and official identities for audit.
+
+\subsection{Historical Two-Sequence Camera-Pair Pilot}
+
+Before the full eight-view run, two subject-1 sequences were tested for
+120 frames each with a pair selected after screening all 28 pairs on those
+same frames. Table~\ref{tab:hocap-hand} is retained as a historical
+\emph{in-sample} development comparison; its original local artifacts
+were lost. The full-sequence eight-view results above supersede it as the
+reproducible hand/object reference cohort, but do not turn the selected
+pair into a held-out baseline.
+
+\begin{table}[htbp]
+\caption{Historical HO-Cap Hand-Joint Pilot: Selected Pair Versus Eight Views}
+\label{tab:hocap-hand}
+\centering\small
+\begin{tabular}{llrrrr}
+\toprule
+Sequence & Views & Coverage & MPJPE (mm) & P95 (mm) & PCK@20 (\%) \\
+\midrule
+\texttt{170650} & selected pair & 2,520/2,520 & 11.33 & 22.71 & 87.70 \\
+\texttt{170650} & all eight & 2,520/2,520 & 11.34 & 22.17 & 87.50 \\
+\texttt{170105} & selected pair & 2,520/2,520 & 11.67 & 22.80 & 89.80 \\
+\texttt{170105} & all eight & 2,520/2,520 & 10.50 & 20.15 & 94.88 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The selected pair also failed one colour--depth consistency check. No
+HO-Cap score establishes the accuracy of the local Kinect calibration or
+physical success of the proposed robot motion.

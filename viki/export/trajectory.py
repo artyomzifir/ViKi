@@ -11,14 +11,13 @@ no parquet.
 
 It exists because the LeRobot exporter cannot run at all without those optional
 dependencies, while the trajectories themselves are finished artifacts that a
-consumer may legitimately want on their own: to replay on hardware, to inspect,
+consumer may legitimately want on their own: to inspect in a simulator,
 to convert to some other dataset format, or simply to have a versioned
 deliverable.
 
-**Eligibility is deliberately weaker than the LeRobot path's.** Replay is a stub
-in this version, so requiring a replay verdict would make every episode
-ineligible and export nothing. An episode qualifies here when retarget has
-produced a readable ``plan.h5``; whether it was replayed, labelled or screened
+**Eligibility is deliberately weaker than the LeRobot path's.** An episode
+qualifies here when retarget has produced a readable ``plan.h5``; whether an
+offline dry-run or labelling was performed
 is *recorded* per episode rather than used to reject it. The manifest states
 plainly what was and was not checked, so a consumer is never misled about the
 provenance of what they are holding.
@@ -220,8 +219,9 @@ def export_trajectories(
         "total_frames": int(sum(r["frames"] for r in index)),
         # Say plainly what this version does and does not guarantee.
         "screening": (
-            "NONE. Replay is a stub in this version, so trajectories are exported "
-            "without being replayed, screened or necessarily labelled. Each "
+            "NONE. Trajectory bundles contain geometric plans without a "
+            "simulation success verdict or mandatory labels. An optional "
+            "dry-run checks plan values only. Each "
             "episode's meta.json records what was actually run."
         ),
         "episodes": index,

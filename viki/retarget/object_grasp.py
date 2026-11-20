@@ -51,7 +51,7 @@ def _face_normals(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         _, singular, axes = np.linalg.svd(patch - patch.mean(axis=0), full_matrices=False)
         normal = axes[-1]
         if (abs(normal[2]) < 0.25 and singular[1] > 0.045
-                and singular[2] / singular[1] < 0.15):
+                and singular[2] / singular[1] < 0.18):
             horizontal = normal.copy()
             horizontal[2] = 0.0
             horizontal /= np.linalg.norm(horizontal)
@@ -158,32 +158,67 @@ def plan_cube_grasp(
     result_position = positions.copy()
     result_rotation = rotations.copy()
     result_opening = opening.copy()
+    distance_to_object = np.linalg.norm(
+        positions[close_start:carry_start] - object_calibration[close_start:carry_start],
+        axis=1,
+    )
+    close_offset = _first_sustained(distance_to_object <= cube_side_m * 0.4, 3)
+    if close_offset is None or carry_start - (close_start + close_offset) < 8:
+        raise ValueError("grasp center does not approach the cube early enough to close")
+    grasp_start = close_start + close_offset
+    close_complete = max(
+        grasp_start + 4,
+        carry_start - max(3, round(0.2 * (carry_start - grasp_start))),
+    )
+    prealign_start = max(0, close_start - round(0.6 * (carry_start - close_start)))
     phases = np.zeros(frame_count, dtype=np.uint8)
     phases[close_start:carry_start] = 1
     phases[carry_start:release_start] = 2
     phases[release_start:open_end] = 3
     phases[open_end:] = 4
     grasp_width = cube_side_m - 0.002
-    result_opening[close_start:carry_start + 1] = np.linspace(
-        opening[close_start], grasp_opening, carry_start - close_start + 1
+    result_opening[:grasp_start] = 1.0
+    result_opening[grasp_start:close_complete + 1] = np.linspace(
+        1.0, grasp_opening, close_complete - grasp_start + 1
     )
-    result_opening[carry_start:release_start] = grasp_opening
+    result_opening[close_complete:release_start] = grasp_opening
     result_opening[release_start:open_end + 1] = np.linspace(
-        grasp_opening, 0.9, open_end - release_start + 1
+        grasp_opening, 1.0, open_end - release_start + 1
     )
-    result_opening[open_end:] = np.maximum(result_opening[open_end:], 0.9)
+    result_opening[open_end:] = 1.0
 
     grasp_offset = positions[carry_start] - object_calibration[carry_start]
     result_position[carry_start:release_start] = object_calibration[carry_start:release_start] + grasp_offset
-    for frame in range(release_start, open_end):
-        blend = (frame - release_start) / (open_end - release_start)
-        rigid_position = object_calibration[frame] + grasp_offset
-        result_position[frame] = (1 - blend) * rigid_position + blend * positions[frame]
-    start_rotation = Rotation.from_matrix(rotations[close_start])
+    release_origin = object_calibration[release_start] + grasp_offset
+    release_lift_m = 0.06
+    for frame in range(release_start, open_end + 1):
+        fraction = (frame - release_start) / (open_end - release_start)
+        result_position[frame] = release_origin + np.array([
+            0.0, 0.0, release_lift_m * fraction,
+        ])
+    blend_end = min(frame_count - 1, open_end + 10)
+    for frame in range(open_end + 1, blend_end + 1):
+        fraction = (frame - open_end) / (blend_end - open_end)
+        result_position[frame] = (
+            (1 - fraction) * result_position[open_end]
+            + fraction * positions[frame]
+        )
+    nearby = np.linalg.norm(
+        result_position[open_end + 1:, :2] - release_origin[:2], axis=1
+    ) < 2 * cube_side_m
+    result_position[open_end + 1:, 2] = np.where(
+        nearby,
+        np.maximum(result_position[open_end + 1:, 2],
+                   release_origin[2] + release_lift_m),
+        result_position[open_end + 1:, 2],
+    )
+    start_rotation = Rotation.from_matrix(rotations[prealign_start])
     face_rotation = Rotation.from_matrix(aligned_rotation)
-    result_rotation[close_start:carry_start + 1] = Slerp(
-        [close_start, carry_start], Rotation.concatenate([start_rotation, face_rotation])
-    )(np.arange(close_start, carry_start + 1)).as_matrix()
+    if prealign_start < close_start:
+        result_rotation[prealign_start:close_start + 1] = Slerp(
+            [prealign_start, close_start], Rotation.concatenate([start_rotation, face_rotation])
+        )(np.arange(prealign_start, close_start + 1)).as_matrix()
+    result_rotation[close_start:carry_start] = aligned_rotation
     result_rotation[carry_start:release_start] = aligned_rotation
     result_rotation[release_start:open_end + 1] = Slerp(
         [release_start, open_end], Rotation.concatenate([
@@ -191,11 +226,15 @@ def plan_cube_grasp(
         ])
     )(np.arange(release_start, open_end + 1)).as_matrix()
     return CubeGraspPlan(result_position, result_rotation, result_opening, phases, {
-        "mode": "experimental_cube_face_transfer",
+        "mode": "experimental_cube_face_transfer_v3",
         "object_id": object_id,
         "phase_bounds": [close_start, carry_start, release_start, open_end],
+        "prealign_start": prealign_start,
+        "grasp_start": grasp_start,
+        "close_complete": close_complete,
         "cube_side_mm": cube_side_m * 1000,
         "carry_width_mm": grasp_width * 1000,
+        "release_lift_mm": release_lift_m * 1000,
         "nominal_command_width_mm": grasp_opening * max_width_m * 1000,
         "face_orientation_correction_deg": correction_deg,
         "travel_mm": float(travel * 1000),

@@ -1,0 +1,24 @@
+{
+  "checks": {
+    "declared_residual_reproduces_commands_bitwise": true,
+    "arm_unchanged_from_palm": true,
+    "timestamps_unchanged": true,
+    "outside_gate_unchanged": true,
+    "names_match": true,
+    "position_limits": true,
+    "velocity_limits": true
+  },
+  "joint_position_margin_rad": 9.006836276803654e-08,
+  "command_velocity_margin_rad_s": 0.013624491037147912,
+  "selected_residual": [
+    0.1,
+    0.08,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "export_sha256": "84a870d67441c9257fc995ed23b801e2bb5d84aec3160cb43e540ccdb4ec7fc7"
+}

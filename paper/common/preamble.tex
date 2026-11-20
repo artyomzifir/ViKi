@@ -42,7 +42,7 @@
 \captionsetup[figure]{labelfont=bf, labelsep=period, name=Fig., font=small}
 \captionsetup[table]{labelfont=bf, labelsep=newline, justification=centering,
                      name=TABLE, font=small}
-\renewcommand{\thetable}{\Roman{table}}
+\renewcommand{\thetable}{\thechapter.\Roman{table}}
 
 % --- placeholder macro ------------------------------------
 % Every unresolved number / empirical claim is wrapped in \ph{}
@@ -66,6 +66,7 @@
 \newcommand{\bT}{\bm{T}}
 \newcommand{\be}{\bm{e}}
 \newcommand{\bx}{\bm{x}}
+\newcommand{\bu}{\bm{u}}
 \newcommand{\bw}{\bm{w}}
 \newcommand{\bJ}{\bm{J}}
 \newcommand{\norm}[1]{\left\lVert #1 \right\rVert}

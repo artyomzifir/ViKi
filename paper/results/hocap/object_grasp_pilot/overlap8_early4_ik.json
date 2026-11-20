@@ -1,0 +1,251 @@
+{
+  "config": {
+    "adapter": {
+      "kind": "user_cylinder",
+      "radius_m": 0.035,
+      "rpy_deg": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "translation_m": [
+        0.0,
+        0.0,
+        0.011
+      ]
+    },
+    "approach_sec": 0.0,
+    "base_position": [
+      0.0,
+      -1.0,
+      0.0
+    ],
+    "base_rpy_deg": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "collision_min_distance_m": 0.02,
+    "collision_pairs": 8,
+    "gripper": "robotiq_2f85",
+    "hand_to_ee_rpy_deg": [
+      4.325,
+      15.45,
+      -47.922
+    ],
+    "hand_to_ee_translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "object_contact_overlap_mm": 8.0,
+    "object_cube_side_mm": 40.0,
+    "object_grasp": true,
+    "object_grasp_height_offset_mm": 0.0,
+    "object_grasp_lead_frames": 4,
+    "object_id": 4,
+    "object_track_path": "data/_retarget_diagnostics/hocap_g10_4_overlap8_early4/object_track.npz",
+    "pose_source": "hand_fit",
+    "reference_policy": "zero",
+    "robot": "ur10",
+    "sequential_baseline": false,
+    "solver": {
+      "collision_enabled": true,
+      "confidence_floor": 0.05,
+      "convergence_rad": 0.001,
+      "huber_delta": 0.05,
+      "lm_damping": 1e-05,
+      "max_iterations": 40,
+      "max_step_rad": 0.2,
+      "qp_solver": "osqp"
+    },
+    "table_plane_z_m": 0.0,
+    "target_position_anchor": "pinch_center",
+    "velocity_limit_scale": 1.0,
+    "weights": {
+      "acceleration": 2e-05,
+      "orientation": 0.01,
+      "position": 1.0,
+      "posture": 0.0001,
+      "velocity": 0.002
+    }
+  },
+  "frames": 180,
+  "metrics": {
+    "achieved_tool_axis_down_fraction": 0.6277777777777778,
+    "adapter_length_mm": 11.0,
+    "approach_duration_sec": 0.0,
+    "converged": true,
+    "iterations": 14,
+    "max_joint_acceleration_rad_s2": 2.8011546672524106,
+    "max_joint_velocity_rad_s": 0.7297938710280518,
+    "min_collision_margin": 0.039971033350395965,
+    "min_floor_margin_mm": 0.05034263340501777,
+    "min_joint_limit_margin_rad": 1.721255974499088,
+    "min_urdf_velocity_limit_margin_rad_s": 1.3588837709516786,
+    "min_velocity_limit_margin_rad_s": 1.3588837709516786,
+    "object_grasp": {
+      "carry_width_mm": 53.23798890039325,
+      "close_complete": 48,
+      "grasp_height_offset_mm": 0.0,
+      "grasp_lead_frames": 4,
+      "grasp_offset_local_m": [
+        -0.001487791552382614,
+        -0.011454293550923467,
+        0.02517861597367657
+      ],
+      "grasp_start": 40,
+      "jaw_axis_local": 1,
+      "jaw_sign": 1,
+      "mode": "experimental_tracked_side_grasp_v1",
+      "model_path": "data/_retarget_diagnostics/hocap_g10_4_overlap8_early4/object_track.npz",
+      "nominal_compression_mm": 8.0,
+      "object_id": 4,
+      "object_width_mm": 61.23798890039325,
+      "orientation_correction_deg": 47.66924285251654,
+      "phase_bounds": [
+        34,
+        54,
+        135,
+        163
+      ],
+      "prealign_start": 14,
+      "pregrasp_distance_mm": 83.17827784939398,
+      "tool_axis": "side_negative",
+      "travel_mm": 143.35255807651515
+    },
+    "object_grasp_carry_width_m": 0.053238251886396554,
+    "objective": 0.20387276108389124,
+    "objective_history": [
+      {
+        "acceleration": 6.811065386085439e-05,
+        "data": 4.161608040640417,
+        "posture": 0.0034567074107436954,
+        "total": 4.1655884290585865,
+        "velocity": 0.00045557035356490406
+      },
+      {
+        "acceleration": 0.0001707611454334776,
+        "data": 3.267620173063688,
+        "posture": 0.014494808903714134,
+        "total": 3.2847290723370284,
+        "velocity": 0.002443329224192666
+      },
+      {
+        "acceleration": 0.00019019124594683019,
+        "data": 2.4983558285943817,
+        "posture": 0.030922058879192946,
+        "total": 2.5350797104788954,
+        "velocity": 0.005611631759373705
+      },
+      {
+        "acceleration": 0.0002862701050171036,
+        "data": 1.7506228551453333,
+        "posture": 0.03975235738507252,
+        "total": 1.7983635958163569,
+        "velocity": 0.007702113180934028
+      },
+      {
+        "acceleration": 0.0003559453886954937,
+        "data": 1.0540395216787184,
+        "posture": 0.05580132047530749,
+        "total": 1.1188457760987087,
+        "velocity": 0.008648988555987475
+      },
+      {
+        "acceleration": 0.0014242145567387396,
+        "data": 0.4801036750868079,
+        "posture": 0.07012691654038765,
+        "total": 0.5652594484201378,
+        "velocity": 0.01360464223620347
+      },
+      {
+        "acceleration": 0.003258840703461706,
+        "data": 0.15575383388262085,
+        "posture": 0.07276500466654534,
+        "total": 0.26563807092118746,
+        "velocity": 0.033860391668559565
+      },
+      {
+        "acceleration": 0.0037786853125567625,
+        "data": 0.11596915370460555,
+        "posture": 0.07288029871826063,
+        "total": 0.2343553726195007,
+        "velocity": 0.041727234884077764
+      },
+      {
+        "acceleration": 0.004272860969639463,
+        "data": 0.09551451111143032,
+        "posture": 0.07264986226446432,
+        "total": 0.2199208256987694,
+        "velocity": 0.04748359135323528
+      },
+      {
+        "acceleration": 0.004691074008725399,
+        "data": 0.08472365684045718,
+        "posture": 0.07225845416522056,
+        "total": 0.2139038562908687,
+        "velocity": 0.05223067127646555
+      },
+      {
+        "acceleration": 0.005240894382663284,
+        "data": 0.07042319277419745,
+        "posture": 0.07275965734602899,
+        "total": 0.20913152310492447,
+        "velocity": 0.06070777860203474
+      },
+      {
+        "acceleration": 0.005465246499370093,
+        "data": 0.059820699745583246,
+        "posture": 0.07278291661928327,
+        "total": 0.20421635957166537,
+        "velocity": 0.06614749670742877
+      },
+      {
+        "acceleration": 0.0057122412809108005,
+        "data": 0.05766413857264378,
+        "posture": 0.07289323629729873,
+        "total": 0.20387276108389124,
+        "velocity": 0.06760314493303793
+      },
+      {
+        "acceleration": 0.0057122412809108005,
+        "data": 0.05766413857264378,
+        "posture": 0.07289323629729873,
+        "total": 0.20387276108389124,
+        "velocity": 0.06760314493303793
+      }
+    ],
+    "objective_terms": {
+      "acceleration": 0.0057122412809108005,
+      "data": 0.05766413857264378,
+      "posture": 0.07289323629729873,
+      "total": 0.20387276108389124,
+      "velocity": 0.06760314493303793
+    },
+    "orientation_rmse_deg": 16.50771968762444,
+    "position_p95_mm": 33.88641595547672,
+    "position_rmse_mm": 29.023892076751324,
+    "reference_policy": "zero",
+    "reference_q": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "sequential_baseline": null,
+    "table_plane_coordinate_frame": "hocap_tag_1",
+    "table_plane_z_calibration_m": 0.0,
+    "target_position_anchor": "pinch_center",
+    "target_tool_axis_down_fraction": 0.2777777777777778,
+    "velocity_limit_scale": 1.0,
+    "velocity_repair_max_rad": 0.0,
+    "wrist_above_target_fraction": 0.6166666666666667,
+    "wrist_target_height_median_mm": 8.128511560053578
+  },
+  "sha256": "4bdc095e5ae948f3182961a607e6314b677b691380b968dc6019cfe2a875ee88",
+  "solver_status": "converged",
+  "source_path": "data/_retarget_diagnostics/hocap_g10_4_overlap8_early4/plan.h5"
+}

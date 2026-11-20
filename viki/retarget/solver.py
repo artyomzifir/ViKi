@@ -10,6 +10,8 @@ hard constraints.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from multiprocessing import get_context, get_all_start_methods
 from typing import Callable, Protocol
 
 import numpy as np
@@ -201,6 +203,7 @@ class BatchResult:
     objective_history: tuple[dict[str, float], ...]
     min_collision_margin: float
     min_floor_margin: float
+    velocity_repair_max_rad: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -356,14 +359,64 @@ def max_reach_m(kinematics, *, samples: int = 4096, seed: int = 0) -> float:
     return best
 
 
+_constraint_worker_kinematics: Kinematics | None = None
+
+
+def _init_constraint_worker(kinematics: Kinematics) -> None:
+    # Fork gives each process its own mutable Pinocchio model/data and frame.
+    # The read-only geometry pages remain copy-on-write shared.
+    global _constraint_worker_kinematics
+    _constraint_worker_kinematics = kinematics
+
+
+def _constraint_chunk_worker(
+    chunk: tuple[np.ndarray, np.ndarray],
+) -> tuple[float, float]:
+    if _constraint_worker_kinematics is None:
+        raise RuntimeError("constraint worker was not initialized")
+    indices, configurations = chunk
+    floor_min = np.inf
+    collision_min = np.inf
+    for frame, configuration in zip(indices, configurations):
+        _set_frame(_constraint_worker_kinematics, int(frame))
+        floor_min = min(floor_min, _minimum_floor_margin(_constraint_worker_kinematics, configuration))
+        collision_min = min(collision_min, _minimum_collision_margin(_constraint_worker_kinematics, configuration))
+    return floor_min, collision_min
+
+
+def _parallel_constraint_margins(
+    kinematics: Kinematics,
+    trajectory: np.ndarray,
+    frame_indices: np.ndarray,
+    workers: int,
+) -> tuple[float, float]:
+    if "fork" not in get_all_start_methods():
+        raise RuntimeError("parallel exact mesh checking requires a Unix fork context")
+    process_count = min(workers, len(trajectory), os.cpu_count() or 1)
+    indices = np.arange(len(trajectory))
+    chunks = [
+        (frame_indices[part], trajectory[part])
+        for part in np.array_split(indices, min(len(indices), process_count * 4))
+        if len(part)
+    ]
+    with get_context("fork").Pool(
+        processes=process_count,
+        initializer=_init_constraint_worker,
+        initargs=(kinematics,),
+    ) as pool:
+        results = pool.map(_constraint_chunk_worker, chunks)
+    return min(value[0] for value in results), min(value[1] for value in results)
+
+
 def trajectory_constraint_margins(
     kinematics: Kinematics,
     trajectory: np.ndarray,
     dt: float,
     *,
     frame_indices: np.ndarray | None = None,
+    workers: int = 1,
 ) -> dict[str, float]:
-    """Evaluate exact joint, velocity, floor and collision margins."""
+    """Evaluate exact margins; ``workers>1`` checks frames in forked CPU processes."""
     q = np.asarray(trajectory, dtype=np.float64)
     if q.ndim != 2 or q.shape[1] != int(kinematics.nq) or len(q) == 0:
         raise ValueError("trajectory must be a non-empty (T, nq) array")
@@ -371,6 +424,8 @@ def trajectory_constraint_margins(
         raise ValueError("dt must be positive")
     if frame_indices is not None and np.asarray(frame_indices).shape != (len(q),):
         raise ValueError("frame_indices must have one entry per trajectory frame")
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError("workers must be a positive integer")
     q_min = np.asarray(kinematics.q_min, dtype=np.float64)
     q_max = np.asarray(kinematics.q_max, dtype=np.float64)
     joint_margin = float(np.min(np.minimum(q - q_min, q_max - q)))
@@ -381,13 +436,19 @@ def trajectory_constraint_margins(
         ))
     else:
         velocity_margin = np.inf
+    if workers == 1 or len(q) == 1:
+        floor_margin = _trajectory_min_floor_margin(kinematics, q, frame_indices)
+        collision_margin = _trajectory_min_collision_margin(kinematics, q, frame_indices)
+    else:
+        frames = np.arange(len(q)) if frame_indices is None else np.asarray(frame_indices)
+        floor_margin, collision_margin = _parallel_constraint_margins(
+            kinematics, q, frames, workers
+        )
     return {
         "joint": joint_margin,
         "velocity": velocity_margin,
-        "floor": _trajectory_min_floor_margin(kinematics, q, frame_indices),
-        "collision": _trajectory_min_collision_margin(
-            kinematics, q, frame_indices
-        ),
+        "floor": floor_margin,
+        "collision": collision_margin,
     }
 
 
@@ -516,6 +577,57 @@ def _solve_qp(
     if answer is None or not np.isfinite(answer).all():
         raise RuntimeError("whole-trajectory retarget QP is infeasible or failed")
     return np.asarray(answer, dtype=np.float64)
+
+
+def _repair_velocity_roundoff(
+    trajectory: np.ndarray,
+    q_min: np.ndarray,
+    q_max: np.ndarray,
+    velocity_limit: np.ndarray,
+    dt: float,
+) -> tuple[np.ndarray, float]:
+    """Project a tiny QP velocity residual back into the convex hard limits."""
+    values = np.asarray(trajectory, dtype=np.float64)
+    if len(values) < 2:
+        return values, 0.0
+    limit = np.asarray(velocity_limit, dtype=np.float64)
+    excess = float(np.max(np.abs(np.diff(values, axis=0) / dt) - limit))
+    if excess <= NUMERIC_TOLERANCE:
+        return values, 0.0
+    if excess > 1e-3:
+        raise RuntimeError(
+            f"retarget QP exceeds joint velocity limits by {excess:.12g} rad/s"
+        )
+    lower = np.asarray(q_min, dtype=np.float64)
+    upper = np.asarray(q_max, dtype=np.float64)
+    step = limit * dt
+    clipped = np.clip(values, lower, upper)
+    forward = clipped.copy()
+    backward = clipped.copy()
+    for frame in range(1, len(values)):
+        forward[frame] = np.clip(
+            forward[frame],
+            np.maximum(lower, forward[frame - 1] - step),
+            np.minimum(upper, forward[frame - 1] + step),
+        )
+    for frame in range(len(values) - 2, -1, -1):
+        backward[frame] = np.clip(
+            backward[frame],
+            np.maximum(lower, backward[frame + 1] - step),
+            np.minimum(upper, backward[frame + 1] + step),
+        )
+    repaired = 0.5 * (forward + backward)
+    correction = float(np.max(np.abs(repaired - values)))
+    if correction > 1e-3:
+        raise RuntimeError(
+            f"retarget velocity projection would change a joint by {correction:.12g} rad"
+        )
+    remaining = float(np.max(np.abs(np.diff(repaired, axis=0) / dt) - limit))
+    if remaining > NUMERIC_TOLERANCE:
+        raise RuntimeError(
+            f"retarget velocity projection left {remaining:.12g} rad/s violation"
+        )
+    return repaired, correction
 
 
 def solve_trajectory(
@@ -788,6 +900,16 @@ def solve_trajectory(
             converged = True
             break
 
+    q, velocity_repair_max_rad = _repair_velocity_roundoff(
+        q, kinematics.q_min, kinematics.q_max, kinematics.velocity_limit, dt
+    )
+    if velocity_repair_max_rad:
+        objective_terms = _objective_terms(
+            kinematics, q, positions, rotations, omega, weights, options,
+            d1, d2, q_ref,
+        )
+        objective = objective_terms["total"]
+        objective_history[-1] = objective_terms.copy()
     for t in range(n_frames):
         _set_frame(kinematics, t)
         achieved_p[t], achieved_r[t] = kinematics.pose(q[t])
@@ -825,6 +947,7 @@ def solve_trajectory(
         objective_history=tuple(objective_history),
         min_collision_margin=min_collision,
         min_floor_margin=min_floor,
+        velocity_repair_max_rad=velocity_repair_max_rad,
     )
 
 
@@ -1020,6 +1143,7 @@ class PinocchioKinematics:
             raise RuntimeError("retarget requires robotics Pinocchio and pin-pink") from exc
         self.pin = pin
         self.Configuration = Configuration
+        self._gripper_prefix = gripper_prefix
         self.robot = robot
         self.model = robot.model
         self.data = self.model.createData()

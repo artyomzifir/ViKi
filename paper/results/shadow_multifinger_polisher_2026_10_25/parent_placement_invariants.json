@@ -1,0 +1,19 @@
+{
+  "checks": {
+    "prefix_preserved": true,
+    "finger_commands_preserved": true,
+    "arm_frozen_until_retreat": true,
+    "timestamps_unchanged": true,
+    "position_limits": true,
+    "velocity_limits": true
+  },
+  "joint_position_margin_rad": 9.006836276803654e-08,
+  "command_velocity_margin_rad_s": 0.008497034959753735,
+  "schedule": {
+    "anchor": 130,
+    "open_end": 151,
+    "retreat_start": 151,
+    "retreat_end": 175
+  },
+  "export_sha256": "e69ebf8953ffd872688f214750f8a4ba94d3d20e99231527e977d06289b1a626"
+}

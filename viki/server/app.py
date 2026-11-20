@@ -3,7 +3,7 @@ viki.server.app
 ---------------
 Application assembly only: lifespan resources, static files, router wiring.
 Request logic lives in ``viki.server.routes``; the offline pipeline stages live
-in ``viki.{cameras,perception,prepare,retarget,replay,export}`` and are driven
+in ``viki.{cameras,perception,prepare,retarget,export}`` and are driven
 here only through thin job endpoints.
 """
 
@@ -28,7 +28,6 @@ from viki.server.routes import (
     label,
     pipeline,
     recording,
-    replay,
     skeleton,
     system,
 )
@@ -49,7 +48,7 @@ _log = logging.getLogger("viki.api")
 _QUIET_PATHS = (
     "/api/system/stats", "/api/health", "/api/pipeline/jobs",
     "/api/calibration/status/", "/api/calibration/samples_count/",
-    "/api/record/jobs/", "/api/replay/jobs/", "/api/export/jobs/",
+    "/api/record/jobs/", "/api/export/jobs/",
 )
 
 
@@ -128,7 +127,7 @@ async def _observe(request: Request, call_next):
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 router = APIRouter(prefix="/api", tags=["api"])
-for mod in (cameras, calibration, skeleton, system, recording, pipeline, replay, label, export):
+for mod in (cameras, calibration, skeleton, system, recording, pipeline, label, export):
     router.include_router(mod.router)
 router.include_router(datasets.router)
 router.include_router(datasets.ep_router)

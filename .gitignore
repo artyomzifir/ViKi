@@ -10,7 +10,10 @@ debug/
 # Local agent scratch reports; release evidence lives in docs/
 docs/research_notes/
 .slim/
-tools/
+tools/*
+!tools/hocap_download.py
+!tools/download_hocap_pnp.py
+!tools/hocap_pnp_plan.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -259,3 +262,4 @@ NOTES.md
 /data/_e13_poses/
 /data/_e13_restore/
 /data/_e14_scratch/
+/paper/doe-docs 

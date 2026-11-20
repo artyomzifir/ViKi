@@ -4,7 +4,7 @@ viki.server.deps
 FastAPI dependencies. The camera manager and calibrator are built once in the
 app lifespan and stored on ``app.state``; handlers get them via ``Depends`` so
 they don't reach into app state directly. There is no live pipeline / worker
-anymore — extraction, preparation, retargeting, replay and export all run
+anymore — extraction, preparation, retargeting and export all run
 offline over episode directories.
 """
 

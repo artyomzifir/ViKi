@@ -1,0 +1,47 @@
+{
+  "alignment": "one right-multiplied object-local SE(3) alignment at first confident frame",
+  "absolute_pose_error": "unavailable without a calibrated object-model origin",
+  "min_confidence": 0.35,
+  "objects": {
+    "G02_1": {
+      "gt_frames": 1136,
+      "tracked_frames": 1136,
+      "coverage": 1.0,
+      "translation_mean_mm": 7.51114350001707,
+      "translation_p95_mm": 8.673858239380545,
+      "rotation_mean_deg": 2.3028995502937417,
+      "rotation_p95_deg": 5.39779147300527,
+      "anchor_frame": 0
+    },
+    "G02_2": {
+      "gt_frames": 1136,
+      "tracked_frames": 1132,
+      "coverage": 0.9964788732394366,
+      "translation_mean_mm": 4.84700167117674,
+      "translation_p95_mm": 7.515731297257155,
+      "rotation_mean_deg": 4.642683462593853,
+      "rotation_p95_deg": 11.526705849603934,
+      "anchor_frame": 0
+    },
+    "G02_3": {
+      "gt_frames": 1136,
+      "tracked_frames": 1136,
+      "coverage": 1.0,
+      "translation_mean_mm": 1.1046684889620206,
+      "translation_p95_mm": 5.581544169209729,
+      "rotation_mean_deg": 1.1204878780393759,
+      "rotation_p95_deg": 6.372805088612669,
+      "anchor_frame": 0
+    },
+    "G02_4": {
+      "gt_frames": 1136,
+      "tracked_frames": 1132,
+      "coverage": 0.9964788732394366,
+      "translation_mean_mm": 2.8223741544423975,
+      "translation_p95_mm": 10.67010539051005,
+      "rotation_mean_deg": 56.572202842051716,
+      "rotation_p95_deg": 169.89207143210461,
+      "anchor_frame": 0
+    }
+  }
+}

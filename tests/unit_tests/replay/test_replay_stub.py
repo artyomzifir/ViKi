@@ -19,22 +19,21 @@ def test_dryrun_driver_echoes_plan():
     assert np.isnan(log.controller_residual).all()
 
 
-def test_ur3_driver_not_implemented():
-    with pytest.raises(NotImplementedError):
+def test_removed_driver_is_rejected():
+    with pytest.raises(ValueError, match="known: dryrun"):
         load_driver("ur3")
 
 
-def test_screen_dryrun_when_residual_unmeasured():
+def test_valid_plan_stays_dryrun():
     q = np.zeros((10, 6))
-    v = screen(q, np.full(10, np.nan), robot_description="")
+    v = screen(q, robot_description="")
     assert v.verdict == "dry-run"
 
 
-def test_screen_flags_tracking_fault():
-    q = np.zeros((10, 6))
-    resid = np.full(10, 0.2)  # above default 0.05 threshold
-    v = screen(q, resid, robot_description="")
-    assert v.verdict == "reject" and v.cause == "tracking_fault"
+@pytest.mark.parametrize("q", [np.zeros((0, 6)), np.array([[np.nan]]), np.zeros(6)])
+def test_screen_rejects_invalid_plan(q):
+    with pytest.raises(ValueError, match="finite, non-empty"):
+        screen(q, robot_description="")
 
 
 def test_screen_uses_physical_ur_limits_for_continuous_pinocchio_joint():
@@ -42,7 +41,6 @@ def test_screen_uses_physical_ur_limits_for_continuous_pinocchio_joint():
     q[1, -1] = 2.0 * np.pi + 0.01
     verdict = screen(
         q,
-        np.full(2, np.nan),
         robot_description="ur3_official_description",
     )
     assert verdict.verdict == "reject"
@@ -80,7 +78,8 @@ def test_replay_episode_executes_approach_but_archives_demo_frames(tmp_path, mon
     np.testing.assert_array_equal(executed["gripper"], np.ones(18))
     with load_archive(ep.replay_h5) as arc:
         assert set(arc.files) == set(REPLAY_KEYS)
-        assert str(arc["verdict"]) in ("dry-run", "pass", "reject")
+        assert str(arc["verdict"]) == "dry-run"
+        assert np.isnan(np.asarray(arc["controller_residual"])).all()
         assert np.asarray(arc["q_attained"]).shape == (15, 6)
         # Legacy binary ``closed=0`` is migrated to continuous fully-open=1.
         np.testing.assert_array_equal(arc["gripper_attained"], np.ones(15))

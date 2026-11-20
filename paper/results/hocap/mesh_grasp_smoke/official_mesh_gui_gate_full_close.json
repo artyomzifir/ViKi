@@ -1,0 +1,43 @@
+{
+  "plan": "data/_retarget_diagnostics/hocap_g10_4_official_geometry/plan.h5",
+  "frames": 160,
+  "object_ids": [
+    4
+  ],
+  "proxy_mass_kg_each": 0.2,
+  "proxy_table_z_m": 0.00838632692332815,
+  "collision_geometry": "official_mesh_convex_hull",
+  "rubber_pad_collision_proxy": true,
+  "frame_start": 20,
+  "frame_end": 180,
+  "pressure_rad": 0.0,
+  "fully_close": true,
+  "grasp_dwell_s": 1.0,
+  "minimum_pad_force_n": 1.0,
+  "force_hold_s": 0.1,
+  "force_gate_passed": false,
+  "peak_pad_force_n": {
+    "left": 3.183827142332104,
+    "right": 3.088686273794784
+  },
+  "peak_simultaneous_pad_force_n": 3.012622742380202,
+  "aborted_before_lift": true,
+  "object_grasp": true,
+  "completed": false,
+  "physics_time_s": 3.500000000000336,
+  "peak_joint_tracking_error_rad": 0.028767188437768043,
+  "initial_object_positions_m": {
+    "tracked_object": [
+      -0.16891887784004211,
+      0.011159265413880348,
+      0.12266892939805984
+    ]
+  },
+  "final_object_positions_m": {
+    "tracked_object": [
+      -0.22633102563514235,
+      0.02674895978102839,
+      0.12228184174888264
+    ]
+  }
+}
